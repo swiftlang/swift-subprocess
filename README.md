@@ -1,1 +1,305 @@
-# swift-subprocess
+<a id="readme-top"></a>
+
+# Subprocess
+
+Subprocess is a cross-platform package for spawning processes in Swift.
+
+It's like [Foundation.Process](https://developer.apple.com/documentation/foundation/process), but written for Swift and build on top of structural concurrency.
+
+
+## Getting Started
+
+Subprocess uses [SwiftPM](https://swift.org/package-manager/) as its build tool, so we recommend using that as well. If you want to depend on Subprocess in your own project, it's as simple as adding a `dependencies` clause to your `Package.swift`:
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/iCharlesHu/Subprocess.git", branch: "main")
+]
+```
+and then adding the `Subprocess` module to your target dependencies.
+
+```swift
+.target(
+    name: "MyTarget",
+    dependencies: [
+        .product(name: "Subprocess", package: "Subprocess")
+    ]
+)
+```
+
+On Swift 6.1 and above, `Subprocess` offers two [package traits](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0450-swiftpm-package-traits.md):
+
+- `SubprocessFoundation`: includes a dependency on `Foundation` and adds extensions on Foundation types like `Data`. This trait is enabled by default.
+- `SubprocessSpan`: makes Subprocess’ API, mainly `OutputProtocol`, `RawSpan` based. This trait is enabled whenever `RawSpan` is available and should only be disabled when `RawSpan` is not available.
+
+
+### Swift Versions
+
+The minimal supported Swift version is Swift 6.0.
+
+To experiment with the `SubprocessSpan` trait, Swift 6.2 is required. Currently, you can download the Swift 6.2 toolchain (`main` development snapshot) [here](https://www.swift.org/install/macos/#development-snapshots).
+
+
+## Feature Overview
+
+### Run and Asynchonously Collect Output
+
+The easiest way to spawn a process with `Subprocess` is to simply run it and await its `CollectedResult`:
+
+```swift
+import Subprocess
+
+let result = try await run(.name("ls"))
+
+print(result.processIdentifier) // prints 1234
+print(result.terminationStatus) // prints exited(0)
+
+print(result.standardOutput) // prints LICENSE Package.swift ...
+```
+
+### Run with Custom Closure
+
+To have more precise control over input and output, you can provide a custom closure that executes while the child process is active. Inside this closure, you have the ability to manage the subprocess’s state (like suspending or terminating it) and stream its standard output and standard error as an `AsyncSequence`:
+
+```swift
+import Subprocess
+
+let result = try await run(
+    .path("/bin/dd"),
+    arguments: ["if=/path/to/document"]
+) { execution in
+    var contents = ""
+    for try await chunk in execution.standardOutput {
+        let string = chunk.withUnsafeBytes { String(decoding: $0, as: UTF8.self) }
+        contents += string
+        if string == "Done" {
+            // Stop execution
+            await execution.teardown(
+                using: [
+                    .gracefulShutDown(
+                        allowedDurationToNextStep: .seconds(0.5)
+                    )
+                ]
+            )
+            return contents
+        }
+    }
+    return contents
+}
+```
+
+### Running Unmonitored Processes
+
+While `Subprocess` is designed with Swift’s structural concurrency in mind, it also provides a lower level, synchronous method for launching child processes. However, since `Subprocess` can’t synchronously monitor child process’s state or handle cleanup, you’ll need to attach a FileDescriptor to each I/O directly. Remember to close the `FileDescriptor` once you’re finished.
+
+```swift
+import Subprocess
+
+let input: FileDescriptor = ...
+
+input.closeAfter {
+    let pid = try runDetached(.path("/bin/daemon"), input: input)
+    // ... other opeartions
+}
+```
+
+### Customizable Execution
+
+You can set various parameters when running the child process, such as `Arguments`, `Environment`, and working directory:
+
+```swift
+import Subprocess
+
+let result = try await run(
+    .path("/bin/ls"),
+    arguments: ["-a"],
+    // Inherit the environment values from parent process and
+    // add `NewKey=NewValue` 
+    environment: .inherit.updating(["NewKey": "NewValue"]),
+    workingDirectory: "/Users/",
+)
+```
+
+### Platform Specific Options and “Escape Hatches”
+
+`Subprocess` provides **platform-specific** configuration options, like setting `uid` and `gid` on Unix and adjusting window style on Windows, through the `PlatformOptions` struct. Check out the `PlatformOptions` documentation for a complete list of configurable parameters across different platforms.
+
+Besides these platform-specific settings, `PlatformOptions` also includes an “escape hatch” via a closure. This closure allows you to have access to low level platform specific spawning constructs to perform customizations if `Subprocess` doesn’t have higher-level APIs. 
+
+```swift
+import Darwin
+import Subprocess
+
+var platformOptions = PlatformOptions()
+let intendedWorkingDir = "/path/to/directory"
+platformOptions.preSpawnProcessConfigurator = { spawnAttr, fileAttr in
+    // Set POSIX_SPAWN_SETSID flag, which implies calls
+    // to setsid
+    var flags: Int16 = 0
+    posix_spawnattr_getflags(&spawnAttr, &flags)
+    posix_spawnattr_setflags(&spawnAttr, flags | Int16(POSIX_SPAWN_SETSID))
+
+    // Change the working directory
+    intendedWorkingDir.withCString { path in
+        _ = posix_spawn_file_actions_addchdir_np(&fileAttr, path)
+    }
+}
+
+let result = try await run(.path("/bin/exe"), platformOptions: platformOptions)
+```
+
+
+### Flexible Input and Output Configurations
+
+By default, `Subprocess`:
+- Doesn’t send any input to the child process’s standard input
+- Captures the child process’s standard output as a `String`, up to 128kb
+- Ignores the child process’s standard error
+
+You can tailor how `Subprocess` handles the standard input, standard output, and standard error by setting the `input`, `output`, and `error` parameters:
+
+```swift
+let content = "Hello Subprocess"
+
+// Send "Hello Subprocess" to the standard input of `cat`
+let result = try await run(.name("cat"), input: .string(content, using: UTF8.self))
+
+// Collect both standard error and standard output as Data
+let result = try await run(.name("cat"), output: .data, error: .data)
+```
+
+`Subprocess` ships with these input options:
+
+#### `NoInput`
+
+This option means no input is sent to the subprocess.
+
+Use it by setting `.none` for `input`.
+
+#### `FileDescriptorInput`
+
+This option reads input from a specified `FileDescriptor` you provide. If `closeAfterSpawningProcess` is set to `true`, the subprocess will close the file descriptor after spawning. If `false`, you need to close it, even if the subprocess fails to spawn.
+
+Use it by setting `.fileDescriptor(closeAfterSpawningProcess:)` for `input`.
+
+#### `StringInput`
+
+This option reads input from a type conforming to `StringProtocol` using the specified encoding.
+
+Use it by setting `.string(using:)` for `input`.
+
+#### `ArrayInput`
+
+This option reads input from an array of `UInt8`.
+
+Use it by setting `.array` for `input`.
+
+#### `DataInput` (available with `SubprocessFoundation` trait)
+
+This option reads input from a given `Data`.
+
+Use it by setting `.data` for `input`.
+
+#### `DataSequenceInput` (available with `SubprocessFoundation` trait)
+
+This option reads input from a sequence of `Data`.
+
+Use it by setting `.sequence` for `input`.
+
+#### `DataAsyncSequenceInput` (available with `SubprocessFoundation` trait)
+
+This option reads input from an async sequence of `Data`.
+
+Use it by setting `.asyncSequence` for `input`.
+
+---
+
+`Subprocess` also ships these output options:
+
+#### `DiscardedOutput`
+
+This option means the `Subprocess` won’t collect or redirect output from the child process.
+
+Use it by setting `.discarded` for `input` or `error`.
+
+#### `FileDescriptorOutput`
+
+This option writes output to a specified `FileDescriptor`. You can choose to have the `Subprocess` close the file descriptor after spawning.
+
+Use it by setting `.fileDescriptor(closeAfterSpawningProcess:)` for `input` or `error`.
+
+#### `StringOutput`
+
+This option collects output as a `String` with the given encoding.
+
+Use it by setting `.string` or `.string(limit:encoding:)` for `input` or `error`.
+
+#### `BytesOutput`
+
+This option collects output as `[UInt8]`.
+
+Use it by setting `.bytes` or `.bytes(limit:)` for `input` or `error`.
+
+#### `SequenceOutput`:
+
+This option redirects the child output to the `.standardOutput` or `.standardError` property of `Execution`. It’s only for the `run()` family that takes a custom closure.
+
+
+### Cross-platform support
+
+`Subprocess` works on all major platforms supported by Swift, including macOS, Linux, and Windows, with feature parity on all platforms as well as platform-specific options for each.
+
+The table below describes the current level of support that Subprocess has
+for various platforms:
+
+| **Platform** | **Support Status** |
+|---|---|
+| **macOS** | Supported |
+| **iOS** | Not supported |
+| **watchOS** | Not supported |
+| **tvOS** | Not supported |
+| **visionOS** | Not supported |
+| **Ubuntu 22.04** | Supported |
+| **Windows** | Supported |
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+
+## Documentation
+
+The latest API documentation can be viewed by running the following command:
+
+```
+swift package --disable-sandbox preview-documentation --target Subprocess
+```
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+
+## Contributing to Subprocess
+
+Subprocess is part of the Foundation project. We have a dedicated [Foundation Forum][forum] where people can ask and answer questions on how to use or work on this package. It's also a great place to discuss its evolution.
+
+[forum]: https://forums.swift.org/c/related-projects/foundation/
+
+If you find something that looks like a bug, please open a [Bug Report][bugreport]! Fill out as many details as you can.
+
+[bugreport]: https://github.com/iCharlesHu/Subprocess/issues/new?assignees=&labels=bug&template=bug_report.md
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+
+## Code of Conduct
+
+Like all Swift.org projects, we would like the Subprocess project to foster a diverse and friendly community. We expect contributors to adhere to the [Swift.org Code of Conduct](https://swift.org/code-of-conduct/).
+
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Contact information
+
+The current code owner of this package is Charles Hu ([@iCharlesHu](https://github.com/iCharlesHu)). You can contact him [on the Swift forums](https://forums.swift.org/u/icharleshu/summary).
+
+In case of moderation issues, you can also directly contact a member of the [Swift Core Team](https://swift.org/community/#community-structure).
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
