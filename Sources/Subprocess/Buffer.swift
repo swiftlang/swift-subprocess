@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2024 Apple Inc. and the Swift project authors
+// Copyright (c) 2025 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -54,6 +54,7 @@ extension SequenceOutput.Buffer {
 @available(SubprocessSpan, *)
 #endif
 extension SequenceOutput.Buffer {
+    #if !SubprocessSpan
     /// Access the raw bytes stored in this buffer
     /// - Parameter body: A closure with an `UnsafeRawBufferPointer` parameter that
     ///   points to the contiguous storage for the type. If no such storage exists,
@@ -64,11 +65,19 @@ extension SequenceOutput.Buffer {
     public func withUnsafeBytes<ResultType>(
         _ body: (UnsafeRawBufferPointer) throws -> ResultType
     ) rethrows -> ResultType {
+        return try self._withUnsafeBytes(body)
+    }
+    #endif  // !SubprocessSpan
+
+    internal func _withUnsafeBytes<ResultType>(
+        _ body: (UnsafeRawBufferPointer) throws -> ResultType
+    ) rethrows -> ResultType {
         #if os(Windows)
         return try self.data.withUnsafeBytes(body)
         #else
         // Although DispatchData was designed to be uncontiguous, in practice
-        // we found that almost all DispatchData are contiguous.
+        // we found that almost all DispatchData are contiguous. Therefore
+        // we can access this body in O(1) most of the time.
         return try self.data.withUnsafeBytes { ptr in
             let bytes = UnsafeRawBufferPointer(start: ptr, count: self.data.count)
             return try body(bytes)

@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2024 Apple Inc. and the Swift project authors
+// Copyright (c) 2025 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -12,8 +12,9 @@
 #if canImport(WinSDK)
 
 import WinSDK
-import Foundation
+import FoundationEssentials
 import Testing
+import Dispatch
 
 #if canImport(System)
 import System
@@ -367,7 +368,7 @@ extension SubprocessWindowsTests {
         ) { execution in
             var buffer = Data()
             for try await chunk in execution.standardOutput {
-                let currentChunk = chunk.withUnsafeBytes { Data($0) }
+                let currentChunk = chunk._withUnsafeBytes { Data($0) }
                 buffer += currentChunk
             }
             return buffer
@@ -408,7 +409,7 @@ extension SubprocessWindowsTests {
         ) { execution in
             var buffer = Data()
             for try await chunk in execution.standardOutput {
-                let currentChunk = chunk.withUnsafeBytes { Data($0) }
+                let currentChunk = chunk._withUnsafeBytes { Data($0) }
                 buffer += currentChunk
             }
             return buffer
@@ -506,7 +507,7 @@ extension SubprocessWindowsTests {
         ) { subprocess in
             var buffer = Data()
             for try await chunk in subprocess.standardOutput {
-                let currentChunk = chunk.withUnsafeBytes { Data($0) }
+                let currentChunk = chunk._withUnsafeBytes { Data($0) }
                 buffer += currentChunk
             }
             return buffer

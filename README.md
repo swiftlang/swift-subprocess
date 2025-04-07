@@ -4,19 +4,18 @@
 
 Subprocess is a cross-platform package for spawning processes in Swift.
 
-It's like [Foundation.Process](https://developer.apple.com/documentation/foundation/process), but written for Swift and build on top of structural concurrency.
-
 
 ## Getting Started
 
-Subprocess uses [SwiftPM](https://swift.org/package-manager/) as its build tool, so we recommend using that as well. If you want to depend on Subprocess in your own project, it's as simple as adding a `dependencies` clause to your `Package.swift`:
+To use `Subprocess` in a [SwiftPM](https://swift.org/package-manager/) project, add it as a package dependency to your `Package.swift`:
+
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/iCharlesHu/Subprocess.git", branch: "main")
+    .package(url: "https://github.com/swiftlang/swift-subprocess.git", branch: "main")
 ]
 ```
-and then adding the `Subprocess` module to your target dependencies.
+Then, adding the `Subprocess` module to your target dependencies:
 
 ```swift
 .target(
@@ -124,7 +123,7 @@ let result = try await run(
 
 `Subprocess` provides **platform-specific** configuration options, like setting `uid` and `gid` on Unix and adjusting window style on Windows, through the `PlatformOptions` struct. Check out the `PlatformOptions` documentation for a complete list of configurable parameters across different platforms.
 
-Besides these platform-specific settings, `PlatformOptions` also includes an “escape hatch” via a closure. This closure allows you to have access to low level platform specific spawning constructs to perform customizations if `Subprocess` doesn’t have higher-level APIs. 
+`PlatformOptions` also allows access to platform-specific spawning constructs and customizations via a closure.
 
 ```swift
 import Darwin
@@ -153,7 +152,7 @@ let result = try await run(.path("/bin/exe"), platformOptions: platformOptions)
 
 By default, `Subprocess`:
 - Doesn’t send any input to the child process’s standard input
-- Captures the child process’s standard output as a `String`, up to 128kb
+- Captures the child process’s standard output as a `String`, up to 128kB
 - Ignores the child process’s standard error
 
 You can tailor how `Subprocess` handles the standard input, standard output, and standard error by setting the `input`, `output`, and `error` parameters:
@@ -168,7 +167,7 @@ let result = try await run(.name("cat"), input: .string(content, using: UTF8.sel
 let result = try await run(.name("cat"), output: .data, error: .data)
 ```
 
-`Subprocess` ships with these input options:
+`Subprocess` supports these input options:
 
 #### `NoInput`
 
@@ -178,7 +177,7 @@ Use it by setting `.none` for `input`.
 
 #### `FileDescriptorInput`
 
-This option reads input from a specified `FileDescriptor` you provide. If `closeAfterSpawningProcess` is set to `true`, the subprocess will close the file descriptor after spawning. If `false`, you need to close it, even if the subprocess fails to spawn.
+This option reads input from a specified `FileDescriptor`. If `closeAfterSpawningProcess` is set to `true`, the subprocess will close the file descriptor after spawning. If `false`, you are responsible for closing it, even if the subprocess fails to spawn.
 
 Use it by setting `.fileDescriptor(closeAfterSpawningProcess:)` for `input`.
 
@@ -214,7 +213,7 @@ Use it by setting `.asyncSequence` for `input`.
 
 ---
 
-`Subprocess` also ships these output options:
+`Subprocess` also supports these output options:
 
 #### `DiscardedOutput`
 
@@ -247,10 +246,9 @@ This option redirects the child output to the `.standardOutput` or `.standardErr
 
 ### Cross-platform support
 
-`Subprocess` works on all major platforms supported by Swift, including macOS, Linux, and Windows, with feature parity on all platforms as well as platform-specific options for each.
+`Subprocess` works on macOS, Linux, and Windows, with feature parity on all platforms as well as platform-specific options for each.
 
-The table below describes the current level of support that Subprocess has
-for various platforms:
+The table below describes the current level of support that Subprocess has for various platforms:
 
 | **Platform** | **Support Status** |
 |---|---|
@@ -278,13 +276,11 @@ swift package --disable-sandbox preview-documentation --target Subprocess
 
 ## Contributing to Subprocess
 
-Subprocess is part of the Foundation project. We have a dedicated [Foundation Forum][forum] where people can ask and answer questions on how to use or work on this package. It's also a great place to discuss its evolution.
-
-[forum]: https://forums.swift.org/c/related-projects/foundation/
+Subprocess is part of the Foundation project. Discussion and evolution take place on [Swift Foundation Forum](https://forums.swift.org/c/related-projects/foundation/99).
 
 If you find something that looks like a bug, please open a [Bug Report][bugreport]! Fill out as many details as you can.
 
-[bugreport]: https://github.com/iCharlesHu/Subprocess/issues/new?assignees=&labels=bug&template=bug_report.md
+[bugreport]: https://github.com/swiftlang/swift-subprocess/issues/new?assignees=&labels=bug&template=bug_report.md
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -298,8 +294,9 @@ Like all Swift.org projects, we would like the Subprocess project to foster a di
 
 ## Contact information
 
-The current code owner of this package is Charles Hu ([@iCharlesHu](https://github.com/iCharlesHu)). You can contact him [on the Swift forums](https://forums.swift.org/u/icharleshu/summary).
+The Foundation Workgroup communicates with the broader Swift community using the [forum](https://forums.swift.org/c/related-projects/foundation/99) for general discussions.
 
-In case of moderation issues, you can also directly contact a member of the [Swift Core Team](https://swift.org/community/#community-structure).
+The workgroup can also be contacted privately by messaging [@foundation-workgroup](https://forums.swift.org/new-message?groupname=foundation-workgroup) on the Swift Forums.
+
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>

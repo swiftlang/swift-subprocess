@@ -11,11 +11,13 @@
 
 #if SubprocessFoundation && SubprocessSpan
 
-#if canImport(FoundationEssentials)
-import FoundationEssentials
-#elseif canImport(Foundation)
+#if canImport(Darwin)
+// On Darwin always prefer system Foundation
 import Foundation
-#endif
+#else
+// On other platforms prefer FoundationEssentials
+import FoundationEssentials
+#endif  // canImport(Darwin)
 
 internal import Dispatch
 

@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2024 Apple Inc. and the Swift project authors
+// Copyright (c) 2025 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -393,37 +393,6 @@ public struct PlatformOptions: Sendable {
         )? = nil
 
     public init() {}
-}
-
-extension PlatformOptions: Hashable {
-    public static func == (
-        lhs: PlatformOptions,
-        rhs: PlatformOptions
-    ) -> Bool {
-        // Since we can't compare closure equality,
-        // as long as preSpawnProcessConfigurator is set
-        // always returns false so that `PlatformOptions`
-        // with it set will never equal to each other
-        if lhs.preSpawnProcessConfigurator != nil || rhs.preSpawnProcessConfigurator != nil {
-            return false
-        }
-        return lhs.userCredentials == rhs.userCredentials && lhs.consoleBehavior == rhs.consoleBehavior
-            && lhs.windowStyle == rhs.windowStyle && lhs.createProcessGroup == rhs.createProcessGroup
-    }
-
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(userCredentials)
-        hasher.combine(consoleBehavior)
-        hasher.combine(windowStyle)
-        hasher.combine(createProcessGroup)
-        // Since we can't really hash closures,
-        // use a random number such that as long as
-        // `preSpawnProcessConfigurator` is set, it will
-        // never equal to other PlatformOptions
-        if self.preSpawnProcessConfigurator != nil {
-            hasher.combine(Int.random(in: 0 ..< .max))
-        }
-    }
 }
 
 extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible {
@@ -1004,15 +973,6 @@ extension Configuration {
 
 // MARK: - PlatformFileDescriptor Type
 internal typealias PlatformFileDescriptor = HANDLE
-
-// MARK: - Read Buffer Size
-@inline(__always)
-internal var readBufferSize: Int {
-    // FIXME: Use Platform.pageSize here
-    var sysInfo: SYSTEM_INFO = SYSTEM_INFO()
-    GetSystemInfo(&sysInfo)
-    return Int(sysInfo.dwPageSize)
-}
 
 // MARK: - Pipe Support
 extension FileDescriptor {

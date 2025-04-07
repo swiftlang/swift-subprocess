@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2024 Apple Inc. and the Swift project authors
+// Copyright (c) 2025 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -31,7 +31,7 @@ internal import Dispatch
 
 /// A collection of configurations parameters to use when
 /// spawning a subprocess.
-public struct Configuration: Sendable, Hashable {
+public struct Configuration: Sendable {
     /// The executable to run.
     public var executable: Executable
     /// The arguments to pass to the executable.
@@ -464,7 +464,7 @@ extension Configuration {
 
 // MARK: - Executable
 
-/// `Executable` defines how should the executable
+/// `Executable` defines how the executable should
 /// be looked up for execution.
 public struct Executable: Sendable, Hashable {
     internal enum Storage: Sendable, Hashable {
@@ -928,15 +928,6 @@ extension Optional where Wrapped == String {
     }
 }
 
-// MARK: - Stubs for the one from Foundation
-public enum QualityOfService: Int, Sendable {
-    case userInteractive = 0x21
-    case userInitiated = 0x19
-    case utility = 0x11
-    case background = 0x09
-    case `default` = -1
-}
-
 internal func withAsyncTaskCleanupHandler<Result>(
     _ body: () async throws -> Result,
     onCleanup handler: @Sendable @escaping () async -> Void,
@@ -947,7 +938,9 @@ internal func withAsyncTaskCleanupHandler<Result>(
         returning: Result.self
     ) { group in
         group.addTask {
-            // wait until cancelled
+            // Keep this task sleep indefinitely until the parent task is cancelled.
+            // `Task.sleep` throws `CancellationError` when the task is canceled
+            // before the time ends. We then run the cancel handler.
             do { while true { try await Task.sleep(nanoseconds: 1_000_000_000) } } catch {}
             // Run task cancel handler
             await handler()

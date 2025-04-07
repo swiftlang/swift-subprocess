@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2024 Apple Inc. and the Swift project authors
+// Copyright (c) 2025 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -15,11 +15,23 @@ import System
 @preconcurrency import SystemPackage
 #endif
 
+#if SubprocessFoundation
+
+#if canImport(Darwin)
+// On Darwin always prefer system Foundation
+import Foundation
+#else
+// On other platforms prefer FoundationEssentials
+import FoundationEssentials
+#endif
+
+#endif  // SubprocessFoundation
+
 // MARK: - Input
 
 /// `InputProtocol` defines the `write(with:)` method that a type
 /// must implement to serve as the input source for a subprocess.
-public protocol InputProtocol: Sendable {
+public protocol InputProtocol: Sendable, ~Copyable {
     /// Asynchronously write the input to the subprocess using the
     /// write file descriptor
     func write(with writer: StandardInputWriter) async throws
@@ -247,6 +259,22 @@ public final actor StandardInputWriter: Sendable {
 }
 
 extension StringProtocol {
+    #if SubprocessFoundation
+    private func convertEncoding<Encoding: Unicode.Encoding>(
+        _ encoding: Encoding.Type
+    ) -> String.Encoding? {
+        switch encoding {
+        case is UTF8.Type:
+            return .utf8
+        case is UTF16.Type:
+            return .utf16
+        case is UTF32.Type:
+            return .utf32
+        default:
+            return nil
+        }
+    }
+    #endif
     package func byteArray<Encoding: Unicode.Encoding>(using encoding: Encoding.Type) -> [UInt8]? {
         if Encoding.self == Unicode.ASCII.self {
             let isASCII = self.utf8.allSatisfy {
@@ -269,8 +297,16 @@ extension StringProtocol {
                 }
             }
         }
-        // TODO: More encodings
+        #if SubprocessFoundation
+        if let stringEncoding = self.convertEncoding(encoding),
+            let encoded = self.data(using: stringEncoding)
+        {
+            return Array(encoded)
+        }
         return nil
+        #else
+        return nil
+        #endif
     }
 }
 

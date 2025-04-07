@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2024 Apple Inc. and the Swift project authors
+// Copyright (c) 2025 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -11,10 +11,12 @@
 
 #if canImport(Darwin) || canImport(Glibc)
 
-#if canImport(FoundationEssentials)
-import FoundationEssentials
-#else
+#if canImport(Darwin)
+// On Darwin always prefer system Foundation
 import Foundation
+#else
+// On other platforms prefer FoundationEssentials
+import FoundationEssentials
 #endif
 
 #if canImport(Glibc)
@@ -432,7 +434,7 @@ extension SubprocessUnixTests {
         ) { execution in
             var buffer = Data()
             for try await chunk in execution.standardOutput {
-                let currentChunk = chunk.withUnsafeBytes { Data($0) }
+                let currentChunk = chunk._withUnsafeBytes { Data($0) }
                 buffer += currentChunk
             }
             return buffer
@@ -472,7 +474,7 @@ extension SubprocessUnixTests {
         ) { execution in
             var buffer = Data()
             for try await chunk in execution.standardOutput {
-                let currentChunk = chunk.withUnsafeBytes { Data($0) }
+                let currentChunk = chunk._withUnsafeBytes { Data($0) }
                 buffer += currentChunk
             }
             return buffer
@@ -621,7 +623,7 @@ extension SubprocessUnixTests {
         ) { execution in
             var buffer = Data()
             for try await chunk in execution.standardOutput {
-                let currentChunk = chunk.withUnsafeBytes { Data($0) }
+                let currentChunk = chunk._withUnsafeBytes { Data($0) }
                 buffer += currentChunk
             }
             return buffer
@@ -822,7 +824,7 @@ extension SubprocessUnixTests {
                 group.addTask {
                     var outputs: [String] = []
                     for try await bit in subprocess.standardOutput {
-                        let bitString = bit.withUnsafeBytes { ptr in
+                        let bitString = bit._withUnsafeBytes { ptr in
                             return String(decoding: ptr, as: UTF8.self)
                         }.trimmingCharacters(in: .whitespacesAndNewlines)
                         if bitString.contains("\n") {

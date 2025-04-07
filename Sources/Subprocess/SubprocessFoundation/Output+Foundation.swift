@@ -11,10 +11,12 @@
 
 #if SubprocessFoundation
 
-#if canImport(FoundationEssentials)
-import FoundationEssentials
-#elseif canImport(Foundation)
+#if canImport(Darwin)
+// On Darwin always prefer system Foundation
 import Foundation
+#else
+// On other platforms prefer FoundationEssentials
+import FoundationEssentials
 #endif
 
 /// A concrete `Output` type for subprocesses that collects output
@@ -65,7 +67,9 @@ extension OutputProtocol where Self == DataOutput {
 extension OutputProtocol {
     @_disfavoredOverload
     public func output(from data: some DataProtocol) throws -> OutputType {
-        //FIXME: remove workaround for rdar://143992296
+        // FIXME: remove workaround for
+        // rdar://143992296
+        // https://github.com/swiftlang/swift-subprocess/issues/3
         return try self.output(from: data.bytes)
     }
 }

@@ -9,7 +9,7 @@ let availabilityMacro: SwiftSetting = .enableExperimentalFeature(
 
 let package = Package(
     name: "Subprocess",
-    platforms: [.macOS("15.0"), .iOS("18.0"), .tvOS("18.0"), .watchOS("11.0")],
+    platforms: [.macOS(.v13)],
     products: [
         .library(
             name: "Subprocess",

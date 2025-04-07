@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2024 Apple Inc. and the Swift project authors
+// Copyright (c) 2025 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -20,6 +20,18 @@ import System
 #endif
 
 import _SubprocessCShims
+
+#if SubprocessFoundation
+
+#if canImport(Darwin)
+// On Darwin always prefer system Foundation
+import Foundation
+#else
+// On other platforms prefer FoundationEssentials
+import FoundationEssentials
+#endif
+
+#endif  // SubprocessFoundation
 
 // MARK: - PlatformOptions
 
@@ -73,35 +85,45 @@ public struct PlatformOptions: Sendable {
     public init() {}
 }
 
-extension PlatformOptions: Hashable {
-    public static func == (lhs: PlatformOptions, rhs: PlatformOptions) -> Bool {
-        // Since we can't compare closure equality,
-        // as long as preSpawnProcessConfigurator is set
-        // always returns false so that `PlatformOptions`
-        // with it set will never equal to each other
-        if lhs.preSpawnProcessConfigurator != nil || rhs.preSpawnProcessConfigurator != nil {
-            return false
-        }
-        return lhs.qualityOfService == rhs.qualityOfService && lhs.userID == rhs.userID && lhs.groupID == rhs.groupID
-            && lhs.supplementaryGroups == rhs.supplementaryGroups && lhs.processGroupID == rhs.processGroupID
-            && lhs.createSession == rhs.createSession
+extension PlatformOptions {
+    #if SubprocessFoundation
+    public typealias QualityOfService = Foundation.QualityOfService
+    #else
+    /// Constants that indicate the nature and importance of work to the system.
+    ///
+    /// Work with higher quality of service classes receive more resources
+    /// than work with lower quality of service classes whenever
+    /// there’s resource contention.
+    public enum QualityOfService: Int, Sendable {
+        /// Used for work directly involved in providing an
+        /// interactive UI. For example, processing control
+        /// events or drawing to the screen.
+        case userInteractive = 0x21
+        /// Used for performing work that has been explicitly requested
+        /// by the user, and for which results must be immediately
+        /// presented in order to allow for further user interaction.
+        /// For example, loading an email after a user has selected
+        /// it in a message list.
+        case userInitiated = 0x19
+        /// Used for performing work which the user is unlikely to be
+        /// immediately waiting for the results. This work may have been
+        /// requested by the user or initiated automatically, and often
+        /// operates at user-visible timescales using a non-modal
+        /// progress indicator. For example, periodic content updates
+        /// or bulk file operations, such as media import.
+        case utility = 0x11
+        /// Used for work that is not user initiated or visible.
+        /// In general, a user is unaware that this work is even happening.
+        /// For example, pre-fetching content, search indexing, backups,
+        /// or syncing of data with external systems.
+        case background = 0x09
+        /// Indicates no explicit quality of service information.
+        /// Whenever possible, an appropriate quality of service is determined
+        /// from available sources. Otherwise, some quality of service level
+        /// between `.userInteractive` and `.utility` is used.
+        case `default` = -1
     }
-
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(self.qualityOfService)
-        hasher.combine(self.userID)
-        hasher.combine(self.groupID)
-        hasher.combine(self.supplementaryGroups)
-        hasher.combine(self.processGroupID)
-        hasher.combine(self.createSession)
-        // Since we can't really hash closures,
-        // use an random number such that as long as
-        // `preSpawnProcessConfigurator` is set, it will
-        // never equal to other PlatformOptions
-        if self.preSpawnProcessConfigurator != nil {
-            hasher.combine(Int.random(in: 0 ..< .max))
-        }
-    }
+    #endif
 }
 
 extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible {
@@ -149,219 +171,212 @@ extension Configuration {
         let possiblePaths = self.executable.possibleExecutablePaths(
             withPathValue: self.environment.pathValue()
         )
-        for possibleExecutablePath in possiblePaths {
-            var pid: pid_t = 0
-            let (
-                env,
-                uidPtr,
-                gidPtr,
-                supplementaryGroups
-            ) = try self.preSpawn()
-            defer {
-                for ptr in env { ptr?.deallocate() }
-                uidPtr?.deallocate()
-                gidPtr?.deallocate()
-            }
-            // Setup Arguments
-            let argv: [UnsafeMutablePointer<CChar>?] = self.arguments.createArgs(
-                withExecutablePath: possibleExecutablePath
-            )
-            defer {
-                for ptr in argv { ptr?.deallocate() }
-            }
+        return try self.preSpawn { args throws -> Execution<Output, Error> in
+            let (env, uidPtr, gidPtr, supplementaryGroups) = args
+            for possibleExecutablePath in possiblePaths {
+                var pid: pid_t = 0
 
-            // Setup file actions and spawn attributes
-            var fileActions: posix_spawn_file_actions_t? = nil
-            var spawnAttributes: posix_spawnattr_t? = nil
-            // Setup stdin, stdout, and stderr
-            posix_spawn_file_actions_init(&fileActions)
-            defer {
-                posix_spawn_file_actions_destroy(&fileActions)
-            }
-            // Input
-            var result: Int32 = -1
-            if let inputRead = inputPipe.readFileDescriptor {
-                result = posix_spawn_file_actions_adddup2(&fileActions, inputRead.wrapped.rawValue, 0)
-                guard result == 0 else {
-                    try self.cleanupPreSpawn(input: inputPipe, output: outputPipe, error: errorPipe)
-                    throw SubprocessError(
-                        code: .init(.spawnFailed),
-                        underlyingError: .init(rawValue: result)
-                    )
-                }
-            }
-            if let inputWrite = inputPipe.writeFileDescriptor {
-                // Close parent side
-                result = posix_spawn_file_actions_addclose(&fileActions, inputWrite.wrapped.rawValue)
-                guard result == 0 else {
-                    try self.cleanupPreSpawn(input: inputPipe, output: outputPipe, error: errorPipe)
-                    throw SubprocessError(
-                        code: .init(.spawnFailed),
-                        underlyingError: .init(rawValue: result)
-                    )
-                }
-            }
-            // Output
-            if let outputWrite = outputPipe.writeFileDescriptor {
-                result = posix_spawn_file_actions_adddup2(&fileActions, outputWrite.wrapped.rawValue, 1)
-                guard result == 0 else {
-                    try self.cleanupPreSpawn(input: inputPipe, output: outputPipe, error: errorPipe)
-                    throw SubprocessError(
-                        code: .init(.spawnFailed),
-                        underlyingError: .init(rawValue: result)
-                    )
-                }
-            }
-            if let outputRead = outputPipe.readFileDescriptor {
-                // Close parent side
-                result = posix_spawn_file_actions_addclose(&fileActions, outputRead.wrapped.rawValue)
-                guard result == 0 else {
-                    try self.cleanupPreSpawn(input: inputPipe, output: outputPipe, error: errorPipe)
-                    throw SubprocessError(
-                        code: .init(.spawnFailed),
-                        underlyingError: .init(rawValue: result)
-                    )
-                }
-            }
-            // Error
-            if let errorWrite = errorPipe.writeFileDescriptor {
-                result = posix_spawn_file_actions_adddup2(&fileActions, errorWrite.wrapped.rawValue, 2)
-                guard result == 0 else {
-                    try self.cleanupPreSpawn(input: inputPipe, output: outputPipe, error: errorPipe)
-                    throw SubprocessError(
-                        code: .init(.spawnFailed),
-                        underlyingError: .init(rawValue: result)
-                    )
-                }
-            }
-            if let errorRead = errorPipe.readFileDescriptor {
-                // Close parent side
-                result = posix_spawn_file_actions_addclose(&fileActions, errorRead.wrapped.rawValue)
-                guard result == 0 else {
-                    try self.cleanupPreSpawn(input: inputPipe, output: outputPipe, error: errorPipe)
-                    throw SubprocessError(
-                        code: .init(.spawnFailed),
-                        underlyingError: .init(rawValue: result)
-                    )
-                }
-            }
-            // Setup spawnAttributes
-            posix_spawnattr_init(&spawnAttributes)
-            defer {
-                posix_spawnattr_destroy(&spawnAttributes)
-            }
-            var noSignals = sigset_t()
-            var allSignals = sigset_t()
-            sigemptyset(&noSignals)
-            sigfillset(&allSignals)
-            posix_spawnattr_setsigmask(&spawnAttributes, &noSignals)
-            posix_spawnattr_setsigdefault(&spawnAttributes, &allSignals)
-            // Configure spawnattr
-            var spawnAttributeError: Int32 = 0
-            var flags: Int32 = POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF
-            if let pgid = self.platformOptions.processGroupID {
-                flags |= POSIX_SPAWN_SETPGROUP
-                spawnAttributeError = posix_spawnattr_setpgroup(&spawnAttributes, pid_t(pgid))
-            }
-            spawnAttributeError = posix_spawnattr_setflags(&spawnAttributes, Int16(flags))
-            // Set QualityOfService
-            // spanattr_qos seems to only accept `QOS_CLASS_UTILITY` or `QOS_CLASS_BACKGROUND`
-            // and returns an error of `EINVAL` if anything else is provided
-            if spawnAttributeError == 0 && self.platformOptions.qualityOfService == .utility {
-                spawnAttributeError = posix_spawnattr_set_qos_class_np(&spawnAttributes, QOS_CLASS_UTILITY)
-            } else if spawnAttributeError == 0 && self.platformOptions.qualityOfService == .background {
-                spawnAttributeError = posix_spawnattr_set_qos_class_np(&spawnAttributes, QOS_CLASS_BACKGROUND)
-            }
-
-            // Setup cwd
-            let intendedWorkingDir = self.workingDirectory.string
-            let chdirError: Int32 = intendedWorkingDir.withPlatformString { workDir in
-                return posix_spawn_file_actions_addchdir_np(&fileActions, workDir)
-            }
-
-            // Error handling
-            if chdirError != 0 || spawnAttributeError != 0 {
-                try self.cleanupPreSpawn(input: inputPipe, output: outputPipe, error: errorPipe)
-                if spawnAttributeError != 0 {
-                    throw SubprocessError(
-                        code: .init(.spawnFailed),
-                        underlyingError: .init(rawValue: spawnAttributeError)
-                    )
-                }
-
-                if chdirError != 0 {
-                    throw SubprocessError(
-                        code: .init(.spawnFailed),
-                        underlyingError: .init(rawValue: spawnAttributeError)
-                    )
-                }
-            }
-            // Run additional config
-            if let spawnConfig = self.platformOptions.preSpawnProcessConfigurator {
-                try spawnConfig(&spawnAttributes, &fileActions)
-            }
-
-            // Spawn
-            let spawnError: CInt = possibleExecutablePath.withCString { exePath in
-                return supplementaryGroups.withOptionalUnsafeBufferPointer { sgroups in
-                    return _subprocess_spawn(
-                        &pid,
-                        exePath,
-                        &fileActions,
-                        &spawnAttributes,
-                        argv,
-                        env,
-                        uidPtr,
-                        gidPtr,
-                        Int32(supplementaryGroups?.count ?? 0),
-                        sgroups?.baseAddress,
-                        self.platformOptions.createSession ? 1 : 0
-                    )
-                }
-            }
-            // Spawn error
-            if spawnError != 0 {
-                if spawnError == ENOENT {
-                    // Move on to another possible path
-                    continue
-                }
-                // Throw all other errors
-                try self.cleanupPreSpawn(
-                    input: inputPipe,
-                    output: outputPipe,
-                    error: errorPipe
+                // Setup Arguments
+                let argv: [UnsafeMutablePointer<CChar>?] = self.arguments.createArgs(
+                    withExecutablePath: possibleExecutablePath
                 )
+                defer {
+                    for ptr in argv { ptr?.deallocate() }
+                }
+
+                // Setup file actions and spawn attributes
+                var fileActions: posix_spawn_file_actions_t? = nil
+                var spawnAttributes: posix_spawnattr_t? = nil
+                // Setup stdin, stdout, and stderr
+                posix_spawn_file_actions_init(&fileActions)
+                defer {
+                    posix_spawn_file_actions_destroy(&fileActions)
+                }
+                // Input
+                var result: Int32 = -1
+                if let inputRead = inputPipe.readFileDescriptor {
+                    result = posix_spawn_file_actions_adddup2(&fileActions, inputRead.wrapped.rawValue, 0)
+                    guard result == 0 else {
+                        try self.cleanupPreSpawn(input: inputPipe, output: outputPipe, error: errorPipe)
+                        throw SubprocessError(
+                            code: .init(.spawnFailed),
+                            underlyingError: .init(rawValue: result)
+                        )
+                    }
+                }
+                if let inputWrite = inputPipe.writeFileDescriptor {
+                    // Close parent side
+                    result = posix_spawn_file_actions_addclose(&fileActions, inputWrite.wrapped.rawValue)
+                    guard result == 0 else {
+                        try self.cleanupPreSpawn(input: inputPipe, output: outputPipe, error: errorPipe)
+                        throw SubprocessError(
+                            code: .init(.spawnFailed),
+                            underlyingError: .init(rawValue: result)
+                        )
+                    }
+                }
+                // Output
+                if let outputWrite = outputPipe.writeFileDescriptor {
+                    result = posix_spawn_file_actions_adddup2(&fileActions, outputWrite.wrapped.rawValue, 1)
+                    guard result == 0 else {
+                        try self.cleanupPreSpawn(input: inputPipe, output: outputPipe, error: errorPipe)
+                        throw SubprocessError(
+                            code: .init(.spawnFailed),
+                            underlyingError: .init(rawValue: result)
+                        )
+                    }
+                }
+                if let outputRead = outputPipe.readFileDescriptor {
+                    // Close parent side
+                    result = posix_spawn_file_actions_addclose(&fileActions, outputRead.wrapped.rawValue)
+                    guard result == 0 else {
+                        try self.cleanupPreSpawn(input: inputPipe, output: outputPipe, error: errorPipe)
+                        throw SubprocessError(
+                            code: .init(.spawnFailed),
+                            underlyingError: .init(rawValue: result)
+                        )
+                    }
+                }
+                // Error
+                if let errorWrite = errorPipe.writeFileDescriptor {
+                    result = posix_spawn_file_actions_adddup2(&fileActions, errorWrite.wrapped.rawValue, 2)
+                    guard result == 0 else {
+                        try self.cleanupPreSpawn(input: inputPipe, output: outputPipe, error: errorPipe)
+                        throw SubprocessError(
+                            code: .init(.spawnFailed),
+                            underlyingError: .init(rawValue: result)
+                        )
+                    }
+                }
+                if let errorRead = errorPipe.readFileDescriptor {
+                    // Close parent side
+                    result = posix_spawn_file_actions_addclose(&fileActions, errorRead.wrapped.rawValue)
+                    guard result == 0 else {
+                        try self.cleanupPreSpawn(input: inputPipe, output: outputPipe, error: errorPipe)
+                        throw SubprocessError(
+                            code: .init(.spawnFailed),
+                            underlyingError: .init(rawValue: result)
+                        )
+                    }
+                }
+                // Setup spawnAttributes
+                posix_spawnattr_init(&spawnAttributes)
+                defer {
+                    posix_spawnattr_destroy(&spawnAttributes)
+                }
+                var noSignals = sigset_t()
+                var allSignals = sigset_t()
+                sigemptyset(&noSignals)
+                sigfillset(&allSignals)
+                posix_spawnattr_setsigmask(&spawnAttributes, &noSignals)
+                posix_spawnattr_setsigdefault(&spawnAttributes, &allSignals)
+                // Configure spawnattr
+                var spawnAttributeError: Int32 = 0
+                var flags: Int32 = POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF
+                if let pgid = self.platformOptions.processGroupID {
+                    flags |= POSIX_SPAWN_SETPGROUP
+                    spawnAttributeError = posix_spawnattr_setpgroup(&spawnAttributes, pid_t(pgid))
+                }
+                spawnAttributeError = posix_spawnattr_setflags(&spawnAttributes, Int16(flags))
+                // Set QualityOfService
+                // spanattr_qos seems to only accept `QOS_CLASS_UTILITY` or `QOS_CLASS_BACKGROUND`
+                // and returns an error of `EINVAL` if anything else is provided
+                if spawnAttributeError == 0 && self.platformOptions.qualityOfService == .utility {
+                    spawnAttributeError = posix_spawnattr_set_qos_class_np(&spawnAttributes, QOS_CLASS_UTILITY)
+                } else if spawnAttributeError == 0 && self.platformOptions.qualityOfService == .background {
+                    spawnAttributeError = posix_spawnattr_set_qos_class_np(&spawnAttributes, QOS_CLASS_BACKGROUND)
+                }
+
+                // Setup cwd
+                let intendedWorkingDir = self.workingDirectory.string
+                let chdirError: Int32 = intendedWorkingDir.withPlatformString { workDir in
+                    return posix_spawn_file_actions_addchdir_np(&fileActions, workDir)
+                }
+
+                // Error handling
+                if chdirError != 0 || spawnAttributeError != 0 {
+                    try self.cleanupPreSpawn(input: inputPipe, output: outputPipe, error: errorPipe)
+                    if spawnAttributeError != 0 {
+                        throw SubprocessError(
+                            code: .init(.spawnFailed),
+                            underlyingError: .init(rawValue: spawnAttributeError)
+                        )
+                    }
+
+                    if chdirError != 0 {
+                        throw SubprocessError(
+                            code: .init(.spawnFailed),
+                            underlyingError: .init(rawValue: spawnAttributeError)
+                        )
+                    }
+                }
+                // Run additional config
+                if let spawnConfig = self.platformOptions.preSpawnProcessConfigurator {
+                    try spawnConfig(&spawnAttributes, &fileActions)
+                }
+
+                // Spawn
+                let spawnError: CInt = possibleExecutablePath.withCString { exePath in
+                    return supplementaryGroups.withOptionalUnsafeBufferPointer { sgroups in
+                        return _subprocess_spawn(
+                            &pid,
+                            exePath,
+                            &fileActions,
+                            &spawnAttributes,
+                            argv,
+                            env,
+                            uidPtr,
+                            gidPtr,
+                            Int32(supplementaryGroups?.count ?? 0),
+                            sgroups?.baseAddress,
+                            self.platformOptions.createSession ? 1 : 0
+                        )
+                    }
+                }
+                // Spawn error
+                if spawnError != 0 {
+                    if spawnError == ENOENT {
+                        // Move on to another possible path
+                        continue
+                    }
+                    // Throw all other errors
+                    try self.cleanupPreSpawn(
+                        input: inputPipe,
+                        output: outputPipe,
+                        error: errorPipe
+                    )
+                    throw SubprocessError(
+                        code: .init(.spawnFailed),
+                        underlyingError: .init(rawValue: spawnError)
+                    )
+                }
+                return Execution(
+                    processIdentifier: .init(value: pid),
+                    output: output,
+                    error: error,
+                    outputPipe: outputPipe,
+                    errorPipe: errorPipe
+                )
+            }
+
+            // If we reach this point, it means either the executable path
+            // or working directory is not valid. Since posix_spawn does not
+            // provide which one is not valid, here we make a best effort guess
+            // by checking whether the working directory is valid. This technically
+            // still causes TOUTOC issue, but it's the best we can do for error recovery.
+            try self.cleanupPreSpawn(input: inputPipe, output: outputPipe, error: errorPipe)
+            let workingDirectory = self.workingDirectory.string
+            guard Configuration.pathAccessible(workingDirectory, mode: F_OK) else {
                 throw SubprocessError(
-                    code: .init(.spawnFailed),
-                    underlyingError: .init(rawValue: spawnError)
+                    code: .init(.failedToChangeWorkingDirectory(workingDirectory)),
+                    underlyingError: .init(rawValue: ENOENT)
                 )
             }
-            return Execution(
-                processIdentifier: .init(value: pid),
-                output: output,
-                error: error,
-                outputPipe: outputPipe,
-                errorPipe: errorPipe
-            )
-        }
-
-        // If we reach this point, it means either the executable path
-        // or working directory is not valid. Since posix_spawn does not
-        // provide which one is not valid, here we make a best effort guess
-        // by checking whether the working directory is valid. This technically
-        // still causes TOUTOC issue, but it's the best we can do for error recovery.
-        try self.cleanupPreSpawn(input: inputPipe, output: outputPipe, error: errorPipe)
-        let workingDirectory = self.workingDirectory.string
-        guard Configuration.pathAccessible(workingDirectory, mode: F_OK) else {
             throw SubprocessError(
-                code: .init(.failedToChangeWorkingDirectory(workingDirectory)),
+                code: .init(.executableNotFound(self.executable.description)),
                 underlyingError: .init(rawValue: ENOENT)
             )
         }
-        throw SubprocessError(
-            code: .init(.executableNotFound(self.executable.description)),
-            underlyingError: .init(rawValue: ENOENT)
-        )
     }
 }
 

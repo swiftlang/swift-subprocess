@@ -26,7 +26,7 @@ internal import Dispatch
 #if SubprocessSpan
 @available(SubprocessSpan, *)
 #endif
-public protocol OutputProtocol: Sendable {
+public protocol OutputProtocol: Sendable, ~Copyable {
     associatedtype OutputType: Sendable
 
     #if SubprocessSpan
@@ -169,7 +169,9 @@ public struct BytesOutput: OutputProtocol {
             fileDescriptor.wrapped.readUntilEOF(upToLength: self.maxSize) { result in
                 switch result {
                 case .success(let data):
-                    //FIXME: remove workaround for rdar://143992296
+                    // FIXME: remove workaround for
+                    // rdar://143992296
+                    // https://github.com/swiftlang/swift-subprocess/issues/3
                     #if os(Windows)
                     continuation.resume(returning: data)
                     #else
@@ -334,7 +336,9 @@ extension OutputProtocol {
                 do {
                     switch result {
                     case .success(let data):
-                        //FIXME: remove workaround for rdar://143992296
+                        // FIXME: remove workaround for
+                        // rdar://143992296
+                        // https://github.com/swiftlang/swift-subprocess/issues/3
                         let output = try self.output(from: data)
                         continuation.resume(returning: output)
                     case .failure(let error):

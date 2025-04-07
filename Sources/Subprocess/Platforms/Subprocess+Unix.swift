@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2024 Apple Inc. and the Swift project authors
+// Copyright (c) 2025 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -320,34 +320,49 @@ extension Executable {
 
 // MARK: - PreSpawn
 extension Configuration {
-    internal func preSpawn() throws -> (
+    internal typealias PreSpawnArgs = (
         env: [UnsafeMutablePointer<CChar>?],
         uidPtr: UnsafeMutablePointer<uid_t>?,
         gidPtr: UnsafeMutablePointer<gid_t>?,
         supplementaryGroups: [gid_t]?
-    ) {
+    )
+
+    internal func preSpawn<Result>(
+        _ work: (PreSpawnArgs) throws -> Result
+    ) throws -> Result {
         // Prepare environment
         let env = self.environment.createEnv()
+        defer {
+            for ptr in env { ptr?.deallocate() }
+        }
 
         var uidPtr: UnsafeMutablePointer<uid_t>? = nil
         if let userID = self.platformOptions.userID {
             uidPtr = .allocate(capacity: 1)
             uidPtr?.pointee = userID
         }
+        defer {
+            uidPtr?.deallocate()
+        }
         var gidPtr: UnsafeMutablePointer<gid_t>? = nil
         if let groupID = self.platformOptions.groupID {
             gidPtr = .allocate(capacity: 1)
             gidPtr?.pointee = groupID
         }
+        defer {
+            gidPtr?.deallocate()
+        }
         var supplementaryGroups: [gid_t]?
         if let groupsValue = self.platformOptions.supplementaryGroups {
             supplementaryGroups = groupsValue
         }
-        return (
-            env: env,
-            uidPtr: uidPtr,
-            gidPtr: gidPtr,
-            supplementaryGroups: supplementaryGroups
+        return try work(
+            (
+                env: env,
+                uidPtr: uidPtr,
+                gidPtr: gidPtr,
+                supplementaryGroups: supplementaryGroups
+            )
         )
     }
 
@@ -530,16 +545,5 @@ extension FileDescriptor {
 }
 
 internal typealias PlatformFileDescriptor = FileDescriptor
-
-// MARK: - Read Buffer Size
-@inline(__always)
-internal var readBufferSize: Int {
-    #if canImport(Darwin)
-    return 16384
-    #else
-    // FIXME: Use Platform.pageSize here
-    return 4096
-    #endif  // canImport(Darwin)
-}
 
 #endif  // canImport(Darwin) || canImport(Glibc) || canImport(Bionic) || canImport(Musl)

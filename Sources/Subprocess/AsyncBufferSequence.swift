@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2024 Apple Inc. and the Swift project authors
+// Copyright (c) 2025 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -63,15 +63,40 @@ internal struct AsyncBufferSequence: AsyncSequence, Sendable {
     }
 }
 
-extension RangeReplaceableCollection {
-    /// Creates a new instance of a collection containing the elements of an asynchronous sequence.
-    ///
-    /// - Parameter source: The asynchronous sequence of elements for the new collection.
-    @inlinable
-    internal init<Source: AsyncSequence>(_ source: Source) async rethrows where Source.Element == Element {
-        self.init()
-        for try await item in source {
-            append(item)
-        }
-    }
+// MARK: - Page Size
+import _SubprocessCShims
+
+#if canImport(Darwin)
+import Darwin
+internal import MachO.dyld
+
+private let _pageSize: Int = {
+    Int(_subprocess_vm_size())
+}()
+#elseif canImport(WinSDK)
+import WinSDK
+private let _pageSize: Int = {
+    var sysInfo: SYSTEM_INFO = SYSTEM_INFO()
+    GetSystemInfo(&sysInfo)
+    return Int(sysInfo.dwPageSize)
+}()
+#elseif os(WASI)
+// WebAssembly defines a fixed page size
+private let _pageSize: Int = 65_536
+#elseif canImport(Android)
+@preconcurrency import Android
+private let _pageSize: Int = Int(getpagesize())
+#elseif canImport(Glibc)
+@preconcurrency import Glibc
+private let _pageSize: Int = Int(getpagesize())
+#elseif canImport(Musl)
+@preconcurrency import Musl
+private let _pageSize: Int = Int(getpagesize())
+#elseif canImport(C)
+private let _pageSize: Int = Int(getpagesize())
+#endif  // canImport(Darwin)
+
+@inline(__always)
+internal var readBufferSize: Int {
+    return _pageSize
 }

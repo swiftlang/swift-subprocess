@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2024 Apple Inc. and the Swift project authors
+// Copyright (c) 2025 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -18,7 +18,9 @@
 
 #include "include/process_shims.h"
 
-#if !TARGET_OS_WINDOWS
+#if TARGET_OS_WINDOWS
+#include <windows.h>
+#else
 #include <stdlib.h>
 #include <errno.h>
 #include <unistd.h>
@@ -71,6 +73,13 @@ int _shims_snprintf(
     char * _Nonnull str2
 ) {
     return snprintf(str, len, format, str1, str2);
+}
+#endif
+
+#if __has_include(<mach/vm_page_size.h>)
+vm_size_t _subprocess_vm_size(void) {
+    // This shim exists because vm_page_size is not marked const, and therefore looks like global mutable state to Swift.
+    return vm_page_size;
 }
 #endif
 
@@ -631,8 +640,6 @@ char ** _subprocess_get_environ(void) {
 
 
 #if TARGET_OS_WINDOWS
-
-#include <windows.h>
 
 typedef struct {
     DWORD pid;
