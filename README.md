@@ -31,6 +31,7 @@ On Swift 6.1 and above, `Subprocess` offers two [package traits](https://github.
 - `SubprocessFoundation`: includes a dependency on `Foundation` and adds extensions on Foundation types like `Data`. This trait is enabled by default.
 - `SubprocessSpan`: makes Subprocess’ API, mainly `OutputProtocol`, `RawSpan` based. This trait is enabled whenever `RawSpan` is available and should only be disabled when `RawSpan` is not available.
 
+Please find the API proposal [here](https://github.com/swiftlang/swift-foundation/blob/main/Proposals/0007-swift-subprocess.md).
 
 ### Swift Versions
 
