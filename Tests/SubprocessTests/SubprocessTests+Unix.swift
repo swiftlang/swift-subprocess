@@ -866,6 +866,46 @@ extension SubprocessUnixTests {
         try readFd.close()
     }
 
+    @Test func testConfigurationShellCommandDescrioption() throws {
+        // Working directory test
+        var configuration = Configuration(
+            executable: .path("/bin/ls"),
+            workingDirectory: "/opt/work"
+        )
+        #expect(configuration.shellCommandDescription.starts(with: "env -C /opt/work"))
+        // Environment test
+        configuration = Configuration(
+            executable: .path("/bin/ls"),
+            environment: .inherit.updating(["Planet": "Earth"]),
+            workingDirectory: "/opt/work"
+        )
+        #expect(configuration.shellCommandDescription.starts(with: "env -C /opt/work Planet=Earth"))
+        configuration = Configuration(
+            executable: .path("/bin/ls"),
+            environment: .custom(["Planet": "Mars"]),
+            workingDirectory: "/opt/work"
+        )
+        #expect(configuration.shellCommandDescription.starts(with: "env -C /opt/work -i Planet=Mars"))
+        // Executable tests
+        configuration = Configuration(
+            executable: .path("/opt/apple"),
+            workingDirectory: "/opt/work"
+        )
+        #expect(configuration.shellCommandDescription == "env -C /opt/work /opt/apple")
+        configuration = Configuration(
+            executable: .path("foundation"),
+            workingDirectory: "/opt/work"
+        )
+        #expect(configuration.shellCommandDescription == "env -C /opt/work foundation")
+        // Argument tests
+        configuration = Configuration(
+            executable: .path("/opt/apple"),
+            arguments: ["--planet", "jupiter"],
+            workingDirectory: "/opt/work"
+        )
+        #expect(configuration.shellCommandDescription == "env -C /opt/work /opt/apple --planet jupiter")
+    }
+
     @Test func testTerminateProcess() async throws {
         guard #available(SubprocessSpan , *) else {
             return
