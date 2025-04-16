@@ -1,0 +1,26 @@
+name: Pull request
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+jobs:
+  tests:
+    name: Test
+    uses: swiftlang/github-workflows/.github/workflows/swift_package_test.yml@macos-support
+    with:
+      linux_os_versions: '["amazonlinux2", "noble", "jammy", "focal", "rhel-ubi9", "bookworm"]'
+      linux_swift_versions: '["6.1", "nightly-main"]'
+      windows_swift_versions: '["6.1", "nightly-main"]'
+      enable_macos_checks: true
+      macos_xcode_versions: '["16.2"]'
+
+  soundness:
+    name: Soundness
+    uses: swiftlang/github-workflows/.github/workflows/soundness.yml@main
+    with:
+      license_header_check_project_name: "Swift.org"
+      docs_check_enabled: false
+      format_check_enabled: false
+      unacceptable_language_check_enabled: false
+      api_breakage_check_enabled: false
