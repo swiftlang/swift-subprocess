@@ -21,7 +21,7 @@ Then, adding the `Subprocess` module to your target dependencies:
 .target(
     name: "MyTarget",
     dependencies: [
-        .product(name: "Subprocess", package: "Subprocess")
+        .product(name: "Subprocess", package: "swift-subprocess")
     ]
 )
 ```
