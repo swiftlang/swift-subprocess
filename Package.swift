@@ -31,7 +31,7 @@ defaultTraits.insert("SubprocessSpan")
 
 let package = Package(
     name: "Subprocess",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v15)],
     products: [
         .library(
             name: "Subprocess",
