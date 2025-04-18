@@ -321,6 +321,8 @@ extension Configuration: CustomStringConvertible, CustomDebugStringConvertible {
                 workingDirectory: \(self.workingDirectory),
                 platformOptions: \(self.platformOptions.description(withIndent: 1))
             )
+            Approximate shell command
+            `\(self.shellCommandDescription)`
             """
     }
 
@@ -333,7 +335,17 @@ extension Configuration: CustomStringConvertible, CustomDebugStringConvertible {
                 workingDirectory: \(self.workingDirectory),
                 platformOptions: \(self.platformOptions.description(withIndent: 1))
             )
+            Approximate shell command
+            `\(self.shellCommandDescription)`
             """
+    }
+
+    internal var shellCommandDescription: String {
+        return [
+            self.environment.shellCommandDescription(withWorkingDirectory: self.workingDirectory),
+            self.executable.shellCommandDescription,
+            self.arguments.shellCommandDescrption,
+        ].joined(separator: " ")._trimmingWhitespace()
     }
 }
 
@@ -514,6 +526,15 @@ extension Executable: CustomStringConvertible, CustomDebugStringConvertible {
             return "path(\(filePath.string))"
         }
     }
+
+    internal var shellCommandDescription: String {
+        switch storage {
+        case .executable(let name):
+            return name
+        case .path(let path):
+            return path.string
+        }
+    }
 }
 
 extension Executable {
@@ -623,6 +644,10 @@ extension Arguments: CustomStringConvertible, CustomDebugStringConvertible {
     }
 
     public var debugDescription: String { return self.description }
+
+    internal var shellCommandDescrption: String {
+        return self.storage.map(\.description).joined(separator: " ")
+    }
 }
 
 // MARK: - Environment
@@ -689,6 +714,27 @@ extension Environment: CustomStringConvertible, CustomDebugStringConvertible {
 
     public var debugDescription: String {
         return self.description
+    }
+
+    internal func shellCommandDescription(withWorkingDirectory workingDirectory: FilePath) -> String {
+        let envPrefix = "env -C \(workingDirectory.string)"
+        switch self.config {
+        case .custom(let customDictionary):
+            let customValue =
+                customDictionary
+                .map { key, value in return "\(key)=\(value)" }
+                .joined(separator: " ")
+            return "\(envPrefix) -i \(customValue)"
+        case .inherit(let updates):
+            guard !updates.isEmpty else {
+                return envPrefix  // No custom value set
+            }
+            let updateValue = updates.map { key, value in return "\(key)=\(value)" }.joined(separator: " ")
+            return "\(envPrefix) \(updateValue)"
+        case .rawBytes(_):
+            // Can't specify raw bytes from command line
+            return envPrefix
+        }
     }
 
     internal static func currentEnvironmentValues() -> [String: String] {
@@ -888,6 +934,49 @@ extension FilePath {
         let path = getcwd(nil, 0)!
         defer { free(path) }
         return .init(String(cString: path))
+    }
+}
+
+extension String {
+    internal func _trimmingWhitespace() -> String {
+        if self.isEmpty {
+            return ""
+        }
+
+        return String(
+            unicodeScalars._trimmingCharacters(
+                in: Set<Unicode.Scalar>(
+                    arrayLiteral: Unicode.Scalar(" ")
+                )
+            )
+        )
+    }
+}
+
+extension BidirectionalCollection where Element == Unicode.Scalar, Index == String.Index {
+    internal func _trimmingCharacters(in set: Set<Unicode.Scalar>) -> SubSequence {
+
+        var idx = startIndex
+        while idx < endIndex && set.contains(self[idx]) {
+            formIndex(after: &idx)
+        }
+
+        let startOfNonTrimmedRange = idx  // Points at the first char not in the set
+        guard startOfNonTrimmedRange != endIndex else {
+            return self[endIndex...]
+        }
+
+        let beforeEnd = index(before: endIndex)
+        guard startOfNonTrimmedRange < beforeEnd else {
+            return self[startOfNonTrimmedRange..<endIndex]
+        }
+
+        var backIdx = beforeEnd
+        // No need to bound-check because we've already trimmed from the beginning, so we'd definitely break off of this loop before `backIdx` rewinds before `startIndex`
+        while set.contains(self[backIdx]) {
+            formIndex(before: &backIdx)
+        }
+        return self[startOfNonTrimmedRange...backIdx]
     }
 }
 
