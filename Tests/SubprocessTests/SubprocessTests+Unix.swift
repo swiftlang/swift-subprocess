@@ -35,7 +35,7 @@ import TestResources
 
 import Dispatch
 #if canImport(System)
-import System
+@preconcurrency import System
 #else
 @preconcurrency import SystemPackage
 #endif
@@ -884,6 +884,24 @@ extension SubprocessUnixTests {
             return
         }
         #expect(exception == Signal.terminate.rawValue)
+    }
+
+    @Test func testAtomicBox() async throws {
+        // Start with 0
+        let atomicBox = AtomicBox()
+        // After first insert: 0 ^ .standardErrorConsumed = .standardErrorConsumed
+        #expect(atomicBox.bitwiseXor(.standardErrorConsumed) == .standardErrorConsumed)
+        // Second insert:
+        // .standardErrorConsumed ^ .standardOutputConsumed =
+        //      (.standardErrorConsumed & .standardOutputConsumed)
+        #expect(atomicBox.bitwiseXor(.standardOutputConsumed).contains(.standardOutputConsumed))
+        // Thrid xor insert should remove error, but retain output:
+        // (.standardErrorConsumed & .standardOutputConsumed) ^ .standardErrorConsumed =
+        //    .standardOutputConsumed
+        #expect(atomicBox.bitwiseXor(.standardErrorConsumed).contains(.standardOutputConsumed))
+        // Fourth xor insert should clear out output as well:
+        // .standardOutputConsumed ^ .standardOutputConsumed = 0
+        #expect(atomicBox.bitwiseXor(.standardOutputConsumed) == OutputConsumptionState(rawValue: 0))
     }
 }
 

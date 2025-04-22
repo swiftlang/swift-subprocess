@@ -30,33 +30,41 @@ import WinSDK
 
 #endif  // canImport(Synchronization)
 
-internal protocol AtomicBoxProtocol: ~Copyable, Sendable {
-    borrowing func bitwiseXor(
-        _ operand: OutputConsumptionState
-    ) -> OutputConsumptionState
+internal struct AtomicBox: Sendable, ~Copyable {
+    internal typealias BitwiseXorFunc = (OutputConsumptionState) -> OutputConsumptionState
 
-    init(_ initialValue: OutputConsumptionState)
-}
+    private let storage: @Sendable () -> BitwiseXorFunc
 
-internal struct AtomicBox<Wrapped: AtomicBoxProtocol & ~Copyable>: ~Copyable, Sendable {
-
-    private let storage: Wrapped
-
-    internal init(_ storage: consuming Wrapped) {
-        self.storage = storage
+    internal init() {
+        #if canImport(Synchronization)
+        guard #available(macOS 15, *) else {
+            fatalError("Unexpected configuration")
+        }
+        let box = Atomic(UInt8(0))
+        self.storage = {
+            return { input in
+                return box._bitwiseXor(input)
+            }
+        }
+        #else
+        let state = LockedState(OutputConsumptionState(rawValue: 0))
+        self.storage = {
+            return state._bitwiseXor
+        }
+        #endif
     }
 
-    borrowing internal func bitwiseXor(
+    internal func bitwiseXor(
         _ operand: OutputConsumptionState
     ) -> OutputConsumptionState {
-        return self.storage.bitwiseXor(operand)
+        return self.storage()(operand)
     }
 }
 
 #if canImport(Synchronization)
 @available(macOS 15, *)
-extension Atomic: AtomicBoxProtocol where Value == UInt8 {
-    borrowing func bitwiseXor(
+extension Atomic where Value == UInt8 {
+    borrowing func _bitwiseXor(
         _ operand: OutputConsumptionState
     ) -> OutputConsumptionState {
         let newState = self.bitwiseXor(
@@ -72,12 +80,12 @@ extension Atomic: AtomicBoxProtocol where Value == UInt8 {
 }
 #else
 // Fallback to LockedState if `Synchronization` is not available
-extension LockedState: AtomicBoxProtocol where State == OutputConsumptionState {
+extension LockedState where State == OutputConsumptionState {
     init(_ initialValue: OutputConsumptionState) {
         self.init(initialState: initialValue)
     }
 
-    func bitwiseXor(
+    func _bitwiseXor(
         _ operand: OutputConsumptionState
     ) -> OutputConsumptionState {
         return self.withLock { state in

@@ -10,7 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #if canImport(System)
-import System
+@preconcurrency import System
 #else
 @preconcurrency import SystemPackage
 #endif
@@ -25,10 +25,6 @@ import Glibc
 import Musl
 #elseif canImport(WinSDK)
 import WinSDK
-#endif
-
-#if canImport(Synchronization)
-import Synchronization
 #endif
 
 /// An object that repersents a subprocess that has been
@@ -48,11 +44,8 @@ public final class Execution<
     internal let error: Error
     internal let outputPipe: CreatedPipe
     internal let errorPipe: CreatedPipe
-    #if canImport(Synchronization)
-    internal let outputConsumptionState: AtomicBox<Atomic<OutputConsumptionState.RawValue>>
-    #else
-    internal let outputConsumptionState: AtomicBox<LockedState<OutputConsumptionState>>
-    #endif
+    internal let outputConsumptionState: AtomicBox
+
     #if os(Windows)
     internal let consoleBehavior: PlatformOptions.ConsoleBehavior
 
@@ -69,11 +62,7 @@ public final class Execution<
         self.error = error
         self.outputPipe = outputPipe
         self.errorPipe = errorPipe
-        #if canImport(Synchronization)
-        self.outputConsumptionState = AtomicBox(Atomic(0))
-        #else
-        self.outputConsumptionState = AtomicBox(LockedState(OutputConsumptionState(rawValue: 0)))
-        #endif
+        self.outputConsumptionState = AtomicBox()
         self.consoleBehavior = consoleBehavior
     }
     #else
@@ -89,11 +78,7 @@ public final class Execution<
         self.error = error
         self.outputPipe = outputPipe
         self.errorPipe = errorPipe
-        #if canImport(Synchronization)
-        self.outputConsumptionState = AtomicBox(Atomic(0))
-        #else
-        self.outputConsumptionState = AtomicBox(LockedState(OutputConsumptionState(rawValue: 0)))
-        #endif
+        self.outputConsumptionState = AtomicBox()
     }
     #endif  // os(Windows)
 }
@@ -107,9 +92,9 @@ extension Execution where Output == SequenceOutput {
     /// Accessing this property will **fatalError** if this property was
     /// accessed multiple times. Subprocess communicates with parent process
     /// via pipe under the hood and each pipe can only be consumed once.
-    public var standardOutput: some AsyncSequence<SequenceOutput.Buffer, any Swift.Error> {
+    public var standardOutput: AsyncBufferSequence {
         let consumptionState = self.outputConsumptionState.bitwiseXor(
-            OutputConsumptionState.standardOutputConsumed,
+            OutputConsumptionState.standardOutputConsumed
         )
 
         guard consumptionState.contains(.standardOutputConsumed),
@@ -130,9 +115,9 @@ extension Execution where Error == SequenceOutput {
     /// Accessing this property will **fatalError** if this property was
     /// accessed multiple times. Subprocess communicates with parent process
     /// via pipe under the hood and each pipe can only be consumed once.
-    public var standardError: some AsyncSequence<SequenceOutput.Buffer, any Swift.Error> {
+    public var standardError: AsyncBufferSequence {
         let consumptionState = self.outputConsumptionState.bitwiseXor(
-            OutputConsumptionState.standardOutputConsumed,
+            OutputConsumptionState.standardOutputConsumed
         )
 
         guard consumptionState.contains(.standardErrorConsumed),

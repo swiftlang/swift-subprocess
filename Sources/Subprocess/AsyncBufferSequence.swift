@@ -10,7 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #if canImport(System)
-import System
+@preconcurrency import System
 #else
 @preconcurrency import SystemPackage
 #endif
@@ -18,14 +18,13 @@ import System
 #if SubprocessSpan
 @available(SubprocessSpan, *)
 #endif
-internal struct AsyncBufferSequence: AsyncSequence, Sendable {
-    internal typealias Failure = any Swift.Error
-
-    internal typealias Element = SequenceOutput.Buffer
+public struct AsyncBufferSequence: AsyncSequence, Sendable {
+    public typealias Failure = any Swift.Error
+    public typealias Element = SequenceOutput.Buffer
 
     @_nonSendable
-    internal struct Iterator: AsyncIteratorProtocol {
-        internal typealias Element = SequenceOutput.Buffer
+    public struct Iterator: AsyncIteratorProtocol {
+        public typealias Element = SequenceOutput.Buffer
 
         private let fileDescriptor: TrackedFileDescriptor
         private var buffer: [UInt8]
@@ -39,7 +38,7 @@ internal struct AsyncBufferSequence: AsyncSequence, Sendable {
             self.finished = false
         }
 
-        internal mutating func next() async throws -> SequenceOutput.Buffer? {
+        public mutating func next() async throws -> SequenceOutput.Buffer? {
             let data = try await self.fileDescriptor.wrapped.readChunk(
                 upToLength: readBufferSize
             )
@@ -58,7 +57,7 @@ internal struct AsyncBufferSequence: AsyncSequence, Sendable {
         self.fileDescriptor = fileDescriptor
     }
 
-    internal func makeAsyncIterator() -> Iterator {
+    public func makeAsyncIterator() -> Iterator {
         return Iterator(fileDescriptor: self.fileDescriptor)
     }
 }
