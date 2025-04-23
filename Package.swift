@@ -10,7 +10,7 @@ let availabilityMacro: SwiftSetting = .enableExperimentalFeature(
 var dep: [Package.Dependency] = [
     .package(
         url: "https://github.com/apple/swift-system",
-        from: "1.0.0"
+        from: "1.4.2"
     )
 ]
 #if !os(Windows)

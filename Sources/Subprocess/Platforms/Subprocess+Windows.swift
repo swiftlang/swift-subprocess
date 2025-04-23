@@ -976,43 +976,6 @@ internal typealias PlatformFileDescriptor = HANDLE
 
 // MARK: - Pipe Support
 extension FileDescriptor {
-    internal static func pipe() throws -> (
-        readEnd: FileDescriptor,
-        writeEnd: FileDescriptor
-    ) {
-        var saAttributes: SECURITY_ATTRIBUTES = SECURITY_ATTRIBUTES()
-        saAttributes.nLength = DWORD(MemoryLayout<SECURITY_ATTRIBUTES>.size)
-        saAttributes.bInheritHandle = true
-        saAttributes.lpSecurityDescriptor = nil
-
-        var readHandle: HANDLE? = nil
-        var writeHandle: HANDLE? = nil
-        guard CreatePipe(&readHandle, &writeHandle, &saAttributes, 0),
-            readHandle != INVALID_HANDLE_VALUE,
-            writeHandle != INVALID_HANDLE_VALUE,
-            let readHandle: HANDLE = readHandle,
-            let writeHandle: HANDLE = writeHandle
-        else {
-            throw SubprocessError(
-                code: .init(.failedToCreatePipe),
-                underlyingError: .init(rawValue: GetLastError())
-            )
-        }
-        let readFd = _open_osfhandle(
-            intptr_t(bitPattern: readHandle),
-            FileDescriptor.AccessMode.readOnly.rawValue
-        )
-        let writeFd = _open_osfhandle(
-            intptr_t(bitPattern: writeHandle),
-            FileDescriptor.AccessMode.writeOnly.rawValue
-        )
-
-        return (
-            readEnd: FileDescriptor(rawValue: readFd),
-            writeEnd: FileDescriptor(rawValue: writeFd)
-        )
-    }
-
     var platformDescriptor: PlatformFileDescriptor {
         return HANDLE(bitPattern: _get_osfhandle(self.rawValue))!
     }
