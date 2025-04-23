@@ -19,7 +19,7 @@ let package = Package(
     dependencies: [
         .package(
             url: "https://github.com/apple/swift-system",
-            from: "1.0.0"
+            from: "1.4.2"
         ),
         .package(
             url: "https://github.com/apple/swift-docc-plugin",
