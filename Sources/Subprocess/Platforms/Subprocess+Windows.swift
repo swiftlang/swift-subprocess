@@ -1185,8 +1185,12 @@ extension Optional where Wrapped == String {
     }
 }
 
-// MARK: - Remove these when merging back to SwiftFoundation
 extension String {
+    /// Invokes `body` with a resolved and potentially `\\?\`-prefixed version of the pointee,
+    /// to ensure long paths greater than MAX_PATH (260) characters are handled correctly.
+    ///
+    /// - parameter relative: Returns the original path without transforming through GetFullPathNameW + PathCchCanonicalizeEx, if the path is relative.
+    /// - seealso: https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation
     internal func withNTPathRepresentation<Result>(
         _ body: (UnsafePointer<WCHAR>) throws -> Result
     ) throws -> Result {
@@ -1209,26 +1213,79 @@ extension String {
         return try Substring(self.utf8.dropFirst(bLeadingSlash ? 1 : 0)).withCString(encodedAs: UTF16.self) {
             pwszPath in
             // 1. Normalize the path first.
+            // Contrary to the documentation, this works on long paths independently
+            // of the registry or process setting to enable long paths (but it will also
+            // not add the \\?\ prefix required by other functions under these conditions).
             let dwLength: DWORD = GetFullPathNameW(pwszPath, 0, nil, nil)
-            return try withUnsafeTemporaryAllocation(of: WCHAR.self, capacity: Int(dwLength)) {
-                guard GetFullPathNameW(pwszPath, DWORD($0.count), $0.baseAddress, nil) > 0 else {
+            return try withUnsafeTemporaryAllocation(of: WCHAR.self, capacity: Int(dwLength)) { pwszFullPath in
+                guard (1..<dwLength).contains(GetFullPathNameW(pwszPath, DWORD(pwszFullPath.count), pwszFullPath.baseAddress, nil)) else {
                     throw SubprocessError(
                         code: .init(.invalidWindowsPath(self)),
                         underlyingError: .init(rawValue: GetLastError())
                     )
                 }
 
-                // 2. Perform the operation on the normalized path.
-                return try body($0.baseAddress!)
+                // 1.5 Leave \\.\ prefixed paths alone since device paths are already an exact representation and PathCchCanonicalizeEx will mangle these.
+                if let base = pwszFullPath.baseAddress,
+                    base[0] == UInt16(UInt8._backslash),
+                    base[1] == UInt16(UInt8._backslash),
+                    base[2] == UInt16(UInt8._period),
+                    base[3] == UInt16(UInt8._backslash) {
+                    return try body(base)
+                }
+
+                // 2. Canonicalize the path.
+                // This will add the \\?\ prefix if needed based on the path's length.
+                var pwszCanonicalPath: LPWSTR?
+                let flags: ULONG = numericCast(PATHCCH_ALLOW_LONG_PATHS.rawValue)
+                let result = PathAllocCanonicalize(pwszFullPath.baseAddress, flags, &pwszCanonicalPath)
+                if let pwszCanonicalPath {
+                    defer { LocalFree(pwszCanonicalPath) }
+                    if result == S_OK {
+                        // 3. Perform the operation on the normalized path.
+                        return try body(pwszCanonicalPath)
+                    }
+                }
+                throw SubprocessError(
+                    code: .init(.invalidWindowsPath(self)),
+                    underlyingError: .init(rawValue: WIN32_FROM_HRESULT(result))
+                )
             }
         }
     }
+}
+
+@inline(__always)
+fileprivate func HRESULT_CODE(_ hr: HRESULT) -> DWORD {
+    DWORD(hr) & 0xffff
+}
+
+@inline(__always)
+fileprivate func HRESULT_FACILITY(_ hr: HRESULT) -> DWORD {
+    DWORD(hr << 16) & 0x1fff
+}
+
+@inline(__always)
+fileprivate func SUCCEEDED(_ hr: HRESULT) -> Bool {
+    hr >= 0
+}
+
+// This is a non-standard extension to the Windows SDK that allows us to convert
+// an HRESULT to a Win32 error code.
+@inline(__always)
+fileprivate func WIN32_FROM_HRESULT(_ hr: HRESULT) -> DWORD {
+    if SUCCEEDED(hr) { return DWORD(ERROR_SUCCESS) }
+    if HRESULT_FACILITY(hr) == FACILITY_WIN32 {
+        return HRESULT_CODE(hr)
+    }
+    return DWORD(hr)
 }
 
 extension UInt8 {
     static var _slash: UInt8 { UInt8(ascii: "/") }
     static var _backslash: UInt8 { UInt8(ascii: "\\") }
     static var _colon: UInt8 { UInt8(ascii: ":") }
+    static var _period: UInt8 { UInt8(ascii: ".") }
 
     var isLetter: Bool? {
         return (0x41...0x5a) ~= self || (0x61...0x7a) ~= self
