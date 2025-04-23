@@ -870,7 +870,7 @@ internal struct CreatedPipe {
     }
 
     internal init(closeWhenDone: Bool) throws {
-        let pipe = try FileDescriptor.pipe()
+        let pipe = try FileDescriptor.ssp_pipe()
 
         self.readFileDescriptor = .init(
             pipe.readEnd,
