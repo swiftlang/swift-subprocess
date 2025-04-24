@@ -790,7 +790,8 @@ extension SubprocessWindowsTests {
         // Wait for the process to finish
         WaitForSingleObject(processHandle, INFINITE)
 
-        let data = try await readFd.readUntilEOF(upToLength: 5)
+        // Up to 10 characters because Windows process IDs are DWORDs (UInt32), whose max value is 10 digits.
+        let data = try await readFd.readUntilEOF(upToLength: 10)
         let resultPID = try #require(
             String(data: data, encoding: .utf8)
         ).trimmingCharacters(in: .whitespacesAndNewlines)
