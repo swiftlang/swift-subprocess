@@ -658,7 +658,7 @@ extension SubprocessUnixTests {
             contentsOf: URL(filePath: theMysteriousIsland.string)
         )
         let catResult = try await Subprocess.run(
-            .name("/bin/bash"),
+            .path("/bin/bash"),
             arguments: ["-c", "cat \(theMysteriousIsland.string) 1>&2"],
             error: .data(limit: 2048 * 1024)
         )
@@ -756,7 +756,7 @@ extension SubprocessUnixTests {
         // Sets the process group ID to 0, which creates a new session
         platformOptions.processGroupID = 0
         let psResult = try await Subprocess.run(
-            .name("/bin/bash"),
+            .path("/bin/bash"),
             arguments: ["-c", "ps -o pid,pgid -p $$"],
             platformOptions: platformOptions,
             output: .string
@@ -782,7 +782,7 @@ extension SubprocessUnixTests {
         // Check the proces ID (pid), pross group ID (pgid), and
         // controling terminal's process group ID (tpgid)
         let psResult = try await Subprocess.run(
-            .name("/bin/bash"),
+            .path("/bin/bash"),
             arguments: ["-c", "ps -o pid,pgid,tpgid -p $$"],
             platformOptions: platformOptions,
             output: .string
@@ -795,7 +795,7 @@ extension SubprocessUnixTests {
             return
         }
         let result = try await Subprocess.run(
-            .name("/bin/bash"),
+            .path("/bin/bash"),
             arguments: [
                 "-c",
                 """
@@ -916,7 +916,7 @@ extension SubprocessUnixTests {
         isEqualTo expected: gid_t
     ) async throws {
         let idResult = try await Subprocess.run(
-            .name("/usr/bin/id"),
+            .path("/usr/bin/id"),
             arguments: [argument],
             platformOptions: platformOptions,
             output: .string
