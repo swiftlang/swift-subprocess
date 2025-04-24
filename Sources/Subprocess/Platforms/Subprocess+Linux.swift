@@ -257,6 +257,24 @@ private let _childProcessContinuations:
 
 private let signalSource: SendableSourceSignal = SendableSourceSignal()
 
+private extension siginfo_t {
+    var si_status: Int32 {
+        #if canImport(Glibc)
+        return _sifields._sigchld.si_status
+        #elseif canImport(Musl)
+        return __si_fields.__si_common.__second.__sigchld.si_status
+        #endif
+    }
+
+    var si_pid: pid_t {
+        #if canImport(Glibc)
+        return _sifields._sigchld.si_pid
+        #elseif canImport(Musl)
+        return __si_fields.__si_common.__first.__piduid.si_pid
+        #endif
+    }
+}
+
 private let setup: () = {
     signalSource.setEventHandler {
         _childProcessContinuations.withLock { continuations in
@@ -268,9 +286,9 @@ private let setup: () = {
                 var status: TerminationStatus? = nil
                 switch siginfo.si_code {
                 case .init(CLD_EXITED):
-                    status = .exited(siginfo._sifields._sigchld.si_status)
+                    status = .exited(siginfo.si_status)
                 case .init(CLD_KILLED), .init(CLD_DUMPED):
-                    status = .unhandledException(siginfo._sifields._sigchld.si_status)
+                    status = .unhandledException(siginfo.si_status)
                 case .init(CLD_TRAPPED), .init(CLD_STOPPED), .init(CLD_CONTINUED):
                     // Ignore these signals because they are not related to
                     // process exiting
@@ -279,7 +297,7 @@ private let setup: () = {
                     fatalError("Unexpected exit status: \(siginfo.si_code)")
                 }
                 if let status = status {
-                    let pid = siginfo._sifields._sigchld.si_pid
+                    let pid = siginfo.si_pid
                     if let existing = continuations.removeValue(forKey: pid),
                         case .continuation(let c) = existing
                     {

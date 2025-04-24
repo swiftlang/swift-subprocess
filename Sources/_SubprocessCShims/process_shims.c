@@ -251,6 +251,9 @@ int _subprocess_spawn(
 
 // MARK: - Linux (fork/exec + posix_spawn fallback)
 #if TARGET_OS_LINUX
+#ifndef __GLIBC_PREREQ
+#define __GLIBC_PREREQ(maj, min) 0
+#endif
 
 #if _POSIX_SPAWN
 static int _subprocess_is_addchdir_np_available() {
