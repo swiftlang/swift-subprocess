@@ -9,7 +9,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#if canImport(Darwin) || canImport(Glibc) || canImport(Bionic) || canImport(Musl)
+#if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl)
 
 #if canImport(System)
 @preconcurrency import System
@@ -21,8 +21,8 @@ import _SubprocessCShims
 
 #if canImport(Darwin)
 import Darwin
-#elseif canImport(Bionic)
-import Bionic
+#elseif canImport(Android)
+import Android
 #elseif canImport(Glibc)
 import Glibc
 #elseif canImport(Musl)
@@ -553,4 +553,4 @@ extension FileDescriptor {
 
 internal typealias PlatformFileDescriptor = FileDescriptor
 
-#endif  // canImport(Darwin) || canImport(Glibc) || canImport(Bionic) || canImport(Musl)
+#endif  // canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl)

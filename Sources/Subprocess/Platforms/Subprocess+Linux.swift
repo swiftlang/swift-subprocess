@@ -9,7 +9,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#if canImport(Glibc) || canImport(Bionic) || canImport(Musl)
+#if canImport(Glibc) || canImport(Android) || canImport(Musl)
 
 #if canImport(System)
 @preconcurrency import System
@@ -19,8 +19,8 @@
 
 #if canImport(Glibc)
 import Glibc
-#elseif canImport(Bionic)
-import Bionic
+#elseif canImport(Android)
+import Android
 #elseif canImport(Musl)
 import Musl
 #endif
@@ -263,6 +263,8 @@ private extension siginfo_t {
         return _sifields._sigchld.si_status
         #elseif canImport(Musl)
         return __si_fields.__si_common.__second.__sigchld.si_status
+        #elseif canImport(Bionic)
+        return _sifields._sigchld._status
         #endif
     }
 
@@ -271,6 +273,8 @@ private extension siginfo_t {
         return _sifields._sigchld.si_pid
         #elseif canImport(Musl)
         return __si_fields.__si_common.__first.__piduid.si_pid
+        #elseif canImport(Bionic)
+        return _sifields._kill._pid
         #endif
     }
 }
@@ -339,4 +343,4 @@ private func _setupMonitorSignalHandler() {
     setup
 }
 
-#endif  // canImport(Glibc) || canImport(Bionic) || canImport(Musl)
+#endif  // canImport(Glibc) || canImport(Android) || canImport(Musl)

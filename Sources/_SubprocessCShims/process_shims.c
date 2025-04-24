@@ -290,20 +290,23 @@ static int _subprocess_addchdir_np(
 #if defined(__GLIBC__) && !__GLIBC_PREREQ(2, 29)
     // Glibc versions prior to 2.29 don't support posix_spawn_file_actions_addchdir_np, impacting:
     //  - Amazon Linux 2 (EoL mid-2025)
-    // noop
+    return ENOTSUP;
+#elif defined(__ANDROID__) && __ANDROID_API__ < 34
+    // Android versions prior to 14 (API level 34) don't support posix_spawn_file_actions_addchdir_np
+    return ENOTSUP;
 #elif defined(__OpenBSD__) || defined(__QNX__)
     // Currently missing as of:
     //  - OpenBSD 7.5 (April 2024)
     //  - QNX 8 (December 2023)
-    // noop
-#elif defined(__GLIBC__) || TARGET_OS_DARWIN || defined(__FreeBSD__) || (defined(__ANDROID__) && __ANDROID_API__ >= 34) || defined(__musl__)
+    return ENOTSUP;
+#elif defined(__GLIBC__) || TARGET_OS_DARWIN || defined(__FreeBSD__) || defined(__ANDROID__) || defined(__musl__)
     // Pre-standard posix_spawn_file_actions_addchdir_np version available in:
     //  - Solaris 11.3 (October 2015)
     //  - Glibc 2.29 (February 2019)
     //  - macOS 10.15 (October 2019)
     //  - musl 1.1.24 (October 2019)
     //  - FreeBSD 13.1 (May 2022)
-    //  - Android 14 (October 2023)
+    //  - Android 14 (API level 34) (October 2023)
     return posix_spawn_file_actions_addchdir_np(file_actions, path);
 #else
     // Standardized posix_spawn_file_actions_addchdir version (POSIX.1-2024, June 2024) available in:
