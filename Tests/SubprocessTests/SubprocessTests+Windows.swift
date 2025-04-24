@@ -762,7 +762,7 @@ extension SubprocessWindowsTests {
     @available(SubprocessSpan, *)
     #endif
     @Test func testRunDetached() async throws {
-        let (readFd, writeFd) = try FileDescriptor.pipe()
+        let (readFd, writeFd) = try FileDescriptor.ssp_pipe()
         SetHandleInformation(
             readFd.platformDescriptor,
             DWORD(HANDLE_FLAG_INHERIT),

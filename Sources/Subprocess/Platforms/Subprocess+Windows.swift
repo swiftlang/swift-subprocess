@@ -976,6 +976,46 @@ internal typealias PlatformFileDescriptor = HANDLE
 
 // MARK: - Pipe Support
 extension FileDescriptor {
+    // NOTE: Not the same as SwiftSystem's FileDescriptor.pipe, which has different behavior,
+    // because it passes _O_NOINHERIT through the _pipe interface (https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/pipe),
+    // which ends up setting bInheritHandle to false in the SECURITY_ATTRIBUTES (see ucrt/conio/pipe.cpp in the ucrt sources).
+    internal static func ssp_pipe() throws -> (
+        readEnd: FileDescriptor,
+        writeEnd: FileDescriptor
+    ) {
+        var saAttributes: SECURITY_ATTRIBUTES = SECURITY_ATTRIBUTES()
+        saAttributes.nLength = DWORD(MemoryLayout<SECURITY_ATTRIBUTES>.size)
+        saAttributes.bInheritHandle = true
+        saAttributes.lpSecurityDescriptor = nil
+
+        var readHandle: HANDLE? = nil
+        var writeHandle: HANDLE? = nil
+        guard CreatePipe(&readHandle, &writeHandle, &saAttributes, 0),
+            readHandle != INVALID_HANDLE_VALUE,
+            writeHandle != INVALID_HANDLE_VALUE,
+            let readHandle: HANDLE = readHandle,
+            let writeHandle: HANDLE = writeHandle
+        else {
+            throw SubprocessError(
+                code: .init(.failedToCreatePipe),
+                underlyingError: .init(rawValue: GetLastError())
+            )
+        }
+        let readFd = _open_osfhandle(
+            intptr_t(bitPattern: readHandle),
+            FileDescriptor.AccessMode.readOnly.rawValue
+        )
+        let writeFd = _open_osfhandle(
+            intptr_t(bitPattern: writeHandle),
+            FileDescriptor.AccessMode.writeOnly.rawValue
+        )
+
+        return (
+            readEnd: FileDescriptor(rawValue: readFd),
+            writeEnd: FileDescriptor(rawValue: writeFd)
+        )
+    }
+
     var platformDescriptor: PlatformFileDescriptor {
         return HANDLE(bitPattern: _get_osfhandle(self.rawValue))!
     }
