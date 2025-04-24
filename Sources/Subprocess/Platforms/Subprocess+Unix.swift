@@ -375,6 +375,13 @@ extension Configuration {
 
 // MARK: - FileDescriptor extensions
 extension FileDescriptor {
+    internal static func ssp_pipe() throws -> (
+        readEnd: FileDescriptor,
+        writeEnd: FileDescriptor
+    ) {
+        try pipe()
+    }
+
     internal static func openDevNull(
         withAcessMode mode: FileDescriptor.AccessMode
     ) throws -> FileDescriptor {
