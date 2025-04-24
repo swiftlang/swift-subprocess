@@ -12,7 +12,7 @@
 #if canImport(Darwin) || canImport(Glibc) || canImport(Bionic) || canImport(Musl)
 
 #if canImport(System)
-import System
+@preconcurrency import System
 #else
 @preconcurrency import SystemPackage
 #endif

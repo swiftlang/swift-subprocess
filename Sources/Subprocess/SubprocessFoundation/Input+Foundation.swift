@@ -20,7 +20,7 @@ import FoundationEssentials
 #endif  // canImport(Darwin)
 
 #if canImport(System)
-import System
+@preconcurrency import System
 #else
 @preconcurrency import SystemPackage
 #endif

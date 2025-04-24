@@ -10,7 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #if canImport(System)
-import System
+@preconcurrency import System
 #else
 @preconcurrency import SystemPackage
 #endif
@@ -26,8 +26,6 @@ import Musl
 #elseif canImport(WinSDK)
 import WinSDK
 #endif
-
-import Synchronization
 
 /// An object that repersents a subprocess that has been
 /// executed. You can use this object to send signals to the
@@ -46,7 +44,8 @@ public final class Execution<
     internal let error: Error
     internal let outputPipe: CreatedPipe
     internal let errorPipe: CreatedPipe
-    internal let outputConsumptionState: Atomic<OutputConsumptionState.RawValue>
+    internal let outputConsumptionState: AtomicBox
+
     #if os(Windows)
     internal let consoleBehavior: PlatformOptions.ConsoleBehavior
 
@@ -63,7 +62,7 @@ public final class Execution<
         self.error = error
         self.outputPipe = outputPipe
         self.errorPipe = errorPipe
-        self.outputConsumptionState = Atomic(0)
+        self.outputConsumptionState = AtomicBox()
         self.consoleBehavior = consoleBehavior
     }
     #else
@@ -79,7 +78,7 @@ public final class Execution<
         self.error = error
         self.outputPipe = outputPipe
         self.errorPipe = errorPipe
-        self.outputConsumptionState = Atomic(0)
+        self.outputConsumptionState = AtomicBox()
     }
     #endif  // os(Windows)
 }
@@ -93,13 +92,12 @@ extension Execution where Output == SequenceOutput {
     /// Accessing this property will **fatalError** if this property was
     /// accessed multiple times. Subprocess communicates with parent process
     /// via pipe under the hood and each pipe can only be consumed once.
-    public var standardOutput: some AsyncSequence<SequenceOutput.Buffer, any Swift.Error> {
+    public var standardOutput: AsyncBufferSequence {
         let consumptionState = self.outputConsumptionState.bitwiseXor(
-            OutputConsumptionState.standardOutputConsumed.rawValue,
-            ordering: .relaxed
-        ).newValue
+            OutputConsumptionState.standardOutputConsumed
+        )
 
-        guard OutputConsumptionState(rawValue: consumptionState).contains(.standardOutputConsumed),
+        guard consumptionState.contains(.standardOutputConsumed),
             let fd = self.outputPipe.readFileDescriptor
         else {
             fatalError("The standard output has already been consumed")
@@ -117,13 +115,12 @@ extension Execution where Error == SequenceOutput {
     /// Accessing this property will **fatalError** if this property was
     /// accessed multiple times. Subprocess communicates with parent process
     /// via pipe under the hood and each pipe can only be consumed once.
-    public var standardError: some AsyncSequence<SequenceOutput.Buffer, any Swift.Error> {
+    public var standardError: AsyncBufferSequence {
         let consumptionState = self.outputConsumptionState.bitwiseXor(
-            OutputConsumptionState.standardErrorConsumed.rawValue,
-            ordering: .relaxed
-        ).newValue
+            OutputConsumptionState.standardOutputConsumed
+        )
 
-        guard OutputConsumptionState(rawValue: consumptionState).contains(.standardErrorConsumed),
+        guard consumptionState.contains(.standardErrorConsumed),
             let fd = self.errorPipe.readFileDescriptor
         else {
             fatalError("The standard output has already been consumed")

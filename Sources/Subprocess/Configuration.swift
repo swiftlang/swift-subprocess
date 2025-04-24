@@ -10,7 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #if canImport(System)
-import System
+@preconcurrency import System
 #else
 @preconcurrency import SystemPackage
 #endif
@@ -335,6 +335,7 @@ extension Configuration: CustomStringConvertible, CustomDebugStringConvertible {
             )
             """
     }
+
 }
 
 // MARK: - Cleanup

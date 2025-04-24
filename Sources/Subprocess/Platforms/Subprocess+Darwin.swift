@@ -14,7 +14,7 @@
 import Darwin
 internal import Dispatch
 #if canImport(System)
-import System
+@preconcurrency import System
 #else
 @preconcurrency import SystemPackage
 #endif
