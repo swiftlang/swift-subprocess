@@ -166,6 +166,9 @@ extension Configuration {
         error: Error,
         errorPipe: CreatedPipe
     ) throws -> Execution<Output, Error> {
+        #if !os(macOS)
+        throw SubprocessError(code: .init(.spawnFailed), underlyingError: .init(rawValue: ENOTSUP))
+        #else
         // Instead of checking if every possible executable path
         // is valid, spawn each directly and catch ENOENT
         let possiblePaths = self.executable.possibleExecutablePaths(
@@ -377,6 +380,7 @@ extension Configuration {
                 underlyingError: .init(rawValue: ENOENT)
             )
         }
+        #endif
     }
 }
 

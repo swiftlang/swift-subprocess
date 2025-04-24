@@ -32,11 +32,13 @@ struct SubprocessDarwinTests {
         }
         var platformOptions = PlatformOptions()
         platformOptions.preSpawnProcessConfigurator = { spawnAttr, _ in
+            #if os(macOS)
             // Set POSIX_SPAWN_SETSID flag, which implies calls
             // to setsid
             var flags: Int16 = 0
             posix_spawnattr_getflags(&spawnAttr, &flags)
             posix_spawnattr_setflags(&spawnAttr, flags | Int16(POSIX_SPAWN_SETSID))
+            #endif
         }
         // Check the proces ID (pid), pross group ID (pgid), and
         // controling terminal's process group ID (tpgid)
@@ -56,10 +58,12 @@ struct SubprocessDarwinTests {
         let intendedWorkingDir = FileManager.default.temporaryDirectory.path()
         var platformOptions = PlatformOptions()
         platformOptions.preSpawnProcessConfigurator = { _, fileAttr in
+            #if os(macOS)
             // Change the working directory
             intendedWorkingDir.withCString { path in
                 _ = posix_spawn_file_actions_addchdir_np(&fileAttr, path)
             }
+            #endif
         }
         let pwdResult = try await Subprocess.run(
             .path("/bin/pwd"),
