@@ -888,7 +888,7 @@ extension FilePath {
     static var currentWorkingDirectory: Self {
         let path = getcwd(nil, 0)!
         defer { free(path) }
-        return .init(String(cString: path))
+        return .init(platformString: path)
     }
 }
 
