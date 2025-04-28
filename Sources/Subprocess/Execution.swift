@@ -42,6 +42,7 @@ public final class Execution<
 
     internal let output: Output
     internal let error: Error
+    internal let inputPipe: CreatedPipe
     internal let outputPipe: CreatedPipe
     internal let errorPipe: CreatedPipe
     internal let outputConsumptionState: AtomicBox
@@ -53,6 +54,7 @@ public final class Execution<
         processIdentifier: ProcessIdentifier,
         output: Output,
         error: Error,
+        inputPipe: CreatedPipe,
         outputPipe: CreatedPipe,
         errorPipe: CreatedPipe,
         consoleBehavior: PlatformOptions.ConsoleBehavior
@@ -60,6 +62,7 @@ public final class Execution<
         self.processIdentifier = processIdentifier
         self.output = output
         self.error = error
+        self.inputPipe = inputPipe
         self.outputPipe = outputPipe
         self.errorPipe = errorPipe
         self.outputConsumptionState = AtomicBox()
@@ -70,12 +73,14 @@ public final class Execution<
         processIdentifier: ProcessIdentifier,
         output: Output,
         error: Error,
+        inputPipe: CreatedPipe,
         outputPipe: CreatedPipe,
         errorPipe: CreatedPipe
     ) {
         self.processIdentifier = processIdentifier
         self.output = output
         self.error = error
+        self.inputPipe = inputPipe
         self.outputPipe = outputPipe
         self.errorPipe = errorPipe
         self.outputConsumptionState = AtomicBox()
@@ -98,11 +103,11 @@ extension Execution where Output == SequenceOutput {
         )
 
         guard consumptionState.contains(.standardOutputConsumed),
-            let fd = self.outputPipe.readFileDescriptor
+            let readFd = self.outputPipe.readFileDescriptor
         else {
             fatalError("The standard output has already been consumed")
         }
-        return AsyncBufferSequence(fileDescriptor: fd)
+        return AsyncBufferSequence(diskIO: readFd)
     }
 }
 
@@ -121,11 +126,11 @@ extension Execution where Error == SequenceOutput {
         )
 
         guard consumptionState.contains(.standardErrorConsumed),
-            let fd = self.errorPipe.readFileDescriptor
+            let readFd = self.errorPipe.readFileDescriptor
         else {
             fatalError("The standard output has already been consumed")
         }
-        return AsyncBufferSequence(fileDescriptor: fd)
+        return AsyncBufferSequence(diskIO: readFd)
     }
 }
 

@@ -90,9 +90,6 @@ public struct Configuration: Sendable {
         // After spawn, cleanup child side fds
         try await self.cleanup(
             execution: execution,
-            inputPipe: inputPipe,
-            outputPipe: outputPipe,
-            errorPipe: errorPipe,
             childSide: true,
             parentSide: false,
             attemptToTerminateSubProcess: false
@@ -104,7 +101,7 @@ public struct Configuration: Sendable {
             // Body runs in the same isolation
             let result = try await body(
                 execution,
-                .init(fileDescriptor: inputPipe.writeFileDescriptor!)
+                .init(fileDescriptor: execution.inputPipe.writeFileDescriptor!)
             )
             return ExecutionResult(
                 terminationStatus: try await waitingStatus,
@@ -116,9 +113,6 @@ public struct Configuration: Sendable {
             // this is the best we can do
             try? await self.cleanup(
                 execution: execution,
-                inputPipe: inputPipe,
-                outputPipe: outputPipe,
-                errorPipe: errorPipe,
                 childSide: false,
                 parentSide: true,
                 attemptToTerminateSubProcess: true
@@ -154,9 +148,6 @@ public struct Configuration: Sendable {
         // After spawn, clean up child side
         try await self.cleanup(
             execution: execution,
-            inputPipe: inputPipe,
-            outputPipe: outputPipe,
-            errorPipe: errorPipe,
             childSide: true,
             parentSide: false,
             attemptToTerminateSubProcess: false
@@ -174,7 +165,7 @@ public struct Configuration: Sendable {
                 standardError
             ) = try await execution.captureIOs()
             // Write input in the same scope
-            guard let writeFd = inputPipe.writeFileDescriptor else {
+            guard let writeFd = execution.inputPipe.writeFileDescriptor else {
                 fatalError("Trying to write to an input that has been closed")
             }
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Swift.Error>) in
@@ -193,7 +184,7 @@ public struct Configuration: Sendable {
                     )
                     #endif
 
-                    writeFd.wrapped.write(bytes) { _, error in
+                    writeFd.write(bytes) { _, error in
                         if let error = error {
                             continuation.resume(throwing: error)
                         } else {
@@ -216,9 +207,6 @@ public struct Configuration: Sendable {
             // this is the best we can do
             try? await self.cleanup(
                 execution: execution,
-                inputPipe: inputPipe,
-                outputPipe: outputPipe,
-                errorPipe: errorPipe,
                 childSide: false,
                 parentSide: true,
                 attemptToTerminateSubProcess: true
@@ -257,9 +245,6 @@ public struct Configuration: Sendable {
         // After spawn, clean up child side
         try await self.cleanup(
             execution: execution,
-            inputPipe: inputPipe,
-            outputPipe: outputPipe,
-            errorPipe: errorPipe,
             childSide: true,
             parentSide: false,
             attemptToTerminateSubProcess: false
@@ -271,7 +256,7 @@ public struct Configuration: Sendable {
                 returning: ExecutionResult.self
             ) { group in
                 group.addTask {
-                    if let writeFd = inputPipe.writeFileDescriptor {
+                    if let writeFd = execution.inputPipe.writeFileDescriptor {
                         let writer = StandardInputWriter(fileDescriptor: writeFd)
                         try await input.write(with: writer)
                         try await writer.finish()
@@ -300,9 +285,6 @@ public struct Configuration: Sendable {
             // this is the best we can do
             try? await self.cleanup(
                 execution: execution,
-                inputPipe: inputPipe,
-                outputPipe: outputPipe,
-                errorPipe: errorPipe,
                 childSide: false,
                 parentSide: true,
                 attemptToTerminateSubProcess: true
@@ -350,9 +332,6 @@ extension Configuration {
         Error: OutputProtocol
     >(
         execution: Execution<Output, Error>,
-        inputPipe: CreatedPipe,
-        outputPipe: CreatedPipe,
-        errorPipe: CreatedPipe,
         childSide: Bool,
         parentSide: Bool,
         attemptToTerminateSubProcess: Bool
@@ -384,25 +363,25 @@ extension Configuration {
 
         if childSide {
             inputError = captureError {
-                try inputPipe.readFileDescriptor?.safelyClose()
+                try execution.inputPipe.readFileDescriptor?.safelyClose()
             }
             outputError = captureError {
-                try outputPipe.writeFileDescriptor?.safelyClose()
+                try execution.outputPipe.writeFileDescriptor?.safelyClose()
             }
             errorError = captureError {
-                try errorPipe.writeFileDescriptor?.safelyClose()
+                try execution.errorPipe.writeFileDescriptor?.safelyClose()
             }
         }
 
         if parentSide {
             inputError = captureError {
-                try inputPipe.writeFileDescriptor?.safelyClose()
+                try execution.inputPipe.writeFileDescriptor?.safelyClose()
             }
             outputError = captureError {
-                try outputPipe.readFileDescriptor?.safelyClose()
+                try execution.outputPipe.readFileDescriptor?.safelyClose()
             }
             errorError = captureError {
-                try errorPipe.readFileDescriptor?.safelyClose()
+                try execution.errorPipe.readFileDescriptor?.safelyClose()
             }
         }
 
@@ -822,19 +801,36 @@ internal enum StringOrRawBytes: Sendable, Hashable {
     }
 }
 
-/// A simple wrapper on `FileDescriptor` plus a flag indicating
-/// whether it should be closed automactially when done.
-internal struct TrackedFileDescriptor: Hashable {
+/// A wrapped `FileDescriptor` or `DispatchIO` and
+/// whether it should beeddsw closed automactially when done.
+internal struct DiskIO {
+    internal enum Storage {
+        case fileDescriptor(FileDescriptor)
+        #if !os(Windows) // Darwin and Linux
+        case dispatchIO(DispatchIO)
+        #endif
+    }
+
     internal let closeWhenDone: Bool
-    internal let wrapped: FileDescriptor
+    internal let storage: Storage
 
     internal init(
-        _ wrapped: FileDescriptor,
+        _ fileDescriptor: FileDescriptor,
         closeWhenDone: Bool
     ) {
-        self.wrapped = wrapped
+        self.storage = .fileDescriptor(fileDescriptor)
         self.closeWhenDone = closeWhenDone
     }
+
+    #if !os(Windows)
+    internal init(
+        _ dispatchIO: DispatchIO,
+        closeWhenDone: Bool
+    ) {
+        self.storage = .dispatchIO(dispatchIO)
+        self.closeWhenDone = closeWhenDone
+    }
+    #endif
 
     internal func safelyClose() throws {
         guard self.closeWhenDone else {
@@ -842,7 +838,14 @@ internal struct TrackedFileDescriptor: Hashable {
         }
 
         do {
-            try self.wrapped.close()
+            switch self.storage {
+            case .fileDescriptor(let fileDescriptor):
+                try fileDescriptor.close()
+            #if !os(Windows)
+            case .dispatchIO(let dispatchIO):
+                dispatchIO.close()
+            #endif
+            }
         } catch {
             guard let errno: Errno = error as? Errno else {
                 throw error
@@ -854,25 +857,39 @@ internal struct TrackedFileDescriptor: Hashable {
     }
 
     internal var platformDescriptor: PlatformFileDescriptor {
-        return self.wrapped.platformDescriptor
+        switch self.storage {
+        case .fileDescriptor(let fileDescriptor):
+            return fileDescriptor.platformDescriptor
+        #if !os(Windows)
+        case .dispatchIO(let dispatchIO):
+            return dispatchIO.fileDescriptor
+        #endif // !os(Windows)
+        }
     }
 }
 
 internal struct CreatedPipe {
-    internal let readFileDescriptor: TrackedFileDescriptor?
-    internal let writeFileDescriptor: TrackedFileDescriptor?
+    internal enum PipeEnd {
+        case readEnd
+        case writeEnd
+    }
+
+    internal let readFileDescriptor: DiskIO?
+    internal let writeFileDescriptor: DiskIO?
+    internal let parentEnd: PipeEnd
 
     internal init(
-        readFileDescriptor: TrackedFileDescriptor?,
-        writeFileDescriptor: TrackedFileDescriptor?
+        readFileDescriptor: DiskIO?,
+        writeFileDescriptor: DiskIO?,
+        parentEnd: PipeEnd
     ) {
         self.readFileDescriptor = readFileDescriptor
         self.writeFileDescriptor = writeFileDescriptor
+        self.parentEnd = parentEnd
     }
 
-    internal init(closeWhenDone: Bool) throws {
+    internal init(closeWhenDone: Bool, parentEnd: PipeEnd) throws {
         let pipe = try FileDescriptor.ssp_pipe()
-
         self.readFileDescriptor = .init(
             pipe.readEnd,
             closeWhenDone: closeWhenDone
@@ -881,6 +898,7 @@ internal struct CreatedPipe {
             pipe.writeEnd,
             closeWhenDone: closeWhenDone
         )
+        self.parentEnd = parentEnd
     }
 }
 

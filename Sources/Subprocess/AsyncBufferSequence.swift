@@ -26,39 +26,39 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
     public struct Iterator: AsyncIteratorProtocol {
         public typealias Element = SequenceOutput.Buffer
 
-        private let fileDescriptor: TrackedFileDescriptor
+        private let diskIO: DiskIO
         private var buffer: [UInt8]
         private var currentPosition: Int
         private var finished: Bool
 
-        internal init(fileDescriptor: TrackedFileDescriptor) {
-            self.fileDescriptor = fileDescriptor
+        internal init(diskIO: DiskIO) {
+            self.diskIO = diskIO
             self.buffer = []
             self.currentPosition = 0
             self.finished = false
         }
 
-        public mutating func next() async throws -> SequenceOutput.Buffer? {
-            let data = try await self.fileDescriptor.wrapped.readChunk(
+        public func next() async throws -> SequenceOutput.Buffer? {
+            let data = try await self.diskIO.readChunk(
                 upToLength: readBufferSize
             )
             if data == nil {
                 // We finished reading. Close the file descriptor now
-                try self.fileDescriptor.safelyClose()
+                try self.diskIO.safelyClose()
                 return nil
             }
             return data
         }
     }
 
-    private let fileDescriptor: TrackedFileDescriptor
+    private let diskIO: DiskIO
 
-    init(fileDescriptor: TrackedFileDescriptor) {
-        self.fileDescriptor = fileDescriptor
+    internal init(diskIO: DiskIO) {
+        self.diskIO = diskIO
     }
 
     public func makeAsyncIterator() -> Iterator {
-        return Iterator(fileDescriptor: self.fileDescriptor)
+        return Iterator(diskIO: self.diskIO)
     }
 }
 

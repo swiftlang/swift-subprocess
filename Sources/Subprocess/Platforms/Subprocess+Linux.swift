@@ -71,12 +71,12 @@ extension Configuration {
                 }
                 // Setup input
                 let fileDescriptors: [CInt] = [
-                    inputPipe.readFileDescriptor?.wrapped.rawValue ?? -1,
-                    inputPipe.writeFileDescriptor?.wrapped.rawValue ?? -1,
-                    outputPipe.writeFileDescriptor?.wrapped.rawValue ?? -1,
-                    outputPipe.readFileDescriptor?.wrapped.rawValue ?? -1,
-                    errorPipe.writeFileDescriptor?.wrapped.rawValue ?? -1,
-                    errorPipe.readFileDescriptor?.wrapped.rawValue ?? -1,
+                    inputPipe.readFileDescriptor?.platformDescriptor ?? -1,
+                    inputPipe.writeFileDescriptor?.platformDescriptor ?? -1,
+                    outputPipe.writeFileDescriptor?.platformDescriptor ?? -1,
+                    outputPipe.readFileDescriptor?.platformDescriptor ?? -1,
+                    errorPipe.writeFileDescriptor?.platformDescriptor ?? -1,
+                    errorPipe.readFileDescriptor?.platformDescriptor ?? -1,
                 ]
 
                 let workingDirectory: String = self.workingDirectory.string
@@ -126,8 +126,9 @@ extension Configuration {
                     processIdentifier: .init(value: pid),
                     output: output,
                     error: error,
-                    outputPipe: outputPipe,
-                    errorPipe: errorPipe
+                    inputPipe: inputPipe.prepareForReadWrite(),
+                    outputPipe: outputPipe.prepareForReadWrite(),
+                    errorPipe: errorPipe.prepareForReadWrite()
                 )
             }
 

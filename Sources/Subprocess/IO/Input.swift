@@ -50,13 +50,15 @@ public struct NoInput: InputProtocol {
         // to signal no input
         return CreatedPipe(
             readFileDescriptor: nil,
-            writeFileDescriptor: nil
+            writeFileDescriptor: nil,
+            parentEnd: .writeEnd
         )
         #else
         let devnull: FileDescriptor = try .openDevNull(withAcessMode: .readOnly)
         return CreatedPipe(
             readFileDescriptor: .init(devnull, closeWhenDone: true),
-            writeFileDescriptor: nil
+            writeFileDescriptor: nil,
+            parentEnd: .writeEnd
         )
         #endif
     }
@@ -83,7 +85,8 @@ public struct FileDescriptorInput: InputProtocol {
                 self.fileDescriptor,
                 closeWhenDone: self.closeAfterSpawningProcess
             ),
-            writeFileDescriptor: nil
+            writeFileDescriptor: nil,
+            parentEnd: .writeEnd
         )
     }
 
@@ -203,7 +206,7 @@ extension InputProtocol {
             return try fdInput.createPipe()
         }
         // Base implementation
-        return try CreatedPipe(closeWhenDone: true)
+        return try CreatedPipe(closeWhenDone: true, parentEnd: .writeEnd)
     }
 }
 
@@ -212,10 +215,10 @@ extension InputProtocol {
 /// A writer that writes to the standard input of the subprocess.
 public final actor StandardInputWriter: Sendable {
 
-    internal let fileDescriptor: TrackedFileDescriptor
+    internal let diskIO: DiskIO
 
-    init(fileDescriptor: TrackedFileDescriptor) {
-        self.fileDescriptor = fileDescriptor
+    init(fileDescriptor: DiskIO) {
+        self.diskIO = fileDescriptor
     }
 
     /// Write an array of UInt8 to the standard input of the subprocess.
@@ -224,7 +227,7 @@ public final actor StandardInputWriter: Sendable {
     public func write(
         _ array: [UInt8]
     ) async throws -> Int {
-        return try await self.fileDescriptor.wrapped.write(array)
+        return try await self.diskIO.write(array)
     }
 
     /// Write a `RawSpan` to the standard input of the subprocess.
@@ -233,7 +236,7 @@ public final actor StandardInputWriter: Sendable {
     #if SubprocessSpan
     @available(SubprocessSpan, *)
     public func write(_ span: borrowing RawSpan) async throws -> Int {
-        return try await self.fileDescriptor.wrapped.write(span)
+        return try await self.diskIO.write(span)
     }
     #endif
 
@@ -254,7 +257,7 @@ public final actor StandardInputWriter: Sendable {
 
     /// Signal all writes are finished
     public func finish() async throws {
-        try self.fileDescriptor.safelyClose()
+        try self.diskIO.safelyClose()
     }
 }
 
