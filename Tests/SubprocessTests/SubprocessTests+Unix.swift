@@ -746,6 +746,10 @@ extension SubprocessUnixTests {
         .enabled(
             if: getgid() == 0,
             "This test requires root privileges"
+        ),
+        .enabled(
+            if: (try? Executable.name("ps").resolveExecutablePath(in: .inherit)) != nil,
+            "This test requires ps (install procps package on Debian or RedHat Linux distros)"
         )
     )
     func testSubprocessPlatformOptionsProcessGroupID() async throws {
@@ -764,15 +768,19 @@ extension SubprocessUnixTests {
         #expect(psResult.terminationStatus.isSuccess)
         let resultValue = try #require(
             psResult.standardOutput
-        ).split { $0.isWhitespace || $0.isNewline }
-        #expect(resultValue.count == 4)
-        #expect(resultValue[0] == "PID")
-        #expect(resultValue[1] == "PGID")
+        )
+        let match = try #require(try #/\s*PID\s*PGID\s*(?<pid>[\-]?[0-9]+)\s*(?<pgid>[\-]?[0-9]+)\s*/#.wholeMatch(in: resultValue), "ps output was in an unexpected format:\n\n\(resultValue)")
         // PGID should == PID
-        #expect(resultValue[2] == resultValue[3])
+        #expect(match.output.pid == match.output.pgid)
     }
 
-    @Test func testSubprocessPlatformOptionsCreateSession() async throws {
+    @Test(
+        .enabled(
+            if: (try? Executable.name("ps").resolveExecutablePath(in: .inherit)) != nil,
+            "This test requires ps (install procps package on Debian or RedHat Linux distros)"
+        )
+    )
+    func testSubprocessPlatformOptionsCreateSession() async throws {
         guard #available(SubprocessSpan , *) else {
             return
         }
@@ -941,19 +949,14 @@ internal func assertNewSessionCreated<Output: OutputProtocol>(
     #expect(result.terminationStatus.isSuccess)
     let psValue = try #require(
         result.standardOutput
-    ).split {
-        return $0.isNewline || $0.isWhitespace
-    }
-    #expect(psValue.count == 6)
+    )
+    let match = try #require(try #/\s*PID\s*PGID\s*TPGID\s*(?<pid>[\-]?[0-9]+)\s*(?<pgid>[\-]?[0-9]+)\s*(?<tpgid>[\-]?[0-9]+)\s*/#.wholeMatch(in: psValue), "ps output was in an unexpected format:\n\n\(psValue)")
     // If setsid() has been called successfully, we shold observe:
     // - pid == pgid
     // - tpgid <= 0
-    #expect(psValue[0] == "PID")
-    #expect(psValue[1] == "PGID")
-    #expect(psValue[2] == "TPGID")
-    let pid = try #require(Int(psValue[3]))
-    let pgid = try #require(Int(psValue[4]))
-    let tpgid = try #require(Int(psValue[5]))
+    let pid = try #require(Int(match.output.pid))
+    let pgid = try #require(Int(match.output.pgid))
+    let tpgid = try #require(Int(match.output.tpgid))
     #expect(pid == pgid)
     #expect(tpgid <= 0)
 }
@@ -1009,11 +1012,14 @@ extension SubprocessUnixTests {
             let limitString = limitResult
                 .standardOutput?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
-            let limit = Int(limitString)
+            let ulimit = Int(limitString)
         else {
             Issue.record("Failed to run  ulimit -n")
             return
         }
+        // Constrain to an ultimate upper limit of 4096, since Docker containers can have limits like 2^20 which is a bit too high for this test.
+        // Common defaults are 2560 for macOS and 1024 for Linux.
+        let limit = min(ulimit, 4096)
         // Since we open two pipes per `run`, launch
         // limit / 4 subprocesses should reveal any
         // file descriptor leaks
