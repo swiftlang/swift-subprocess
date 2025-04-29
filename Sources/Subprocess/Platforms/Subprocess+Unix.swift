@@ -395,79 +395,69 @@ extension FileDescriptor {
 }
 
 internal typealias PlatformFileDescriptor = CInt
+internal typealias TrackedPlatformDiskIO = TrackedDispatchIO
 
 extension CreatedPipe {
-    /// On Darwin and Linux, wrap the file descriptors to `DispatchIO`
-    /// since we will be using `DispatchIO` to perform read/write
-    internal func prepareForReadWrite() -> CreatedPipe {
-        var readEnd: DiskIO? = self.readFileDescriptor
-        var writeEnd: DiskIO? = self.writeFileDescriptor
-
-        switch self.parentEnd {
-        case .readEnd:
-            // Wrap read end in DispatchIO
-            if let readFd = self.readFileDescriptor {
-                switch readFd.storage {
-                case .fileDescriptor(let fileDescriptor):
-                    let dispatchIO: DispatchIO = DispatchIO(
-                        type: .stream,
-                        fileDescriptor: fileDescriptor.rawValue,
-                        queue: .global(),
-                        cleanupHandler: { error in
-                            // Close the file descriptor
-                            if readFd.closeWhenDone {
-                                try? fileDescriptor.close()
-                            }
-                        }
-                    )
-                    readEnd = .init(dispatchIO, closeWhenDone: readFd.closeWhenDone)
-                case .dispatchIO(_):
-                    readEnd = readFd
+    internal func createInputPipe() -> InputPipe {
+        var writeEnd: TrackedPlatformDiskIO? = nil
+        if let writeFileDescriptor = self.writeFileDescriptor {
+            let dispatchIO: DispatchIO = DispatchIO(
+                type: .stream,
+                fileDescriptor: writeFileDescriptor.platformDescriptor,
+                queue: .global(),
+                cleanupHandler: { error in
+                    // Close the file descriptor
+                    if writeFileDescriptor.closeWhenDone {
+                        try? writeFileDescriptor.safelyClose()
+                    }
                 }
-            }
-        case .writeEnd:
-            // Wrap write end in DispatchIO
-            if let writeFd = self.writeFileDescriptor {
-                switch writeFd.storage {
-                case .fileDescriptor(let fileDescriptor):
-                    let dispatchIO: DispatchIO = DispatchIO(
-                        type: .stream,
-                        fileDescriptor: fileDescriptor.rawValue,
-                        queue: .global(),
-                        cleanupHandler: { error in
-                            // Close the file descriptor
-                            if writeFd.closeWhenDone {
-                                try? fileDescriptor.close()
-                            }
-                        }
-                    )
-                    writeEnd = .init(dispatchIO, closeWhenDone: writeFd.closeWhenDone)
-                case .dispatchIO(_):
-                    writeEnd = writeFd
-                }
-            }
+            )
+            writeEnd = .init(
+                dispatchIO,
+                closeWhenDone: writeFileDescriptor.closeWhenDone
+            )
         }
+        return InputPipe(
+            readEnd: self.readFileDescriptor,
+            writeEnd: writeEnd
+        )
+    }
 
-        return CreatedPipe(
-            readFileDescriptor: readEnd,
-            writeFileDescriptor: writeEnd,
-            parentEnd: self.parentEnd
+    internal func createOutputPipe() -> OutputPipe {
+        var readEnd: TrackedPlatformDiskIO? = nil
+        if let readFileDescriptor = self.readFileDescriptor {
+            let dispatchIO: DispatchIO = DispatchIO(
+                type: .stream,
+                fileDescriptor: readFileDescriptor.platformDescriptor,
+                queue: .global(),
+                cleanupHandler: { error in
+                    // Close the file descriptor
+                    if readFileDescriptor.closeWhenDone {
+                        try? readFileDescriptor.safelyClose()
+                    }
+                }
+            )
+            readEnd = .init(
+                dispatchIO,
+                closeWhenDone: readFileDescriptor.closeWhenDone
+            )
+        }
+        return OutputPipe(
+            readEnd: readEnd,
+            writeEnd: self.writeFileDescriptor
         )
     }
 }
 
-// MARK: - DiskIO extensions
-extension DiskIO {
+// MARK: - TrackedDispatchIO extensions
+extension TrackedDispatchIO {
 #if SubprocessSpan
     @available(SubprocessSpan, *)
 #endif
     package func readChunk(upToLength maxLength: Int) async throws -> SequenceOutput.Buffer? {
         return try await withCheckedThrowingContinuation { continuation in
-            guard case .dispatchIO(let dispatchIO) = self.storage else {
-                fatalError("On Darwin and Linux DiskIO should be DispatchIO")
-            }
             var buffer: DispatchData = .empty
-            dispatchIO.read(
+            self.dispatchIO.read(
                 offset: 0,
                 length: maxLength,
                 queue: .global()
@@ -503,17 +493,13 @@ extension DiskIO {
         upToLength maxLength: Int,
         resultHandler: sending @escaping (Swift.Result<DispatchData, any Error>) -> Void
     ) {
-        guard case .dispatchIO(let dispatchIO) = self.storage else {
-            fatalError("On Darwin and Linux DiskIO should be DispatchIO: \(self.storage)")
-        }
         var buffer: DispatchData?
-        dispatchIO.read(
+        self.dispatchIO.read(
             offset: 0,
             length: maxLength,
             queue: .global()
         ) { done, data, error in
             guard error == 0, let chunkData = data else {
-                dispatchIO.close()
                 resultHandler(
                     .failure(
                         SubprocessError(
@@ -527,7 +513,6 @@ extension DiskIO {
             // Easy case: if we are done and buffer is nil, this means
             // there is only one chunk of data
             if done && buffer == nil {
-                dispatchIO.close()
                 buffer = chunkData
                 resultHandler(.success(chunkData))
                 return
@@ -540,7 +525,6 @@ extension DiskIO {
             }
 
             if done {
-                dispatchIO.close()
                 resultHandler(.success(buffer!))
                 return
             }
@@ -605,10 +589,7 @@ extension DiskIO {
         queue: DispatchQueue = .global(),
         completion: @escaping (Int, Error?) -> Void
     ) {
-        guard case .dispatchIO(let dispatchIO) = self.storage else {
-            fatalError("On Darwin and Linux DiskIO should be DispatchIO")
-        }
-        dispatchIO.write(
+        self.dispatchIO.write(
             offset: 0,
             data: dispatchData,
             queue: queue

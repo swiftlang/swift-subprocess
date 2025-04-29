@@ -26,12 +26,12 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
     public struct Iterator: AsyncIteratorProtocol {
         public typealias Element = SequenceOutput.Buffer
 
-        private let diskIO: DiskIO
+        private let diskIO: TrackedPlatformDiskIO
         private var buffer: [UInt8]
         private var currentPosition: Int
         private var finished: Bool
 
-        internal init(diskIO: DiskIO) {
+        internal init(diskIO: TrackedPlatformDiskIO) {
             self.diskIO = diskIO
             self.buffer = []
             self.currentPosition = 0
@@ -51,9 +51,9 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
         }
     }
 
-    private let diskIO: DiskIO
+    private let diskIO: TrackedPlatformDiskIO
 
-    internal init(diskIO: DiskIO) {
+    internal init(diskIO: TrackedPlatformDiskIO) {
         self.diskIO = diskIO
     }
 

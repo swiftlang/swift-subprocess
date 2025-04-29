@@ -68,15 +68,13 @@ public struct DiscardedOutput: OutputProtocol {
         // to signal no output
         return CreatedPipe(
             readFileDescriptor: nil,
-            writeFileDescriptor: nil,
-            parentEnd: .readEnd
+            writeFileDescriptor: nil
         )
         #else
         let devnull: FileDescriptor = try .openDevNull(withAcessMode: .readOnly)
         return CreatedPipe(
             readFileDescriptor: nil,
-            writeFileDescriptor: .init(devnull, closeWhenDone: true),
-            parentEnd: .readEnd
+            writeFileDescriptor: .init(devnull, closeWhenDone: true)
         )
         #endif
     }
@@ -104,8 +102,7 @@ public struct FileDescriptorOutput: OutputProtocol {
             writeFileDescriptor: .init(
                 self.fileDescriptor,
                 closeWhenDone: self.closeAfterSpawningProcess
-            ),
-            parentEnd: .readEnd
+            )
         )
     }
 
@@ -163,7 +160,9 @@ public struct BytesOutput: OutputProtocol {
     public typealias OutputType = [UInt8]
     public let maxSize: Int
 
-    internal func captureOutput(from diskIO: DiskIO?) async throws -> [UInt8] {
+    internal func captureOutput(
+        from diskIO: TrackedPlatformDiskIO?
+    ) async throws -> [UInt8] {
         return try await withCheckedThrowingContinuation { continuation in
             guard let diskIO = diskIO else {
                 // Show not happen due to type system constraints
@@ -301,6 +300,22 @@ extension OutputProtocol {
 }
 #endif
 
+// MARK: - OutputPipe
+internal struct OutputPipe {
+    // On Darwin and Linux, parent end (read end) should be
+    // wrapped as `DispatchIO` for reading
+    internal let readEnd: TrackedPlatformDiskIO?
+    internal let writeEnd: TrackedFileDescriptor?
+
+    internal init(
+        readEnd: TrackedPlatformDiskIO?,
+        writeEnd: TrackedFileDescriptor?
+    ) {
+        self.readEnd = readEnd
+        self.writeEnd = writeEnd
+    }
+}
+
 // MARK: - Default Implementations
 #if SubprocessSpan
 @available(SubprocessSpan, *)
@@ -314,13 +329,13 @@ extension OutputProtocol {
             return try fdOutput.createPipe()
         }
         // Base pipe based implementation for everything else
-        return try CreatedPipe(closeWhenDone: true, parentEnd: .readEnd)
+        return try CreatedPipe(closeWhenDone: true)
     }
 
     /// Capture the output from the subprocess up to maxSize
     @_disfavoredOverload
     internal func captureOutput(
-        from diskIO: DiskIO?
+        from diskIO: TrackedPlatformDiskIO?
     ) async throws -> OutputType {
         if let bytesOutput = self as? BytesOutput {
             return try await bytesOutput.captureOutput(from: diskIO) as! Self.OutputType
@@ -359,7 +374,7 @@ extension OutputProtocol {
 @available(SubprocessSpan, *)
 #endif
 extension OutputProtocol where OutputType == Void {
-    internal func captureOutput(from fileDescriptor: DiskIO?) async throws {}
+    internal func captureOutput(from fileDescriptor: TrackedPlatformDiskIO?) async throws {}
 
     #if SubprocessSpan
     /// Convert the output from Data to expected output type

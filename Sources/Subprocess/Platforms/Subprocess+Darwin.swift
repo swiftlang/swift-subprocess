@@ -354,9 +354,9 @@ extension Configuration {
                     processIdentifier: .init(value: pid),
                     output: output,
                     error: error,
-                    inputPipe: inputPipe.prepareForReadWrite(),
-                    outputPipe: outputPipe.prepareForReadWrite(),
-                    errorPipe: errorPipe.prepareForReadWrite()
+                    inputPipe: inputPipe.createInputPipe(),
+                    outputPipe: outputPipe.createOutputPipe(),
+                    errorPipe: errorPipe.createOutputPipe()
                 )
             }
 

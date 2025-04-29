@@ -128,8 +128,8 @@ extension StandardInputWriter {
     }
 }
 
-extension DiskIO {
-    #if os(Windows)
+#if os(Windows)
+extension TrackedFileDescriptor {
     internal func write(
         _ data: Data
     ) async throws -> Int {
@@ -148,7 +148,9 @@ extension DiskIO {
             }
         }
     }
-    #else
+}
+#else
+extension TrackedDispatchIO {
     internal func write(
         _ data: Data
     ) async throws -> Int {
@@ -173,7 +175,7 @@ extension DiskIO {
             }
         }
     }
-    #endif
 }
+#endif // os(Windows)
 
 #endif  // SubprocessFoundation

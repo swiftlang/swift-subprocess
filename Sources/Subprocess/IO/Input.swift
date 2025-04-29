@@ -50,15 +50,13 @@ public struct NoInput: InputProtocol {
         // to signal no input
         return CreatedPipe(
             readFileDescriptor: nil,
-            writeFileDescriptor: nil,
-            parentEnd: .writeEnd
+            writeFileDescriptor: nil
         )
         #else
         let devnull: FileDescriptor = try .openDevNull(withAcessMode: .readOnly)
         return CreatedPipe(
             readFileDescriptor: .init(devnull, closeWhenDone: true),
-            writeFileDescriptor: nil,
-            parentEnd: .writeEnd
+            writeFileDescriptor: nil
         )
         #endif
     }
@@ -85,8 +83,7 @@ public struct FileDescriptorInput: InputProtocol {
                 self.fileDescriptor,
                 closeWhenDone: self.closeAfterSpawningProcess
             ),
-            writeFileDescriptor: nil,
-            parentEnd: .writeEnd
+            writeFileDescriptor: nil
         )
     }
 
@@ -206,7 +203,7 @@ extension InputProtocol {
             return try fdInput.createPipe()
         }
         // Base implementation
-        return try CreatedPipe(closeWhenDone: true, parentEnd: .writeEnd)
+        return try CreatedPipe(closeWhenDone: true)
     }
 }
 
@@ -215,10 +212,10 @@ extension InputProtocol {
 /// A writer that writes to the standard input of the subprocess.
 public final actor StandardInputWriter: Sendable {
 
-    internal let diskIO: DiskIO
+    internal let diskIO: TrackedPlatformDiskIO
 
-    init(fileDescriptor: DiskIO) {
-        self.diskIO = fileDescriptor
+    init(diskIO: TrackedPlatformDiskIO) {
+        self.diskIO = diskIO
     }
 
     /// Write an array of UInt8 to the standard input of the subprocess.
@@ -258,6 +255,23 @@ public final actor StandardInputWriter: Sendable {
     /// Signal all writes are finished
     public func finish() async throws {
         try self.diskIO.safelyClose()
+    }
+}
+
+
+// MARK: - InputPipe
+internal struct InputPipe {
+    // On Darwin and Linux, parent end (write end) should be
+    // wrapped as `DispatchIO` for writing
+    internal let readEnd: TrackedFileDescriptor?
+    internal let writeEnd: TrackedPlatformDiskIO?
+
+    internal init(
+        readEnd: TrackedFileDescriptor?,
+        writeEnd: TrackedPlatformDiskIO?
+    ) {
+        self.readEnd = readEnd
+        self.writeEnd = writeEnd
     }
 }
 

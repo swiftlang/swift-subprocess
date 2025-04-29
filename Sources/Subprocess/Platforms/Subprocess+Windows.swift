@@ -151,9 +151,9 @@ extension Configuration {
             processIdentifier: pid,
             output: output,
             error: error,
-            inputPipe: inputPipe.prepareForReadWrite(),
-            outputPipe: outputPipe.prepareForReadWrite(),
-            errorPipe: errorPipe.prepareForReadWrite(),
+            inputPipe: inputPipe.createInputPipe(),
+            outputPipe: outputPipe.createOutputPipe(),
+            errorPipe: errorPipe.createOutputPipe(),
             consoleBehavior: self.platformOptions.consoleBehavior
         )
     }
@@ -268,9 +268,9 @@ extension Configuration {
             processIdentifier: pid,
             output: output,
             error: error,
-            inputPipe: inputPipe.prepareForReadWrite(),
-            outputPipe: outputPipe.prepareForReadWrite(),
-            errorPipe: errorPipe.prepareForReadWrite(),
+            inputPipe: inputPipe.createInputPipe(),
+            outputPipe: outputPipe.createOutputPipe(),
+            errorPipe: errorPipe.createOutputPipe(),
             consoleBehavior: self.platformOptions.consoleBehavior
         )
     }
@@ -973,8 +973,10 @@ extension Configuration {
     }
 }
 
-// MARK: - PlatformFileDescriptor Type
+// MARK: - Type alias
 internal typealias PlatformFileDescriptor = HANDLE
+
+internal typealias TrackedPlatformDiskIO = TrackedFileDescriptor
 
 // MARK: - Pipe Support
 extension FileDescriptor {
@@ -1025,12 +1027,22 @@ extension FileDescriptor {
 
 extension CreatedPipe {
     /// On Windows, we use file descriptors directly
-    internal func prepareForReadWrite() -> CreatedPipe {
-        return self
+    internal func createInputPipe() -> InputPipe {
+        return InputPipe(
+            readEnd: self.readFileDescriptor,
+            writeEnd: self.writeFileDescriptor
+        )
+    }
+
+    internal func createOutputPipe() -> OutputPipe {
+        return OutputPipe(
+            readEnd: self.readFileDescriptor,
+            writeEnd: self.writeFileDescriptor
+        )
     }
 }
 
-extension DiskIO {
+extension TrackedFileDescriptor {
     internal func readChunk(upToLength maxLength: Int) async throws -> SequenceOutput.Buffer? {
         return try await withCheckedThrowingContinuation { continuation in
             self.readUntilEOF(
@@ -1050,9 +1062,6 @@ extension DiskIO {
         upToLength maxLength: Int,
         resultHandler: @Sendable @escaping (Swift.Result<[UInt8], any (Error & Sendable)>) -> Void
     ) {
-        guard case .fileDescriptor(let fd) = self.storage else {
-            fatalError("On Windows DiskIO should be backed by file descriptor")
-        }
         DispatchQueue.global(qos: .userInitiated).async {
             var totalBytesRead: Int = 0
             var lastError: DWORD? = nil
@@ -1067,7 +1076,7 @@ extension DiskIO {
                     let bufferPtr = baseAddress.advanced(by: totalBytesRead)
                     var bytesRead: DWORD = 0
                     let readSucceed = ReadFile(
-                        fd.platformDescriptor,
+                        self.fileDescriptor.platformDescriptor,
                         UnsafeMutableRawPointer(mutating: bufferPtr),
                         DWORD(maxLength - totalBytesRead),
                         &bytesRead,
@@ -1151,12 +1160,9 @@ extension DiskIO {
         _ ptr: UnsafeRawBufferPointer,
         completion: @escaping (Int, Swift.Error?) -> Void
     ) {
-        guard case .fileDescriptor(let fd) = self.storage else {
-            fatalError("On Windows DiskIO should be backed by file descriptor")
-        }
         var writtenBytes: DWORD = 0
         let writeSucceed = WriteFile(
-            fd.platformDescriptor,
+            self.fileDescriptor.platformDescriptor,
             ptr.baseAddress,
             DWORD(ptr.count),
             &writtenBytes,
