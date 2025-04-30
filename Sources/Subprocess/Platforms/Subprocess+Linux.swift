@@ -281,26 +281,26 @@ private extension siginfo_t {
 
 private let setup: () = {
     signalSource.setEventHandler {
-        _childProcessContinuations.withLock { continuations in
-            while true {
-                var siginfo = siginfo_t()
-                guard waitid(P_ALL, id_t(0), &siginfo, WEXITED) == 0 else {
-                    return
-                }
-                var status: TerminationStatus? = nil
-                switch siginfo.si_code {
-                case .init(CLD_EXITED):
-                    status = .exited(siginfo.si_status)
-                case .init(CLD_KILLED), .init(CLD_DUMPED):
-                    status = .unhandledException(siginfo.si_status)
-                case .init(CLD_TRAPPED), .init(CLD_STOPPED), .init(CLD_CONTINUED):
-                    // Ignore these signals because they are not related to
-                    // process exiting
-                    break
-                default:
-                    fatalError("Unexpected exit status: \(siginfo.si_code)")
-                }
-                if let status = status {
+        while true {
+            var siginfo = siginfo_t()
+            guard waitid(P_ALL, id_t(0), &siginfo, WEXITED) == 0 || errno == EINTR else {
+                return
+            }
+            var status: TerminationStatus? = nil
+            switch siginfo.si_code {
+            case .init(CLD_EXITED):
+                status = .exited(siginfo.si_status)
+            case .init(CLD_KILLED), .init(CLD_DUMPED):
+                status = .unhandledException(siginfo.si_status)
+            case .init(CLD_TRAPPED), .init(CLD_STOPPED), .init(CLD_CONTINUED):
+                // Ignore these signals because they are not related to
+                // process exiting
+                break
+            default:
+                fatalError("Unexpected exit status: \(siginfo.si_code)")
+            }
+            if let status = status {
+                _childProcessContinuations.withLock { continuations in
                     let pid = siginfo.si_pid
                     if let existing = continuations.removeValue(forKey: pid),
                         case .continuation(let c) = existing
