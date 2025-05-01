@@ -92,7 +92,7 @@ extension SubprocessError: CustomStringConvertible, CustomDebugStringConvertible
     public var description: String {
         switch self.code.storage {
         case .spawnFailed:
-            return "Failed to spawn the new process."
+            return "Failed to spawn the new process with underlying error: \(self.underlyingError!)"
         case .executableNotFound(let executableName):
             return "Executable \"\(executableName)\" is not found or cannot be executed."
         case .failedToChangeWorkingDirectory(let workingDirectory):

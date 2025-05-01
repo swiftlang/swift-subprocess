@@ -339,7 +339,7 @@ extension SubprocessUnixTests {
             .readOnly
         )
         let cat = try await Subprocess.run(
-            .name("cat"),
+            .path("/bin/cat"),
             input: .fileDescriptor(text, closeAfterSpawningProcess: true),
             output: .data(limit: 2048 * 1024)
         )
@@ -658,7 +658,7 @@ extension SubprocessUnixTests {
             contentsOf: URL(filePath: theMysteriousIsland.string)
         )
         let catResult = try await Subprocess.run(
-            .name("/bin/bash"),
+            .path("/bin/bash"),
             arguments: ["-c", "cat \(theMysteriousIsland.string) 1>&2"],
             error: .data(limit: 2048 * 1024)
         )
@@ -729,7 +729,7 @@ extension SubprocessUnixTests {
         var platformOptions = PlatformOptions()
         platformOptions.supplementaryGroups = Array(expectedGroups)
         let idResult = try await Subprocess.run(
-            .name("/usr/bin/swift"),
+            .path("/usr/bin/swift"),
             arguments: [getgroupsSwift.string],
             platformOptions: platformOptions,
             output: .string
@@ -760,7 +760,7 @@ extension SubprocessUnixTests {
         // Sets the process group ID to 0, which creates a new session
         platformOptions.processGroupID = 0
         let psResult = try await Subprocess.run(
-            .name("/bin/bash"),
+            .path("/bin/bash"),
             arguments: ["-c", "ps -o pid,pgid -p $$"],
             platformOptions: platformOptions,
             output: .string
@@ -790,7 +790,7 @@ extension SubprocessUnixTests {
         // Check the proces ID (pid), pross group ID (pgid), and
         // controling terminal's process group ID (tpgid)
         let psResult = try await Subprocess.run(
-            .name("/bin/bash"),
+            .path("/bin/bash"),
             arguments: ["-c", "ps -o pid,pgid,tpgid -p $$"],
             platformOptions: platformOptions,
             output: .string
@@ -803,7 +803,7 @@ extension SubprocessUnixTests {
             return
         }
         let result = try await Subprocess.run(
-            .name("/bin/bash"),
+            .path("/bin/bash"),
             arguments: [
                 "-c",
                 """
@@ -911,6 +911,50 @@ extension SubprocessUnixTests {
         // .standardOutputConsumed ^ .standardOutputConsumed = 0
         #expect(atomicBox.bitwiseXor(.standardOutputConsumed) == OutputConsumptionState(rawValue: 0))
     }
+
+    @Test func testExitSignal() async throws {
+        guard #available(SubprocessSpan , *) else {
+            return
+        }
+
+        let signalsToTest: [CInt] = [SIGKILL, SIGTERM, SIGINT]
+        for signal in signalsToTest {
+            let result = try await Subprocess.run(
+                .path("/bin/sh"),
+                arguments: ["-c", "kill -\(signal) $$"]
+            )
+            #expect(result.terminationStatus == .unhandledException(signal))
+        }
+    }
+
+    @Test func testCanReliablyKillProcessesEvenWithSigmask() async throws {
+        guard #available(SubprocessSpan , *) else {
+            return
+        }
+        let result = try await withThrowingTaskGroup(
+            of: TerminationStatus?.self,
+            returning: TerminationStatus.self
+        ) { group in
+            group.addTask {
+                return try await Subprocess.run(
+                    .path("/bin/sh"),
+                    arguments: ["-c", "trap 'echo no' TERM; while true; do sleep 1; done"],
+                ).terminationStatus
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return nil
+            }
+            while let result = try await group.next() {
+                group.cancelAll()
+                if let result = result {
+                    return result
+                }
+            }
+            preconditionFailure("Task shold have returned a result")
+        }
+        #expect(result == .unhandledException(SIGKILL))
+    }
 }
 
 // MARK: - Utils
@@ -924,7 +968,7 @@ extension SubprocessUnixTests {
         isEqualTo expected: gid_t
     ) async throws {
         let idResult = try await Subprocess.run(
-            .name("/usr/bin/id"),
+            .path("/usr/bin/id"),
             arguments: [argument],
             platformOptions: platformOptions,
             output: .string
@@ -1079,6 +1123,40 @@ extension SubprocessUnixTests {
                 }
             }
             try await group.waitForAll()
+        }
+    }
+
+    @Test func testCancelProcessVeryEarlyOnStressTest() async throws {
+        guard #available(SubprocessSpan , *) else {
+            return
+        }
+
+        for i in 0..<100 {
+            let terminationStatus = try await withThrowingTaskGroup(
+                of: TerminationStatus?.self,
+                returning: TerminationStatus.self
+            ) { group in
+                group.addTask {
+                    return try await Subprocess.run(
+                        .path("/bin/sleep"),
+                        arguments: ["100000"]
+                    ).terminationStatus
+                }
+                group.addTask {
+                    let waitNS = UInt64.random(in: 0..<10_000_000)
+                    try? await Task.sleep(nanoseconds: waitNS)
+                    return nil
+                }
+
+                while let result = try await group.next() {
+                    group.cancelAll()
+                    if let result = result {
+                        return result
+                    }
+                }
+                preconditionFailure("this should be impossible, task should've returned a result")
+            }
+            #expect(terminationStatus == .unhandledException(SIGKILL), "iteration \(i)")
         }
     }
 }

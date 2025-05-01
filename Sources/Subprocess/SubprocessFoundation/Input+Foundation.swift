@@ -111,7 +111,7 @@ extension StandardInputWriter {
     public func write(
         _ data: Data
     ) async throws -> Int {
-        return try await self.fileDescriptor.wrapped.write(data)
+        return try await self.diskIO.write(data)
     }
 
     /// Write a AsyncSequence of Data to the standard input of the subprocess.
@@ -128,8 +128,8 @@ extension StandardInputWriter {
     }
 }
 
-extension FileDescriptor {
-    #if os(Windows)
+#if os(Windows)
+extension TrackedFileDescriptor {
     internal func write(
         _ data: Data
     ) async throws -> Int {
@@ -148,7 +148,9 @@ extension FileDescriptor {
             }
         }
     }
-    #else
+}
+#else
+extension TrackedDispatchIO {
     internal func write(
         _ data: Data
     ) async throws -> Int {
@@ -173,7 +175,7 @@ extension FileDescriptor {
             }
         }
     }
-    #endif
 }
+#endif // os(Windows)
 
 #endif  // SubprocessFoundation

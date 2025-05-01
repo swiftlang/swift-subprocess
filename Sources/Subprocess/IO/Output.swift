@@ -73,8 +73,8 @@ public struct DiscardedOutput: OutputProtocol {
         #else
         let devnull: FileDescriptor = try .openDevNull(withAcessMode: .readOnly)
         return CreatedPipe(
-            readFileDescriptor: .init(devnull, closeWhenDone: true),
-            writeFileDescriptor: nil
+            readFileDescriptor: nil,
+            writeFileDescriptor: .init(devnull, closeWhenDone: true)
         )
         #endif
     }
@@ -160,13 +160,15 @@ public struct BytesOutput: OutputProtocol {
     public typealias OutputType = [UInt8]
     public let maxSize: Int
 
-    internal func captureOutput(from fileDescriptor: TrackedFileDescriptor?) async throws -> [UInt8] {
+    internal func captureOutput(
+        from diskIO: TrackedPlatformDiskIO?
+    ) async throws -> [UInt8] {
         return try await withCheckedThrowingContinuation { continuation in
-            guard let fileDescriptor = fileDescriptor else {
+            guard let diskIO = diskIO else {
                 // Show not happen due to type system constraints
                 fatalError("Trying to capture output without file descriptor")
             }
-            fileDescriptor.wrapped.readUntilEOF(upToLength: self.maxSize) { result in
+            diskIO.readUntilEOF(upToLength: self.maxSize) { result in
                 switch result {
                 case .success(let data):
                     // FIXME: remove workaround for
@@ -298,6 +300,22 @@ extension OutputProtocol {
 }
 #endif
 
+// MARK: - OutputPipe
+internal struct OutputPipe {
+    // On Darwin and Linux, parent end (read end) should be
+    // wrapped as `DispatchIO` for reading
+    internal let readEnd: TrackedPlatformDiskIO?
+    internal let writeEnd: TrackedFileDescriptor?
+
+    internal init(
+        readEnd: TrackedPlatformDiskIO?,
+        writeEnd: TrackedFileDescriptor?
+    ) {
+        self.readEnd = readEnd
+        self.writeEnd = writeEnd
+    }
+}
+
 // MARK: - Default Implementations
 #if SubprocessSpan
 @available(SubprocessSpan, *)
@@ -317,22 +335,22 @@ extension OutputProtocol {
     /// Capture the output from the subprocess up to maxSize
     @_disfavoredOverload
     internal func captureOutput(
-        from fileDescriptor: TrackedFileDescriptor?
+        from diskIO: TrackedPlatformDiskIO?
     ) async throws -> OutputType {
         if let bytesOutput = self as? BytesOutput {
-            return try await bytesOutput.captureOutput(from: fileDescriptor) as! Self.OutputType
+            return try await bytesOutput.captureOutput(from: diskIO) as! Self.OutputType
         }
         return try await withCheckedThrowingContinuation { continuation in
             if OutputType.self == Void.self {
                 continuation.resume(returning: () as! OutputType)
                 return
             }
-            guard let fileDescriptor = fileDescriptor else {
+            guard let diskIO = diskIO else {
                 // Show not happen due to type system constraints
                 fatalError("Trying to capture output without file descriptor")
             }
 
-            fileDescriptor.wrapped.readUntilEOF(upToLength: self.maxSize) { result in
+            diskIO.readUntilEOF(upToLength: self.maxSize) { result in
                 do {
                     switch result {
                     case .success(let data):
@@ -356,7 +374,7 @@ extension OutputProtocol {
 @available(SubprocessSpan, *)
 #endif
 extension OutputProtocol where OutputType == Void {
-    internal func captureOutput(from fileDescriptor: TrackedFileDescriptor?) async throws {}
+    internal func captureOutput(from fileDescriptor: TrackedPlatformDiskIO?) async throws {}
 
     #if SubprocessSpan
     /// Convert the output from Data to expected output type

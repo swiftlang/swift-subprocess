@@ -42,8 +42,9 @@ public final class Execution<
 
     internal let output: Output
     internal let error: Error
-    internal let outputPipe: CreatedPipe
-    internal let errorPipe: CreatedPipe
+    internal let inputPipe: InputPipe
+    internal let outputPipe: OutputPipe
+    internal let errorPipe: OutputPipe
     internal let outputConsumptionState: AtomicBox
 
     #if os(Windows)
@@ -53,13 +54,15 @@ public final class Execution<
         processIdentifier: ProcessIdentifier,
         output: Output,
         error: Error,
-        outputPipe: CreatedPipe,
-        errorPipe: CreatedPipe,
+        inputPipe: InputPipe,
+        outputPipe: OutputPipe,
+        errorPipe: OutputPipe,
         consoleBehavior: PlatformOptions.ConsoleBehavior
     ) {
         self.processIdentifier = processIdentifier
         self.output = output
         self.error = error
+        self.inputPipe = inputPipe
         self.outputPipe = outputPipe
         self.errorPipe = errorPipe
         self.outputConsumptionState = AtomicBox()
@@ -70,12 +73,14 @@ public final class Execution<
         processIdentifier: ProcessIdentifier,
         output: Output,
         error: Error,
-        outputPipe: CreatedPipe,
-        errorPipe: CreatedPipe
+        inputPipe: InputPipe,
+        outputPipe: OutputPipe,
+        errorPipe: OutputPipe
     ) {
         self.processIdentifier = processIdentifier
         self.output = output
         self.error = error
+        self.inputPipe = inputPipe
         self.outputPipe = outputPipe
         self.errorPipe = errorPipe
         self.outputConsumptionState = AtomicBox()
@@ -98,11 +103,11 @@ extension Execution where Output == SequenceOutput {
         )
 
         guard consumptionState.contains(.standardOutputConsumed),
-            let fd = self.outputPipe.readFileDescriptor
+            let readFd = self.outputPipe.readEnd
         else {
             fatalError("The standard output has already been consumed")
         }
-        return AsyncBufferSequence(fileDescriptor: fd)
+        return AsyncBufferSequence(diskIO: readFd)
     }
 }
 
@@ -121,11 +126,11 @@ extension Execution where Error == SequenceOutput {
         )
 
         guard consumptionState.contains(.standardErrorConsumed),
-            let fd = self.errorPipe.readFileDescriptor
+            let readFd = self.errorPipe.readEnd
         else {
             fatalError("The standard output has already been consumed")
         }
-        return AsyncBufferSequence(fileDescriptor: fd)
+        return AsyncBufferSequence(diskIO: readFd)
     }
 }
 
@@ -165,13 +170,13 @@ extension Execution {
         ) { group in
             group.addTask {
                 let stdout = try await self.output.captureOutput(
-                    from: self.outputPipe.readFileDescriptor
+                    from: self.outputPipe.readEnd
                 )
                 return .standardOutputCaptured(stdout)
             }
             group.addTask {
                 let stderr = try await self.error.captureOutput(
-                    from: self.errorPipe.readFileDescriptor
+                    from: self.errorPipe.readEnd
                 )
                 return .standardErrorCaptured(stderr)
             }

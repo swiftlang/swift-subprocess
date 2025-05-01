@@ -212,10 +212,10 @@ extension InputProtocol {
 /// A writer that writes to the standard input of the subprocess.
 public final actor StandardInputWriter: Sendable {
 
-    internal let fileDescriptor: TrackedFileDescriptor
+    internal let diskIO: TrackedPlatformDiskIO
 
-    init(fileDescriptor: TrackedFileDescriptor) {
-        self.fileDescriptor = fileDescriptor
+    init(diskIO: TrackedPlatformDiskIO) {
+        self.diskIO = diskIO
     }
 
     /// Write an array of UInt8 to the standard input of the subprocess.
@@ -224,7 +224,7 @@ public final actor StandardInputWriter: Sendable {
     public func write(
         _ array: [UInt8]
     ) async throws -> Int {
-        return try await self.fileDescriptor.wrapped.write(array)
+        return try await self.diskIO.write(array)
     }
 
     /// Write a `RawSpan` to the standard input of the subprocess.
@@ -233,7 +233,7 @@ public final actor StandardInputWriter: Sendable {
     #if SubprocessSpan
     @available(SubprocessSpan, *)
     public func write(_ span: borrowing RawSpan) async throws -> Int {
-        return try await self.fileDescriptor.wrapped.write(span)
+        return try await self.diskIO.write(span)
     }
     #endif
 
@@ -254,7 +254,24 @@ public final actor StandardInputWriter: Sendable {
 
     /// Signal all writes are finished
     public func finish() async throws {
-        try self.fileDescriptor.safelyClose()
+        try self.diskIO.safelyClose()
+    }
+}
+
+
+// MARK: - InputPipe
+internal struct InputPipe {
+    // On Darwin and Linux, parent end (write end) should be
+    // wrapped as `DispatchIO` for writing
+    internal let readEnd: TrackedFileDescriptor?
+    internal let writeEnd: TrackedPlatformDiskIO?
+
+    internal init(
+        readEnd: TrackedFileDescriptor?,
+        writeEnd: TrackedPlatformDiskIO?
+    ) {
+        self.readEnd = readEnd
+        self.writeEnd = writeEnd
     }
 }
 

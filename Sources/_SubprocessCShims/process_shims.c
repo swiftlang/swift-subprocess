@@ -30,6 +30,7 @@
 #include <signal.h>
 #include <string.h>
 #include <fcntl.h>
+#include <pthread.h>
 
 #include <stdio.h>
 
@@ -83,6 +84,42 @@ vm_size_t _subprocess_vm_size(void) {
 }
 #endif
 
+// MARK: - Private Helpers
+static pthread_mutex_t _subprocess_fork_lock = PTHREAD_MUTEX_INITIALIZER;
+
+// Used after fork, before exec
+static int _subprocess_block_everything_but_something_went_seriously_wrong_signals(sigset_t *old_mask) {
+    sigset_t mask;
+    int r = 0;
+    r |= sigfillset(&mask);
+    r |= sigdelset(&mask, SIGABRT);
+    r |= sigdelset(&mask, SIGBUS);
+    r |= sigdelset(&mask, SIGFPE);
+    r |= sigdelset(&mask, SIGILL);
+    r |= sigdelset(&mask, SIGKILL);
+    r |= sigdelset(&mask, SIGSEGV);
+    r |= sigdelset(&mask, SIGSTOP);
+    r |= sigdelset(&mask, SIGSYS);
+    r |= sigdelset(&mask, SIGTRAP);
+
+    r |= pthread_sigmask(SIG_BLOCK, &mask, old_mask);
+    return r;
+}
+
+#define _subprocess_precondition(__cond) do { \
+    int eval = (__cond); \
+    if (!eval) { \
+        __builtin_trap(); \
+    } \
+} while(0)
+
+#if __DARWIN_NSIG
+#  define _SUBPROCESS_SIG_MAX __DARWIN_NSIG
+#else
+#  define _SUBPROCESS_SIG_MAX 32
+#endif
+
+
 // MARK: - Darwin (posix_spawn)
 #if TARGET_OS_MAC
 static int _subprocess_spawn_prefork(
@@ -97,6 +134,11 @@ static int _subprocess_spawn_prefork(
     int number_of_sgroups, const gid_t * _Nullable sgroups,
     int create_session
 ) {
+#define write_error_and_exit int error = errno; \
+    write(pipefd[1], &error, sizeof(error));\
+    close(pipefd[1]); \
+    _exit(EXIT_FAILURE)
+
     // Set `POSIX_SPAWN_SETEXEC` flag since we are forking ourselves
     short flags = 0;
     int rc = posix_spawnattr_getflags(spawn_attrs, &flags);
@@ -147,7 +189,7 @@ static int _subprocess_spawn_prefork(
 #pragma GCC diagnostic ignored "-Wdeprecated"
     pid_t childPid = fork();
 #pragma GCC diagnostic pop
-    if (childPid == -1) {
+    if (childPid < 0) {
         close(pipefd[0]);
         close(pipefd[1]);
         return errno;
@@ -160,28 +202,19 @@ static int _subprocess_spawn_prefork(
         // Perform setups
         if (number_of_sgroups > 0 && sgroups != NULL) {
             if (setgroups(number_of_sgroups, sgroups) != 0) {
-                int error =  errno;
-                write(pipefd[1], &error, sizeof(error));
-                close(pipefd[1]);
-                _exit(EXIT_FAILURE);
+                write_error_and_exit;
             }
         }
 
         if (uid != NULL) {
             if (setuid(*uid) != 0) {
-                int error =  errno;
-                write(pipefd[1], &error, sizeof(error));
-                close(pipefd[1]);
-                _exit(EXIT_FAILURE);
+                write_error_and_exit;
             }
         }
 
         if (gid != NULL) {
             if (setgid(*gid) != 0) {
-                int error =  errno;
-                write(pipefd[1], &error, sizeof(error));
-                close(pipefd[1]);
-                _exit(EXIT_FAILURE);
+                write_error_and_exit;
             }
         }
 
@@ -197,20 +230,32 @@ static int _subprocess_spawn_prefork(
         _exit(EXIT_FAILURE);
     } else {
         // Parent process
-        close(pipefd[1]);  // Close unused write end
+        // Close unused write end
+        close(pipefd[1]);
         // Communicate child pid back
         *pid = childPid;
         // Read from the pipe until pipe is closed
-        // Eitehr due to exec succeeds or error is written
-        int childError = 0;
-        if (read(pipefd[0], &childError, sizeof(childError)) > 0) {
-            // We encountered error
-            close(pipefd[0]);
-            return childError;
-        } else {
-            // Child process exec was successful
-            close(pipefd[0]);
-            return 0;
+        // either due to exec succeeds or error is written
+        while (true) {
+            int childError = 0;
+            ssize_t read_rc = read(pipefd[0], &childError, sizeof(childError));
+            if (read_rc == 0) {
+                // exec worked!
+                close(pipefd[0]);
+                return 0;
+            } else if (read_rc > 0) {
+                // Child exec failed and reported back
+                close(pipefd[0]);
+                return childError;
+            } else {
+                // Read failed
+                if (errno == EINTR) {
+                    continue;
+                } else {
+                    close(pipefd[0]);
+                    return errno;
+                }
+            }
         }
     }
 }
@@ -416,6 +461,11 @@ int _subprocess_fork_exec(
     int create_session,
     void (* _Nullable configurator)(void)
 ) {
+#define write_error_and_exit int error = errno; \
+    write(pipefd[1], &error, sizeof(error));\
+    close(pipefd[1]); \
+    _exit(EXIT_FAILURE)
+
     int require_pre_fork = _subprocess_is_addchdir_np_available() == 0 ||
         uid != NULL ||
         gid != NULL ||
@@ -474,12 +524,27 @@ int _subprocess_fork_exec(
         return errno;
     }
 
+    // Protect the signal masking below
+    // Note that we only unlock in parent since child
+    // will be exec'd anyway
+    int rc = pthread_mutex_lock(&_subprocess_fork_lock);
+    _subprocess_precondition(rc == 0);
+    // Block all signals on this thread
+    sigset_t old_sigmask;
+    rc = _subprocess_block_everything_but_something_went_seriously_wrong_signals(&old_sigmask);
+    if (rc != 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return errno;
+    }
+
     // Finally, fork
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated"
     pid_t childPid = fork();
 #pragma GCC diagnostic pop
-    if (childPid == -1) {
+    if (childPid < 0) {
+        // Fork failed
         close(pipefd[0]);
         close(pipefd[1]);
         return errno;
@@ -489,41 +554,53 @@ int _subprocess_fork_exec(
         // Child process
         close(pipefd[0]);  // Close unused read end
 
+        // Reset signal handlers
+        for (int signo = 1; signo < _SUBPROCESS_SIG_MAX; signo++) {
+            if (signo == SIGKILL || signo == SIGSTOP) {
+                continue;
+            }
+            void (*err_ptr)(int) = signal(signo, SIG_DFL);
+            if (err_ptr != SIG_ERR) {
+                continue;
+            }
+
+            if (errno == EINVAL) {
+                break; // probably too high of a signal
+            }
+
+            write_error_and_exit;
+        }
+
+        // Reset signal mask
+        sigset_t sigset = { 0 };
+        sigemptyset(&sigset);
+        int rc = sigprocmask(SIG_SETMASK, &sigset, NULL) != 0;
+        if (rc != 0) {
+            write_error_and_exit;
+        }
+
         // Perform setups
         if (working_directory != NULL) {
             if (chdir(working_directory) != 0) {
-                int error =  errno;
-                write(pipefd[1], &error, sizeof(error));
-                close(pipefd[1]);
-                _exit(EXIT_FAILURE);
+                write_error_and_exit;
             }
         }
 
-
         if (uid != NULL) {
             if (setuid(*uid) != 0) {
-                int error =  errno;
-                write(pipefd[1], &error, sizeof(error));
-                close(pipefd[1]);
-                _exit(EXIT_FAILURE);
+                write_error_and_exit;
             }
         }
 
         if (gid != NULL) {
             if (setgid(*gid) != 0) {
-                int error =  errno;
-                write(pipefd[1], &error, sizeof(error));
-                close(pipefd[1]);
-                _exit(EXIT_FAILURE);
+                write_error_and_exit;
             }
         }
 
         if (number_of_sgroups > 0 && sgroups != NULL) {
             if (setgroups(number_of_sgroups, sgroups) != 0) {
-                int error = errno;
-                write(pipefd[1], &error, sizeof(error));
-                close(pipefd[1]);
-                _exit(EXIT_FAILURE);
+                write_error_and_exit;
             }
         }
 
@@ -536,23 +613,16 @@ int _subprocess_fork_exec(
         }
 
         // Bind stdin, stdout, and stderr
-        int rc = 0;
         if (file_descriptors[0] >= 0) {
             rc = dup2(file_descriptors[0], STDIN_FILENO);
             if (rc < 0) {
-                int error = errno;
-                write(pipefd[1], &error, sizeof(error));
-                close(pipefd[1]);
-                _exit(EXIT_FAILURE);
+                write_error_and_exit;
             }
         }
         if (file_descriptors[2] >= 0) {
             rc = dup2(file_descriptors[2], STDOUT_FILENO);
             if (rc < 0) {
-                int error = errno;
-                write(pipefd[1], &error, sizeof(error));
-                close(pipefd[1]);
-                _exit(EXIT_FAILURE);
+                write_error_and_exit;
             }
         }
         if (file_descriptors[4] >= 0) {
@@ -572,7 +642,7 @@ int _subprocess_fork_exec(
             rc = close(file_descriptors[3]);
         }
         if (file_descriptors[4] >= 0) {
-            rc = close(file_descriptors[5]);
+            rc = close(file_descriptors[4]);
         }
         if (rc != 0) {
             int error = errno;
@@ -587,26 +657,46 @@ int _subprocess_fork_exec(
         // Finally, exec
         execve(exec_path, args, env);
         // If we reached this point, something went wrong
-        int error = errno;
-        write(pipefd[1], &error, sizeof(error));
-        close(pipefd[1]);
-        _exit(EXIT_FAILURE);
+        write_error_and_exit;
     } else {
         // Parent process
         close(pipefd[1]);  // Close unused write end
+
+        // Restore old signmask
+        rc = pthread_sigmask(SIG_SETMASK, &old_sigmask, NULL);
+        if (rc != 0) {
+            close(pipefd[0]);
+            return errno;
+        }
+
+        // Unlock
+        rc = pthread_mutex_unlock(&_subprocess_fork_lock);
+        _subprocess_precondition(rc == 0);
+
         // Communicate child pid back
         *pid = childPid;
         // Read from the pipe until pipe is closed
-        // Eitehr due to exec succeeds or error is written
-        int childError = 0;
-        if (read(pipefd[0], &childError, sizeof(childError)) > 0) {
-            // We encountered error
-            close(pipefd[0]);
-            return childError;
-        } else {
-            // Child process exec was successful
-            close(pipefd[0]);
-            return 0;
+        // either due to exec succeeds or error is written
+        while (1) {
+            int childError = 0;
+            ssize_t read_rc = read(pipefd[0], &childError, sizeof(childError));
+            if (read_rc == 0) {
+                // exec worked!
+                close(pipefd[0]);
+                return 0;
+            } else if (read_rc > 0) {
+                // Child exec failed and reported back
+                close(pipefd[0]);
+                return childError;
+            } else {
+                // Read failed
+                if (errno == EINTR) {
+                    continue;
+                } else {
+                    close(pipefd[0]);
+                    return errno;
+                }
+            }
         }
     }
 }
