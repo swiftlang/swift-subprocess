@@ -40,8 +40,8 @@ private func enableLintingTest() -> Bool {
 struct SubprocessLintingTest {
     @Test(
         .enabled(
-            if: enableLintingTest(),
-            "Could not determine source path"
+            if: false/* enableLintingTest() */,
+            "Skipped until we decide on the rules"
         )
     )
     func runLinter() async throws {
