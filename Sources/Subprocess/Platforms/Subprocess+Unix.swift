@@ -121,30 +121,25 @@ extension Execution {
         signal: Signal,
         toProcessGroup shouldSendToProcessGroup: Bool = false
     ) throws {
-        let pid = shouldSendToProcessGroup ? -(self.processIdentifier.value) : self.processIdentifier.value
+        try Self.send(
+            signal: signal,
+            to: self.processIdentifier,
+            toProcessGroup: shouldSendToProcessGroup
+        )
+    }
+
+    internal static func send(
+        signal: Signal,
+        to processIdentifier: ProcessIdentifier,
+        toProcessGroup shouldSendToProcessGroup: Bool
+    ) throws {
+        let pid = shouldSendToProcessGroup ? -(processIdentifier.value) : processIdentifier.value
         guard kill(pid, signal.rawValue) == 0 else {
             throw SubprocessError(
                 code: .init(.failedToSendSignal(signal.rawValue)),
                 underlyingError: .init(rawValue: errno)
             )
         }
-    }
-
-    internal func tryTerminate() -> Swift.Error? {
-        do {
-            try self.send(signal: .kill)
-        } catch {
-            guard let posixError: SubprocessError = error as? SubprocessError else {
-                return error
-            }
-            // Ignore ESRCH (no such process)
-            if let underlyingError = posixError.underlyingError,
-                underlyingError.rawValue != ESRCH
-            {
-                return error
-            }
-        }
-        return nil
     }
 }
 
@@ -398,8 +393,7 @@ internal typealias PlatformFileDescriptor = CInt
 internal typealias TrackedPlatformDiskIO = TrackedDispatchIO
 
 extension CreatedPipe {
-    internal func createInputPipe() -> InputPipe {
-        var writeEnd: TrackedPlatformDiskIO? = nil
+    internal func createInputPlatformDiskIO() -> TrackedPlatformDiskIO? {
         if let writeFileDescriptor = self.writeFileDescriptor {
             let dispatchIO: DispatchIO = DispatchIO(
                 type: .stream,
@@ -412,19 +406,12 @@ extension CreatedPipe {
                     }
                 }
             )
-            writeEnd = .init(
-                dispatchIO,
-                closeWhenDone: writeFileDescriptor.closeWhenDone
-            )
+            return .init(dispatchIO, closeWhenDone: writeFileDescriptor.closeWhenDone)
         }
-        return InputPipe(
-            readEnd: self.readFileDescriptor,
-            writeEnd: writeEnd
-        )
+        return nil
     }
 
-    internal func createOutputPipe() -> OutputPipe {
-        var readEnd: TrackedPlatformDiskIO? = nil
+    internal func createOutputPlatformDiskIO() -> TrackedPlatformDiskIO? {
         if let readFileDescriptor = self.readFileDescriptor {
             let dispatchIO: DispatchIO = DispatchIO(
                 type: .stream,
@@ -437,15 +424,9 @@ extension CreatedPipe {
                     }
                 }
             )
-            readEnd = .init(
-                dispatchIO,
-                closeWhenDone: readFileDescriptor.closeWhenDone
-            )
+            return .init(dispatchIO, closeWhenDone: readFileDescriptor.closeWhenDone)
         }
-        return OutputPipe(
-            readEnd: readEnd,
-            writeEnd: self.writeFileDescriptor
-        )
+        return nil
     }
 }
 
@@ -454,7 +435,7 @@ extension TrackedDispatchIO {
 #if SubprocessSpan
     @available(SubprocessSpan, *)
 #endif
-    package func readChunk(upToLength maxLength: Int) async throws -> SequenceOutput.Buffer? {
+    package func readChunk(upToLength maxLength: Int) async throws -> AsyncBufferSequence.Buffer? {
         return try await withCheckedThrowingContinuation { continuation in
             var buffer: DispatchData = .empty
             self.dispatchIO.read(
@@ -480,7 +461,7 @@ extension TrackedDispatchIO {
                 }
                 if done {
                     if !buffer.isEmpty {
-                        continuation.resume(returning: SequenceOutput.Buffer(data: buffer))
+                        continuation.resume(returning: AsyncBufferSequence.Buffer(data: buffer))
                     } else {
                         continuation.resume(returning: nil)
                     }
@@ -500,6 +481,7 @@ extension TrackedDispatchIO {
             queue: .global()
         ) { done, data, error in
             guard error == 0, let chunkData = data else {
+                self.dispatchIO.close()
                 resultHandler(
                     .failure(
                         SubprocessError(
@@ -509,6 +491,10 @@ extension TrackedDispatchIO {
                     )
                 )
                 return
+            }
+            // Close dispatchIO if we are done
+            if done {
+                self.dispatchIO.close()
             }
             // Easy case: if we are done and buffer is nil, this means
             // there is only one chunk of data

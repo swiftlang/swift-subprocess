@@ -81,8 +81,15 @@ extension Execution {
     /// Teardown sequence always ends with a `.kill` signal
     /// - Parameter sequence: The  steps to perform.
     public func teardown(using sequence: some Sequence<TeardownStep> & Sendable) async {
+        await Self.runTeardownSequence(sequence, on: self.processIdentifier)
+    }
+
+    internal static func teardown(
+        using sequence: some Sequence<TeardownStep> & Sendable,
+        on processIdentifier: ProcessIdentifier
+    ) async {
         await withUncancelledTask {
-            await self.runTeardownSequence(sequence)
+            await Self.runTeardownSequence(sequence, on: processIdentifier)
         }
     }
 }
@@ -97,7 +104,8 @@ internal enum TeardownStepCompletion {
 @available(SubprocessSpan, *)
 #endif
 extension Execution {
-    internal func gracefulShutDown(
+    internal static func gracefulShutDown(
+        _ processIdentifier: ProcessIdentifier,
         allowedDurationToNextStep duration: Duration
     ) async {
         #if os(Windows)
@@ -105,7 +113,7 @@ extension Execution {
             let processHandle = OpenProcess(
                 DWORD(PROCESS_QUERY_INFORMATION | SYNCHRONIZE),
                 false,
-                self.processIdentifier.value
+                processIdentifier.value
             )
         else {
             // Nothing more we can do
@@ -117,13 +125,13 @@ extension Execution {
 
         // 1. Attempt to send WM_CLOSE to the main window
         if _subprocess_windows_send_vm_close(
-            self.processIdentifier.value
+            processIdentifier.value
         ) {
             try? await Task.sleep(for: duration)
         }
 
         // 2. Attempt to attach to the console and send CTRL_C_EVENT
-        if AttachConsole(self.processIdentifier.value) {
+        if AttachConsole(processIdentifier.value) {
             // Disable Ctrl-C handling in this process
             if SetConsoleCtrlHandler(nil, true) {
                 if GenerateConsoleCtrlEvent(DWORD(CTRL_C_EVENT), 0) {
@@ -138,17 +146,24 @@ extension Execution {
         }
 
         // 3. Attempt to send CTRL_BREAK_EVENT to the process group
-        if GenerateConsoleCtrlEvent(DWORD(CTRL_BREAK_EVENT), self.processIdentifier.value) {
+        if GenerateConsoleCtrlEvent(DWORD(CTRL_BREAK_EVENT), processIdentifier.value) {
             // Wait for process to exit
             try? await Task.sleep(for: duration)
         }
         #else
         // Send SIGTERM
-        try? self.send(signal: .terminate)
+        try? self.send(
+            signal: .terminate,
+            to: processIdentifier,
+            toProcessGroup: false
+        )
         #endif
     }
 
-    internal func runTeardownSequence(_ sequence: some Sequence<TeardownStep> & Sendable) async {
+    internal static func runTeardownSequence(
+        _ sequence: some Sequence<TeardownStep> & Sendable,
+        on processIdentifier: ProcessIdentifier
+    ) async {
         // First insert the `.kill` step
         let finalSequence = sequence + [TeardownStep(storage: .kill)]
         for step in finalSequence {
@@ -167,7 +182,10 @@ extension Execution {
                             return .processHasExited
                         }
                     }
-                    await self.gracefulShutDown(allowedDurationToNextStep: allowedDuration)
+                    await self.gracefulShutDown(
+                        processIdentifier,
+                        allowedDurationToNextStep: allowedDuration
+                    )
                     return await group.next()!
                 }
             #if !os(Windows)
@@ -183,15 +201,18 @@ extension Execution {
                             return .processHasExited
                         }
                     }
-                    try? self.send(signal: signal)
+                    try? self.send(signal: signal, to: processIdentifier, toProcessGroup: false)
                     return await group.next()!
                 }
             #endif  // !os(Windows)
             case .kill:
                 #if os(Windows)
-                try? self.terminate(withExitCode: 0)
+                try? self.terminate(
+                    processIdentifier,
+                    withExitCode: 0
+                )
                 #else
-                try? self.send(signal: .kill)
+                try? self.send(signal: .kill, to: processIdentifier, toProcessGroup: false)
                 #endif
                 stepCompletion = .killedTheProcess
             }

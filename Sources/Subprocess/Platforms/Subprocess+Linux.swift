@@ -35,16 +35,11 @@ extension Configuration {
     #if SubprocessSpan
     @available(SubprocessSpan, *)
     #endif
-    internal func spawn<
-        Output: OutputProtocol,
-        Error: OutputProtocol
-    >(
+    internal func spawn(
         withInput inputPipe: CreatedPipe,
-        output: Output,
         outputPipe: CreatedPipe,
-        error: Error,
         errorPipe: CreatedPipe
-    ) throws -> Execution<Output, Error> {
+    ) throws -> Execution {
         _setupMonitorSignalHandler()
 
         // Instead of checking if every possible executable path
@@ -53,7 +48,7 @@ extension Configuration {
             withPathValue: self.environment.pathValue()
         )
 
-        return try self.preSpawn { args throws -> Execution<Output, Error> in
+        return try self.preSpawn { args throws -> Execution in
             let (env, uidPtr, gidPtr, supplementaryGroups) = args
 
             for possibleExecutablePath in possiblePaths {
@@ -122,13 +117,36 @@ extension Configuration {
                         underlyingError: .init(rawValue: spawnError)
                     )
                 }
+                func captureError(_ work: () throws -> Void) -> (any Swift.Error)? {
+                    do {
+                        try work()
+                        return nil
+                    } catch {
+                        return error
+                    }
+                }
+                // After spawn finishes, close all child side fds
+                let inputCloseError = captureError {
+                    try inputPipe.readFileDescriptor?.safelyClose()
+                }
+                let outputCloseError = captureError {
+                    try outputPipe.writeFileDescriptor?.safelyClose()
+                }
+                let errorCloseError = captureError {
+                    try errorPipe.writeFileDescriptor?.safelyClose()
+                }
+                if let inputCloseError = inputCloseError {
+                    throw inputCloseError
+                }
+                if let outputCloseError = outputCloseError {
+                    throw outputCloseError
+                }
+                if let errorCloseError = errorCloseError {
+                    throw errorCloseError
+                }
+
                 return Execution(
-                    processIdentifier: .init(value: pid),
-                    output: output,
-                    error: error,
-                    inputPipe: inputPipe.createInputPipe(),
-                    outputPipe: outputPipe.createOutputPipe(),
-                    errorPipe: errorPipe.createOutputPipe()
+                    processIdentifier: .init(value: pid)
                 )
             }
 

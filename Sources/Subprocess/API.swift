@@ -91,15 +91,77 @@ public func run<
     output: Output = .string,
     error: Error = .discarded
 ) async throws -> CollectedResult<Output, Error> {
-    return try await Configuration(
+    typealias RunResult = (
+        processIdentifier: ProcessIdentifier,
+        standardOutput: Output.OutputType,
+        standardError: Error.OutputType
+    )
+
+    let customInput = CustomWriteInput()
+    let result = try await Configuration(
         executable: executable,
         arguments: arguments,
         environment: environment,
         workingDirectory: workingDirectory,
         platformOptions: platformOptions
-    ).run(input: input, output: output, error: error)
+    ).run(
+        input: try customInput.createPipe(),
+        output: try output.createPipe(),
+        error: try error.createPipe()
+    ) { execution, inputIO, outputIO, errorIO in
+        // Write input, capture output and error in parallel
+        return try await withThrowingTaskGroup(
+            of: OutputCapturingState<Output.OutputType, Error.OutputType>.self,
+            returning: RunResult.self
+        ) { group in
+            group.addTask {
+                let stdout = try await output.captureOutput(
+                    from: outputIO
+                )
+                return .standardOutputCaptured(stdout)
+            }
+            group.addTask {
+                let stderr = try await error.captureOutput(
+                    from: errorIO
+                )
+                return .standardErrorCaptured(stderr)
+            }
+
+            // Write span at the same isolation
+            if let writeFd = inputIO {
+                let writer = StandardInputWriter(diskIO: writeFd)
+                _ = try await writer.write(input.bytes)
+                try await writer.finish()
+            }
+
+            var stdout: Output.OutputType!
+            var stderror: Error.OutputType!
+            while let state = try await group.next() {
+                switch state {
+                case .standardOutputCaptured(let output):
+                    stdout = output
+                case .standardErrorCaptured(let error):
+                    stderror = error
+                }
+            }
+
+            return (
+                processIdentifier: execution.processIdentifier,
+                standardOutput: stdout,
+                standardError: stderror
+            )
+        }
+    }
+
+    return CollectedResult(
+        processIdentifier: result.value.processIdentifier,
+        terminationStatus: result.terminationStatus,
+        standardOutput: result.value.standardOutput,
+        standardError: result.value.standardError
+    )
 }
 #endif  // SubprocessSpan
+
 
 // MARK: - Custom Execution Body
 
@@ -122,7 +184,54 @@ public func run<
 #if SubprocessSpan
 @available(SubprocessSpan, *)
 #endif
-public func run<Result, Input: InputProtocol, Output: OutputProtocol, Error: OutputProtocol>(
+public func run<Result, Input: InputProtocol, Error: OutputProtocol>(
+    _ executable: Executable,
+    arguments: Arguments = [],
+    environment: Environment = .inherit,
+    workingDirectory: FilePath? = nil,
+    platformOptions: PlatformOptions = PlatformOptions(),
+    input: Input = .none,
+    error: Error,
+    isolation: isolated (any Actor)? = #isolation,
+    body: ((Execution, AsyncBufferSequence) async throws -> Result)
+) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
+    let output = SequenceOutput()
+    return try await Configuration(
+        executable: executable,
+        arguments: arguments,
+        environment: environment,
+        workingDirectory: workingDirectory,
+        platformOptions: platformOptions
+    ).run(
+        input: try input.createPipe(),
+        output: try output.createPipe(),
+        error: try error.createPipe()
+    ) { execution, inputIO, outputIO, errorIO in
+        return try await withThrowingTaskGroup(
+            of: Void.self,
+            returning: Result.self
+        ) { group in
+            group.addTask {
+                if let inputIO = inputIO {
+                    let writer = StandardInputWriter(diskIO: inputIO)
+                    try await input.write(with: writer)
+                    try await writer.finish()
+                }
+            }
+
+            // Body runs in the same isolation
+            let outputSequence = AsyncBufferSequence(diskIO: outputIO!)
+            let result = try await body(execution, outputSequence)
+            try await group.waitForAll()
+            return result
+        }
+    }
+}
+
+#if SubprocessSpan
+@available(SubprocessSpan, *)
+#endif
+public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
     _ executable: Executable,
     arguments: Arguments = [],
     environment: Environment = .inherit,
@@ -130,10 +239,57 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol, Error: Out
     platformOptions: PlatformOptions = PlatformOptions(),
     input: Input = .none,
     output: Output,
+    isolation: isolated (any Actor)? = #isolation,
+    body: ((Execution, AsyncBufferSequence) async throws -> Result)
+) async throws -> ExecutionResult<Result> where Output.OutputType == Void {
+    let error = SequenceOutput()
+    return try await Configuration(
+        executable: executable,
+        arguments: arguments,
+        environment: environment,
+        workingDirectory: workingDirectory,
+        platformOptions: platformOptions
+    ).run(
+        input: try input.createPipe(),
+        output: try output.createPipe(),
+        error: try error.createPipe()
+    ) { execution, inputIO, outputIO, errorIO in
+        return try await withThrowingTaskGroup(
+            of: Void.self,
+            returning: Result.self
+        ) { group in
+            group.addTask {
+                if let inputIO = inputIO {
+                    let writer = StandardInputWriter(diskIO: inputIO)
+                    try await input.write(with: writer)
+                    try await writer.finish()
+                }
+            }
+
+            // Body runs in the same isolation
+            let errorSequence = AsyncBufferSequence(diskIO: errorIO!)
+            let result = try await body(execution, errorSequence)
+            try await group.waitForAll()
+            return result
+        }
+    }
+}
+
+#if SubprocessSpan
+@available(SubprocessSpan, *)
+#endif
+public func run<Result, Error: OutputProtocol>(
+    _ executable: Executable,
+    arguments: Arguments = [],
+    environment: Environment = .inherit,
+    workingDirectory: FilePath? = nil,
+    platformOptions: PlatformOptions = PlatformOptions(),
     error: Error,
     isolation: isolated (any Actor)? = #isolation,
-    body: ((Execution<Output, Error>) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Output.OutputType == Void, Error.OutputType == Void {
+    body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
+) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
+    let input = CustomWriteInput()
+    let output = SequenceOutput()
     return try await Configuration(
         executable: executable,
         arguments: arguments,
@@ -141,7 +297,48 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol, Error: Out
         workingDirectory: workingDirectory,
         platformOptions: platformOptions
     )
-    .run(input: input, output: output, error: error, body)
+    .run(
+        input: try input.createPipe(),
+        output: try output.createPipe(),
+        error: try error.createPipe()
+    ) { execution, inputIO, outputIO, errorIO in
+        let writer = StandardInputWriter(diskIO: inputIO!)
+        let outputSequence = AsyncBufferSequence(diskIO: outputIO!)
+        return try await body(execution, writer, outputSequence)
+    }
+}
+
+#if SubprocessSpan
+@available(SubprocessSpan, *)
+#endif
+public func run<Result, Output: OutputProtocol>(
+    _ executable: Executable,
+    arguments: Arguments = [],
+    environment: Environment = .inherit,
+    workingDirectory: FilePath? = nil,
+    platformOptions: PlatformOptions = PlatformOptions(),
+    output: Output,
+    isolation: isolated (any Actor)? = #isolation,
+    body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
+) async throws -> ExecutionResult<Result> where Output.OutputType == Void {
+    let input = CustomWriteInput()
+    let error = SequenceOutput()
+    return try await Configuration(
+        executable: executable,
+        arguments: arguments,
+        environment: environment,
+        workingDirectory: workingDirectory,
+        platformOptions: platformOptions
+    )
+    .run(
+        input: try input.createPipe(),
+        output: try output.createPipe(),
+        error: try error.createPipe()
+    ) { execution, inputIO, outputIO, errorIO in
+        let writer = StandardInputWriter(diskIO: inputIO!)
+        let errorSequence = AsyncBufferSequence(diskIO: errorIO!)
+        return try await body(execution, writer, errorSequence)
+    }
 }
 
 /// Run a executable with given parameters and a custom closure
@@ -163,25 +360,43 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol, Error: Out
 #if SubprocessSpan
 @available(SubprocessSpan, *)
 #endif
-public func run<Result, Output: OutputProtocol, Error: OutputProtocol>(
+public func run<Result>(
     _ executable: Executable,
     arguments: Arguments = [],
     environment: Environment = .inherit,
     workingDirectory: FilePath? = nil,
     platformOptions: PlatformOptions = PlatformOptions(),
-    output: Output,
-    error: Error,
     isolation: isolated (any Actor)? = #isolation,
-    body: ((Execution<Output, Error>, StandardInputWriter) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Output.OutputType == Void, Error.OutputType == Void {
-    return try await Configuration(
+    body: (
+        (
+            Execution,
+            StandardInputWriter,
+            AsyncBufferSequence,
+            AsyncBufferSequence
+        ) async throws -> Result
+    )
+) async throws -> ExecutionResult<Result> {
+    let configuration = Configuration(
         executable: executable,
         arguments: arguments,
         environment: environment,
         workingDirectory: workingDirectory,
         platformOptions: platformOptions
     )
-    .run(output: output, error: error, body)
+    let input = CustomWriteInput()
+    let output = SequenceOutput()
+    let error = SequenceOutput()
+
+    return try await configuration.run(
+        input: try input.createPipe(),
+        output: try output.createPipe(),
+        error: try error.createPipe()
+    ) { execution, inputIO, outputIO, errorIO in
+        let writer = StandardInputWriter(diskIO: inputIO!)
+        let outputSequence = AsyncBufferSequence(diskIO: outputIO!)
+        let errorSequence = AsyncBufferSequence(diskIO: errorIO!)
+        return try await body(execution, writer, outputSequence, errorSequence)
+    }
 }
 
 // MARK: - Configuration Based
@@ -207,21 +422,63 @@ public func run<
     output: Output = .string,
     error: Error = .discarded
 ) async throws -> CollectedResult<Output, Error> {
+    typealias RunResult = (
+        processIdentifier: ProcessIdentifier,
+        standardOutput: Output.OutputType,
+        standardError: Error.OutputType
+    )
     let result = try await configuration.run(
-        input: input,
-        output: output,
-        error: error
-    ) { execution in
-        let (
-            standardOutput,
-            standardError
-        ) = try await execution.captureIOs()
-        return (
-            processIdentifier: execution.processIdentifier,
-            standardOutput: standardOutput,
-            standardError: standardError
-        )
+        input: try input.createPipe(),
+        output: try output.createPipe(),
+        error: try error.createPipe()
+    ) { (execution, inputIO, outputIO, errorIO) -> RunResult in
+        // Write input, capture output and error in parallel
+        return try await withThrowingTaskGroup(
+            of: OutputCapturingState<Output.OutputType, Error.OutputType>?.self,
+            returning: RunResult.self
+        ) { group in
+            group.addTask {
+                if let writeFd = inputIO {
+                    let writer = StandardInputWriter(diskIO: writeFd)
+                    try await input.write(with: writer)
+                    try await writer.finish()
+                }
+                return nil
+            }
+            group.addTask {
+                let stdout = try await output.captureOutput(
+                    from: outputIO
+                )
+                return .standardOutputCaptured(stdout)
+            }
+            group.addTask {
+                let stderr = try await error.captureOutput(
+                    from: errorIO
+                )
+                return .standardErrorCaptured(stderr)
+            }
+
+            var stdout: Output.OutputType!
+            var stderror: Error.OutputType!
+            while let state = try await group.next() {
+                switch state {
+                case .standardOutputCaptured(let output):
+                    stdout = output
+                case .standardErrorCaptured(let error):
+                    stderror = error
+                case .none:
+                    continue
+                }
+            }
+
+            return (
+                processIdentifier: execution.processIdentifier,
+                standardOutput: stdout,
+                standardError: stderror
+            )
+        }
     }
+
     return CollectedResult(
         processIdentifier: result.value.processIdentifier,
         terminationStatus: result.terminationStatus,
@@ -243,14 +500,24 @@ public func run<
 #if SubprocessSpan
 @available(SubprocessSpan, *)
 #endif
-public func run<Result, Output: OutputProtocol, Error: OutputProtocol>(
+public func run<Result>(
     _ configuration: Configuration,
-    output: Output,
-    error: Error,
     isolation: isolated (any Actor)? = #isolation,
-    body: ((Execution<Output, Error>, StandardInputWriter) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Output.OutputType == Void, Error.OutputType == Void {
-    return try await configuration.run(output: output, error: error, body)
+    body: ((Execution, StandardInputWriter, AsyncBufferSequence, AsyncBufferSequence) async throws -> Result)
+) async throws -> ExecutionResult<Result> {
+    let input = CustomWriteInput()
+    let output = SequenceOutput()
+    let error = SequenceOutput()
+    return try await configuration.run(
+        input: try input.createPipe(),
+        output: try output.createPipe(),
+        error: try error.createPipe()
+    ) { execution, inputIO, outputIO, errorIO in
+        let writer = StandardInputWriter(diskIO: inputIO!)
+        let outputSequence = AsyncBufferSequence(diskIO: outputIO!)
+        let errorSequence = AsyncBufferSequence(diskIO: errorIO!)
+        return try await body(execution, writer, outputSequence, errorSequence)
+    }
 }
 
 // MARK: - Detached
@@ -319,36 +586,39 @@ public func runDetached(
 ) throws -> ProcessIdentifier {
     switch (input, output, error) {
     case (.none, .none, .none):
+        let processInput = NoInput()
         let processOutput = DiscardedOutput()
         let processError = DiscardedOutput()
         return try configuration.spawn(
-            withInput: NoInput().createPipe(),
-            output: processOutput,
+            withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
-            error: processError,
             errorPipe: try processError.createPipe()
         ).processIdentifier
     case (.none, .none, .some(let errorFd)):
+        let processInput = NoInput()
         let processOutput = DiscardedOutput()
-        let processError = FileDescriptorOutput(fileDescriptor: errorFd, closeAfterSpawningProcess: false)
+        let processError = FileDescriptorOutput(
+            fileDescriptor: errorFd,
+            closeAfterSpawningProcess: false
+        )
         return try configuration.spawn(
-            withInput: NoInput().createPipe(),
-            output: processOutput,
+            withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
-            error: processError,
             errorPipe: try processError.createPipe()
         ).processIdentifier
     case (.none, .some(let outputFd), .none):
-        let processOutput = FileDescriptorOutput(fileDescriptor: outputFd, closeAfterSpawningProcess: false)
+        let processInput = NoInput()
+        let processOutput = FileDescriptorOutput(
+            fileDescriptor: outputFd, closeAfterSpawningProcess: false
+        )
         let processError = DiscardedOutput()
         return try configuration.spawn(
-            withInput: NoInput().createPipe(),
-            output: processOutput,
+            withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
-            error: processError,
             errorPipe: try processError.createPipe()
         ).processIdentifier
     case (.none, .some(let outputFd), .some(let errorFd)):
+        let processInput = NoInput()
         let processOutput = FileDescriptorOutput(
             fileDescriptor: outputFd,
             closeAfterSpawningProcess: false
@@ -358,52 +628,56 @@ public func runDetached(
             closeAfterSpawningProcess: false
         )
         return try configuration.spawn(
-            withInput: NoInput().createPipe(),
-            output: processOutput,
+            withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
-            error: processError,
             errorPipe: try processError.createPipe()
         ).processIdentifier
     case (.some(let inputFd), .none, .none):
+        let processInput = FileDescriptorInput(
+            fileDescriptor: inputFd,
+            closeAfterSpawningProcess: false
+        )
         let processOutput = DiscardedOutput()
         let processError = DiscardedOutput()
         return try configuration.spawn(
-            withInput: FileDescriptorInput(
-                fileDescriptor: inputFd,
-                closeAfterSpawningProcess: false
-            ).createPipe(),
-            output: processOutput,
+            withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
-            error: processError,
             errorPipe: try processError.createPipe()
         ).processIdentifier
     case (.some(let inputFd), .none, .some(let errorFd)):
+        let processInput = FileDescriptorInput(
+            fileDescriptor: inputFd, closeAfterSpawningProcess: false
+        )
         let processOutput = DiscardedOutput()
         let processError = FileDescriptorOutput(
             fileDescriptor: errorFd,
             closeAfterSpawningProcess: false
         )
         return try configuration.spawn(
-            withInput: FileDescriptorInput(fileDescriptor: inputFd, closeAfterSpawningProcess: false).createPipe(),
-            output: processOutput,
+            withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
-            error: processError,
             errorPipe: try processError.createPipe()
         ).processIdentifier
     case (.some(let inputFd), .some(let outputFd), .none):
+        let processInput = FileDescriptorInput(
+            fileDescriptor: inputFd,
+            closeAfterSpawningProcess: false
+        )
         let processOutput = FileDescriptorOutput(
             fileDescriptor: outputFd,
             closeAfterSpawningProcess: false
         )
         let processError = DiscardedOutput()
         return try configuration.spawn(
-            withInput: FileDescriptorInput(fileDescriptor: inputFd, closeAfterSpawningProcess: false).createPipe(),
-            output: processOutput,
+            withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
-            error: processError,
             errorPipe: try processError.createPipe()
         ).processIdentifier
     case (.some(let inputFd), .some(let outputFd), .some(let errorFd)):
+        let processInput = FileDescriptorInput(
+            fileDescriptor: inputFd,
+            closeAfterSpawningProcess: false
+        )
         let processOutput = FileDescriptorOutput(
             fileDescriptor: outputFd,
             closeAfterSpawningProcess: false
@@ -413,11 +687,10 @@ public func runDetached(
             closeAfterSpawningProcess: false
         )
         return try configuration.spawn(
-            withInput: FileDescriptorInput(fileDescriptor: inputFd, closeAfterSpawningProcess: false).createPipe(),
-            output: processOutput,
+            withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
-            error: processError,
             errorPipe: try processError.createPipe()
         ).processIdentifier
     }
 }
+

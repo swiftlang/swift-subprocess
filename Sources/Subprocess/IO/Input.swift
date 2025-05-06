@@ -138,7 +138,7 @@ public struct ArrayInput: InputProtocol {
 
 /// A concrete `Input` type for subprocess that indicates that
 /// the Subprocess should read its input from `StandardInputWriter`.
-public struct CustomWriteInput: InputProtocol {
+internal struct CustomWriteInput: InputProtocol {
     public func write(with writer: StandardInputWriter) async throws {
         // noop
     }

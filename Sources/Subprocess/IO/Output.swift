@@ -125,7 +125,6 @@ public struct FileDescriptorOutput: OutputProtocol {
 public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol {
     public typealias OutputType = String?
     public let maxSize: Int
-    private let encoding: Encoding.Type
 
     #if SubprocessSpan
     public func output(from span: RawSpan) throws -> String? {
@@ -134,7 +133,7 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol {
         for index in 0..<span.byteCount {
             array.append(span.unsafeLoad(fromByteOffset: index, as: UInt8.self))
         }
-        return String(decodingBytes: array, as: self.encoding)
+        return String(decodingBytes: array, as: Encoding.self)
     }
     #else
     public func output(from buffer: some Sequence<UInt8>) throws -> String? {
@@ -146,7 +145,6 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol {
 
     internal init(limit: Int, encoding: Encoding.Type) {
         self.maxSize = limit
-        self.encoding = encoding
     }
 }
 
@@ -208,7 +206,7 @@ public struct BytesOutput: OutputProtocol {
 #if SubprocessSpan
 @available(SubprocessSpan, *)
 #endif
-public struct SequenceOutput: OutputProtocol {
+internal struct SequenceOutput: OutputProtocol {
     public typealias OutputType = Void
 
     internal init() {}
@@ -274,16 +272,6 @@ extension OutputProtocol where Self == BytesOutput {
     public static func bytes(limit: Int) -> Self {
         return .init(limit: limit)
     }
-}
-
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
-extension OutputProtocol where Self == SequenceOutput {
-    /// Create a `Subprocess` output that redirects the output
-    /// to the `.standardOutput` (or `.standardError`) property
-    /// of `Execution` as `AsyncSequence<Data>`.
-    public static var sequence: Self { .init() }
 }
 
 // MARK: - Span Default Implementations
@@ -391,6 +379,20 @@ extension OutputProtocol where OutputType == Void {
 #if SubprocessSpan
 @available(SubprocessSpan, *)
 extension OutputProtocol {
+    #if os(Windows)
+    internal func output(from data: [UInt8]) throws -> OutputType {
+        guard !data.isEmpty else {
+            let empty = UnsafeRawBufferPointer(start: nil, count: 0)
+            let span = RawSpan(_unsafeBytes: empty)
+            return try self.output(from: span)
+        }
+
+        return try data.withUnsafeBufferPointer { ptr in
+            let span = RawSpan(_unsafeBytes: UnsafeRawBufferPointer(ptr))
+            return try self.output(from: span)
+        }
+    }
+    #else
     internal func output(from data: DispatchData) throws -> OutputType {
         guard !data.isEmpty else {
             let empty = UnsafeRawBufferPointer(start: nil, count: 0)
@@ -404,6 +406,7 @@ extension OutputProtocol {
             return try self.output(from: span)
         }
     }
+    #endif // os(Windows)
 }
 #endif
 

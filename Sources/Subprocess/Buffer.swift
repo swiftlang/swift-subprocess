@@ -14,7 +14,7 @@
 #if SubprocessSpan
 @available(SubprocessSpan, *)
 #endif
-extension SequenceOutput {
+extension AsyncBufferSequence {
     /// A immutable collection of bytes
     public struct Buffer: Sendable {
         #if os(Windows)
@@ -37,7 +37,7 @@ extension SequenceOutput {
 #if SubprocessSpan
 @available(SubprocessSpan, *)
 #endif
-extension SequenceOutput.Buffer {
+extension AsyncBufferSequence.Buffer {
     /// Number of bytes stored in the buffer
     public var count: Int {
         return self.data.count
@@ -53,7 +53,7 @@ extension SequenceOutput.Buffer {
 #if SubprocessSpan
 @available(SubprocessSpan, *)
 #endif
-extension SequenceOutput.Buffer {
+extension AsyncBufferSequence.Buffer {
     #if !SubprocessSpan
     /// Access the raw bytes stored in this buffer
     /// - Parameter body: A closure with an `UnsafeRawBufferPointer` parameter that
@@ -140,11 +140,11 @@ extension SequenceOutput.Buffer {
 #if SubprocessSpan
 @available(SubprocessSpan, *)
 #endif
-extension SequenceOutput.Buffer: Equatable, Hashable {
+extension AsyncBufferSequence.Buffer: Equatable, Hashable {
     #if os(Windows)
     // Compiler generated conformances
     #else
-    public static func == (lhs: SequenceOutput.Buffer, rhs: SequenceOutput.Buffer) -> Bool {
+    public static func == (lhs: AsyncBufferSequence.Buffer, rhs: AsyncBufferSequence.Buffer) -> Bool {
         return lhs.data.elementsEqual(rhs.data)
     }
 
