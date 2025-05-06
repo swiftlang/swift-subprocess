@@ -20,11 +20,11 @@
 #endif
 public struct AsyncBufferSequence: AsyncSequence, Sendable {
     public typealias Failure = any Swift.Error
-    public typealias Element = SequenceOutput.Buffer
+    public typealias Element = Buffer
 
     @_nonSendable
     public struct Iterator: AsyncIteratorProtocol {
-        public typealias Element = SequenceOutput.Buffer
+        public typealias Element = Buffer
 
         private let diskIO: TrackedPlatformDiskIO
         private var buffer: [UInt8]
@@ -38,7 +38,7 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
             self.finished = false
         }
 
-        public func next() async throws -> SequenceOutput.Buffer? {
+        public func next() async throws -> Buffer? {
             let data = try await self.diskIO.readChunk(
                 upToLength: readBufferSize
             )

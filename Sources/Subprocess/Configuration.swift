@@ -61,233 +61,36 @@ public struct Configuration: Sendable {
     #if SubprocessSpan
     @available(SubprocessSpan, *)
     #endif
-    internal func run<
-        Result,
-        Output: OutputProtocol,
-        Error: OutputProtocol
-    >(
-        output: Output,
-        error: Error,
+    internal func run<Result>(
+        input: CreatedPipe,
+        output: CreatedPipe,
+        error: CreatedPipe,
         isolation: isolated (any Actor)? = #isolation,
-        _ body: (
-            Execution<Output, Error>,
-            StandardInputWriter
-        ) async throws -> Result
+        _ body: ((Execution, TrackedPlatformDiskIO?, TrackedPlatformDiskIO?, TrackedPlatformDiskIO?) async throws -> Result)
     ) async throws -> ExecutionResult<Result> {
-        let input = CustomWriteInput()
-
-        let inputPipe = try input.createPipe()
-        let outputPipe = try output.createPipe()
-        let errorPipe = try error.createPipe()
-
         let execution = try self.spawn(
-            withInput: inputPipe,
-            output: output,
-            outputPipe: outputPipe,
-            error: error,
-            errorPipe: errorPipe
+            withInput: input,
+            outputPipe: output,
+            errorPipe: error
         )
-        // After spawn, cleanup child side fds
-        try await self.cleanup(
-            execution: execution,
-            childSide: true,
-            parentSide: false,
-            attemptToTerminateSubProcess: false
-        )
+
         return try await withAsyncTaskCleanupHandler {
-            async let waitingStatus = try await monitorProcessTermination(
+            async let terminationStatus = try monitorProcessTermination(
                 forProcessWithIdentifier: execution.processIdentifier
             )
             // Body runs in the same isolation
-            let result = try await body(
-                execution,
-                .init(diskIO: execution.inputPipe.writeEnd!)
-            )
+            let inputIO = input.createInputPlatformDiskIO()
+            let outputIO = output.createOutputPlatformDiskIO()
+            let errorIO = error.createOutputPlatformDiskIO()
+            let result = try await body(execution, inputIO, outputIO, errorIO)
             return ExecutionResult(
-                terminationStatus: try await waitingStatus,
+                terminationStatus: try await terminationStatus,
                 value: result
             )
         } onCleanup: {
             // Attempt to terminate the child process
-            // Since the task has already been cancelled,
-            // this is the best we can do
-            try? await self.cleanup(
-                execution: execution,
-                childSide: false,
-                parentSide: true,
-                attemptToTerminateSubProcess: true
-            )
-        }
-    }
-
-    #if SubprocessSpan
-    @available(SubprocessSpan, *)
-    internal func run<
-        InputElement: BitwiseCopyable,
-        Output: OutputProtocol,
-        Error: OutputProtocol
-    >(
-        input: borrowing Span<InputElement>,
-        output: Output,
-        error: Error,
-        isolation: isolated (any Actor)? = #isolation
-    ) async throws -> CollectedResult<Output, Error> {
-        let writerInput = CustomWriteInput()
-
-        let inputPipe = try writerInput.createPipe()
-        let outputPipe = try output.createPipe()
-        let errorPipe = try error.createPipe()
-
-        let execution = try self.spawn(
-            withInput: inputPipe,
-            output: output,
-            outputPipe: outputPipe,
-            error: error,
-            errorPipe: errorPipe
-        )
-        // After spawn, clean up child side
-        try await self.cleanup(
-            execution: execution,
-            childSide: true,
-            parentSide: false,
-            attemptToTerminateSubProcess: false
-        )
-
-        return try await withAsyncTaskCleanupHandler {
-            // Spawn parallel tasks to monitor exit status
-            // and capture outputs. Input writing must happen
-            // in this scope for Span
-            async let terminationStatus = try monitorProcessTermination(
-                forProcessWithIdentifier: execution.processIdentifier
-            )
-            async let (
-                standardOutput,
-                standardError
-            ) = try await execution.captureIOs()
-            // Write input in the same scope
-            guard let writeFd = execution.inputPipe.writeEnd else {
-                fatalError("Trying to write to an input that has been closed")
-            }
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Swift.Error>) in
-                input.withUnsafeBytes { ptr in
-                    #if os(Windows)
-                    let bytes = ptr
-                    #else
-                    let bytes = DispatchData(
-                        bytesNoCopy: ptr,
-                        deallocator: .custom(
-                            nil,
-                            {
-                                // noop
-                            }
-                        )
-                    )
-                    #endif
-
-                    writeFd.write(bytes) { _, error in
-                        if let error = error {
-                            continuation.resume(throwing: error)
-                        } else {
-                            continuation.resume()
-                        }
-                    }
-                }
-
-            }
-            try writeFd.safelyClose()
-            return CollectedResult<Output, Error>(
-                processIdentifier: execution.processIdentifier,
-                terminationStatus: try await terminationStatus,
-                standardOutput: try await standardOutput,
-                standardError: try await standardError
-            )
-        } onCleanup: {
-            // Attempt to terminate the child process
-            // Since the task has already been cancelled,
-            // this is the best we can do
-            try? await self.cleanup(
-                execution: execution,
-                childSide: false,
-                parentSide: true,
-                attemptToTerminateSubProcess: true
-            )
-        }
-    }
-    #endif  // SubprocessSpan
-
-    #if SubprocessSpan
-    @available(SubprocessSpan, *)
-    #endif
-    internal func run<
-        Result,
-        Input: InputProtocol,
-        Output: OutputProtocol,
-        Error: OutputProtocol
-    >(
-        input: Input,
-        output: Output,
-        error: Error,
-        isolation: isolated (any Actor)? = #isolation,
-        _ body: ((Execution<Output, Error>) async throws -> Result)
-    ) async throws -> ExecutionResult<Result> {
-
-        let inputPipe = try input.createPipe()
-        let outputPipe = try output.createPipe()
-        let errorPipe = try error.createPipe()
-
-        let execution = try self.spawn(
-            withInput: inputPipe,
-            output: output,
-            outputPipe: outputPipe,
-            error: error,
-            errorPipe: errorPipe
-        )
-        // After spawn, clean up child side
-        try await self.cleanup(
-            execution: execution,
-            childSide: true,
-            parentSide: false,
-            attemptToTerminateSubProcess: false
-        )
-
-        return try await withAsyncTaskCleanupHandler {
-            return try await withThrowingTaskGroup(
-                of: TerminationStatus?.self,
-                returning: ExecutionResult.self
-            ) { group in
-                group.addTask {
-                    if let writeFd = execution.inputPipe.writeEnd {
-                        let writer = StandardInputWriter(diskIO: writeFd)
-                        try await input.write(with: writer)
-                        try await writer.finish()
-                    }
-                    return nil
-                }
-                group.addTask {
-                    return try await monitorProcessTermination(
-                        forProcessWithIdentifier: execution.processIdentifier
-                    )
-                }
-
-                // Body runs in the same isolation
-                let result = try await body(execution)
-                var status: TerminationStatus? = nil
-                while let monitorResult = try await group.next() {
-                    if let monitorResult = monitorResult {
-                        status = monitorResult
-                    }
-                }
-                return ExecutionResult(terminationStatus: status!, value: result)
-            }
-        } onCleanup: {
-            // Attempt to terminate the child process
-            // Since the task has already been cancelled,
-            // this is the best we can do
-            try? await self.cleanup(
-                execution: execution,
-                childSide: false,
-                parentSide: true,
-                attemptToTerminateSubProcess: true
+            await Execution.runTeardownSequence(
+                self.platformOptions.teardownSequence, on: execution.processIdentifier
             )
         }
     }
@@ -322,82 +125,6 @@ extension Configuration: CustomStringConvertible, CustomDebugStringConvertible {
 
 // MARK: - Cleanup
 extension Configuration {
-    /// Close each input individually, and throw the first error if there's multiple errors thrown
-    @Sendable
-    #if SubprocessSpan
-    @available(SubprocessSpan, *)
-    #endif
-    private func cleanup<
-        Output: OutputProtocol,
-        Error: OutputProtocol
-    >(
-        execution: Execution<Output, Error>,
-        childSide: Bool,
-        parentSide: Bool,
-        attemptToTerminateSubProcess: Bool
-    ) async throws {
-        func captureError(_ work: () throws -> Void) -> Swift.Error? {
-            do {
-                try work()
-                return nil
-            } catch {
-                // Ignore badFileDescriptor for double close
-                return error
-            }
-        }
-
-        guard childSide || parentSide || attemptToTerminateSubProcess else {
-            return
-        }
-
-        // Attempt to teardown the subprocess
-        if attemptToTerminateSubProcess {
-            await execution.teardown(
-                using: self.platformOptions.teardownSequence
-            )
-        }
-
-        var inputError: Swift.Error?
-        var outputError: Swift.Error?
-        var errorError: Swift.Error?  // lol
-
-        if childSide {
-            inputError = captureError {
-                try execution.inputPipe.readEnd?.safelyClose()
-            }
-            outputError = captureError {
-                try execution.outputPipe.writeEnd?.safelyClose()
-            }
-            errorError = captureError {
-                try execution.errorPipe.writeEnd?.safelyClose()
-            }
-        }
-
-        if parentSide {
-            inputError = captureError {
-                try execution.inputPipe.writeEnd?.safelyClose()
-            }
-            outputError = captureError {
-                try execution.outputPipe.readEnd?.safelyClose()
-            }
-            errorError = captureError {
-                try execution.errorPipe.readEnd?.safelyClose()
-            }
-        }
-
-        if let inputError = inputError {
-            throw inputError
-        }
-
-        if let outputError = outputError {
-            throw outputError
-        }
-
-        if let errorError = errorError {
-            throw errorError
-        }
-    }
-
     /// Close each input individually, and throw the first error if there's multiple errors thrown
     @Sendable
     internal func cleanupPreSpawn(

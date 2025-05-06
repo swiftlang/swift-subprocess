@@ -24,47 +24,33 @@ extension Configuration {
     #if SubprocessSpan
     @available(SubprocessSpan, *)
     #endif
-    internal func spawn<
-        Output: OutputProtocol,
-        Error: OutputProtocol
-    >(
+    internal func spawn(
         withInput inputPipe: CreatedPipe,
-        output: Output,
         outputPipe: CreatedPipe,
-        error: Error,
         errorPipe: CreatedPipe
-    ) throws -> Execution<Output, Error> {
+    ) throws -> Execution {
         // Spawn differently depending on whether
         // we need to spawn as a user
         guard let userCredentials = self.platformOptions.userCredentials else {
             return try self.spawnDirect(
                 withInput: inputPipe,
-                output: output,
                 outputPipe: outputPipe,
-                error: error,
                 errorPipe: errorPipe
             )
         }
         return try self.spawnAsUser(
             withInput: inputPipe,
-            output: output,
             outputPipe: outputPipe,
-            error: error,
             errorPipe: errorPipe,
             userCredentials: userCredentials
         )
     }
 
-    internal func spawnDirect<
-        Output: OutputProtocol,
-        Error: OutputProtocol
-    >(
+    internal func spawnDirect(
         withInput inputPipe: CreatedPipe,
-        output: Output,
         outputPipe: CreatedPipe,
-        error: Error,
         errorPipe: CreatedPipe
-    ) throws -> Execution<Output, Error> {
+    ) throws -> Execution {
         let (
             applicationName,
             commandAndArgs,
@@ -147,28 +133,46 @@ extension Configuration {
         let pid = ProcessIdentifier(
             value: processInfo.dwProcessId
         )
+
+        func captureError(_ work: () throws -> Void) -> (any Swift.Error)? {
+            do {
+                try work()
+                return nil
+            } catch {
+                return error
+            }
+        }
+        // After spawn finishes, close all child side fds
+        let inputCloseError = captureError {
+            try inputPipe.readFileDescriptor?.safelyClose()
+        }
+        let outputCloseError = captureError {
+            try outputPipe.writeFileDescriptor?.safelyClose()
+        }
+        let errorCloseError = captureError {
+            try errorPipe.writeFileDescriptor?.safelyClose()
+        }
+        if let inputCloseError = inputCloseError {
+            throw inputCloseError
+        }
+        if let outputCloseError = outputCloseError {
+            throw outputCloseError
+        }
+        if let errorCloseError = errorCloseError {
+            throw errorCloseError
+        }
         return Execution(
             processIdentifier: pid,
-            output: output,
-            error: error,
-            inputPipe: inputPipe.createInputPipe(),
-            outputPipe: outputPipe.createOutputPipe(),
-            errorPipe: errorPipe.createOutputPipe(),
             consoleBehavior: self.platformOptions.consoleBehavior
         )
     }
 
-    internal func spawnAsUser<
-        Output: OutputProtocol,
-        Error: OutputProtocol
-    >(
+    internal func spawnAsUser(
         withInput inputPipe: CreatedPipe,
-        output: Output,
         outputPipe: CreatedPipe,
-        error: Error,
         errorPipe: CreatedPipe,
         userCredentials: PlatformOptions.UserCredentials
-    ) throws -> Execution<Output, Error> {
+    ) throws -> Execution {
         let (
             applicationName,
             commandAndArgs,
@@ -264,13 +268,35 @@ extension Configuration {
         let pid = ProcessIdentifier(
             value: processInfo.dwProcessId
         )
+        func captureError(_ work: () throws -> Void) -> (any Swift.Error)? {
+            do {
+                try work()
+                return nil
+            } catch {
+                return error
+            }
+        }
+        // After spawn finishes, close all child side fds
+        let inputCloseError = captureError {
+            try inputPipe.readFileDescriptor?.safelyClose()
+        }
+        let outputCloseError = captureError {
+            try outputPipe.writeFileDescriptor?.safelyClose()
+        }
+        let errorCloseError = captureError {
+            try errorPipe.writeFileDescriptor?.safelyClose()
+        }
+        if let inputCloseError = inputCloseError {
+            throw inputCloseError
+        }
+        if let outputCloseError = outputCloseError {
+            throw outputCloseError
+        }
+        if let errorCloseError = errorCloseError {
+            throw errorCloseError
+        }
         return Execution(
             processIdentifier: pid,
-            output: output,
-            error: error,
-            inputPipe: inputPipe.createInputPipe(),
-            outputPipe: outputPipe.createOutputPipe(),
-            errorPipe: errorPipe.createOutputPipe(),
             consoleBehavior: self.platformOptions.consoleBehavior
         )
     }
@@ -497,12 +523,19 @@ extension Execution {
     /// Terminate the current subprocess with the given exit code
     /// - Parameter exitCode: The exit code to use for the subprocess.
     public func terminate(withExitCode exitCode: DWORD) throws {
+        try Self.terminate(self.processIdentifier, withExitCode: exitCode)
+    }
+
+    internal static func terminate(
+        _ processIdentifier: ProcessIdentifier,
+        withExitCode exitCode: DWORD
+    ) throws {
         guard
             let processHandle = OpenProcess(
                 // PROCESS_ALL_ACCESS
                 DWORD(STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 0xFFFF),
                 false,
-                self.processIdentifier.value
+                processIdentifier.value
             )
         else {
             throw SubprocessError(
@@ -601,15 +634,6 @@ extension Execution {
                 underlyingError: .init(rawValue: GetLastError())
             )
         }
-    }
-
-    internal func tryTerminate() -> Swift.Error? {
-        do {
-            try self.terminate(withExitCode: 0)
-        } catch {
-            return error
-        }
-        return nil
     }
 }
 
@@ -1027,18 +1051,12 @@ extension FileDescriptor {
 
 extension CreatedPipe {
     /// On Windows, we use file descriptors directly
-    internal func createInputPipe() -> InputPipe {
-        return InputPipe(
-            readEnd: self.readFileDescriptor,
-            writeEnd: self.writeFileDescriptor
-        )
+    internal func createInputPlatformDiskIO() -> TrackedPlatformDiskIO? {
+        return self.writeFileDescriptor
     }
 
-    internal func createOutputPipe() -> OutputPipe {
-        return OutputPipe(
-            readEnd: self.readFileDescriptor,
-            writeEnd: self.writeFileDescriptor
-        )
+    internal func createOutputPlatformDiskIO() -> TrackedPlatformDiskIO? {
+        return self.readFileDescriptor
     }
 }
 
