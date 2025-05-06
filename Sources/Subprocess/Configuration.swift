@@ -62,27 +62,32 @@ public struct Configuration: Sendable {
     @available(SubprocessSpan, *)
     #endif
     internal func run<Result>(
-        input: CreatedPipe,
-        output: CreatedPipe,
-        error: CreatedPipe,
+        input: consuming CreatedPipe,
+        output: consuming CreatedPipe,
+        error: consuming CreatedPipe,
         isolation: isolated (any Actor)? = #isolation,
         _ body: ((Execution, TrackedPlatformDiskIO?, TrackedPlatformDiskIO?, TrackedPlatformDiskIO?) async throws -> Result)
     ) async throws -> ExecutionResult<Result> {
-        let execution = try self.spawn(
+        let spawnResults = try self.spawn(
             withInput: input,
             outputPipe: output,
             errorPipe: error
         )
+        let pid = spawnResults.execution.processIdentifier
+
+        var spawnResultBox: SpawnResult?? = consume spawnResults
 
         return try await withAsyncTaskCleanupHandler {
+            let _spawnResult = spawnResultBox!.take()!
+
             async let terminationStatus = try monitorProcessTermination(
-                forProcessWithIdentifier: execution.processIdentifier
+                forProcessWithIdentifier: _spawnResult.execution.processIdentifier
             )
             // Body runs in the same isolation
-            let inputIO = input.createInputPlatformDiskIO()
-            let outputIO = output.createOutputPlatformDiskIO()
-            let errorIO = error.createOutputPlatformDiskIO()
-            let result = try await body(execution, inputIO, outputIO, errorIO)
+            let inputIO = _spawnResult.inputPipe.createInputPlatformDiskIO()
+            let outputIO = _spawnResult.outputPipe.createOutputPlatformDiskIO()
+            let errorIO = _spawnResult.errorPipe.createOutputPlatformDiskIO()
+            let result = try await body(_spawnResult.execution, inputIO, outputIO, errorIO)
             return ExecutionResult(
                 terminationStatus: try await terminationStatus,
                 value: result
@@ -90,7 +95,8 @@ public struct Configuration: Sendable {
         } onCleanup: {
             // Attempt to terminate the child process
             await Execution.runTeardownSequence(
-                self.platformOptions.teardownSequence, on: execution.processIdentifier
+                self.platformOptions.teardownSequence,
+                on: pid
             )
         }
     }
@@ -128,9 +134,9 @@ extension Configuration {
     /// Close each input individually, and throw the first error if there's multiple errors thrown
     @Sendable
     internal func cleanupPreSpawn(
-        input: CreatedPipe,
-        output: CreatedPipe,
-        error: CreatedPipe
+        input: borrowing CreatedPipe,
+        output: borrowing CreatedPipe,
+        error: borrowing CreatedPipe
     ) throws {
         var inputError: Swift.Error?
         var outputError: Swift.Error?
@@ -472,6 +478,18 @@ extension TerminationStatus: CustomStringConvertible, CustomDebugStringConvertib
 
 // MARK: - Internal
 
+extension Configuration {
+    #if SubprocessSpan
+    @available(SubprocessSpan, *)
+    #endif
+    internal struct SpawnResult: ~Copyable {
+        let execution: Execution
+        let inputPipe: CreatedPipe
+        let outputPipe: CreatedPipe
+        let errorPipe: CreatedPipe
+    }
+}
+
 internal enum StringOrRawBytes: Sendable, Hashable {
     case string(String)
     case rawBytes([UInt8])
@@ -593,7 +611,7 @@ internal struct TrackedDispatchIO {
 }
 #endif
 
-internal struct CreatedPipe {
+internal struct CreatedPipe: ~Copyable {
     internal let readFileDescriptor: TrackedFileDescriptor?
     internal let writeFileDescriptor: TrackedFileDescriptor?
 
