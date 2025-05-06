@@ -593,7 +593,7 @@ public func runDetached(
             withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
             errorPipe: try processError.createPipe()
-        ).processIdentifier
+        ).execution.processIdentifier
     case (.none, .none, .some(let errorFd)):
         let processInput = NoInput()
         let processOutput = DiscardedOutput()
@@ -605,7 +605,7 @@ public func runDetached(
             withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
             errorPipe: try processError.createPipe()
-        ).processIdentifier
+        ).execution.processIdentifier
     case (.none, .some(let outputFd), .none):
         let processInput = NoInput()
         let processOutput = FileDescriptorOutput(
@@ -616,7 +616,7 @@ public func runDetached(
             withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
             errorPipe: try processError.createPipe()
-        ).processIdentifier
+        ).execution.processIdentifier
     case (.none, .some(let outputFd), .some(let errorFd)):
         let processInput = NoInput()
         let processOutput = FileDescriptorOutput(
@@ -631,7 +631,7 @@ public func runDetached(
             withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
             errorPipe: try processError.createPipe()
-        ).processIdentifier
+        ).execution.processIdentifier
     case (.some(let inputFd), .none, .none):
         let processInput = FileDescriptorInput(
             fileDescriptor: inputFd,
@@ -643,7 +643,7 @@ public func runDetached(
             withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
             errorPipe: try processError.createPipe()
-        ).processIdentifier
+        ).execution.processIdentifier
     case (.some(let inputFd), .none, .some(let errorFd)):
         let processInput = FileDescriptorInput(
             fileDescriptor: inputFd, closeAfterSpawningProcess: false
@@ -657,7 +657,7 @@ public func runDetached(
             withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
             errorPipe: try processError.createPipe()
-        ).processIdentifier
+        ).execution.processIdentifier
     case (.some(let inputFd), .some(let outputFd), .none):
         let processInput = FileDescriptorInput(
             fileDescriptor: inputFd,
@@ -672,7 +672,7 @@ public func runDetached(
             withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
             errorPipe: try processError.createPipe()
-        ).processIdentifier
+        ).execution.processIdentifier
     case (.some(let inputFd), .some(let outputFd), .some(let errorFd)):
         let processInput = FileDescriptorInput(
             fileDescriptor: inputFd,
@@ -690,7 +690,7 @@ public func runDetached(
             withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
             errorPipe: try processError.createPipe()
-        ).processIdentifier
+        ).execution.processIdentifier
     }
 }
 

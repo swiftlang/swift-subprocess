@@ -322,7 +322,7 @@ extension Configuration {
         supplementaryGroups: [gid_t]?
     )
 
-    internal func preSpawn<Result>(
+    internal func preSpawn<Result: ~Copyable>(
         _ work: (PreSpawnArgs) throws -> Result
     ) throws -> Result {
         // Prepare environment
