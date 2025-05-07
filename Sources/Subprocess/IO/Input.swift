@@ -212,9 +212,9 @@ extension InputProtocol {
 /// A writer that writes to the standard input of the subprocess.
 public final actor StandardInputWriter: Sendable {
 
-    internal let diskIO: TrackedPlatformDiskIO
+    internal var diskIO: TrackedPlatformDiskIO
 
-    init(diskIO: TrackedPlatformDiskIO) {
+    init(diskIO: consuming TrackedPlatformDiskIO) {
         self.diskIO = diskIO
     }
 
@@ -255,23 +255,6 @@ public final actor StandardInputWriter: Sendable {
     /// Signal all writes are finished
     public func finish() async throws {
         try self.diskIO.safelyClose()
-    }
-}
-
-
-// MARK: - InputPipe
-internal struct InputPipe {
-    // On Darwin and Linux, parent end (write end) should be
-    // wrapped as `DispatchIO` for writing
-    internal let readEnd: TrackedFileDescriptor?
-    internal let writeEnd: TrackedPlatformDiskIO?
-
-    internal init(
-        readEnd: TrackedFileDescriptor?,
-        writeEnd: TrackedPlatformDiskIO?
-    ) {
-        self.readEnd = readEnd
-        self.writeEnd = writeEnd
     }
 }
 

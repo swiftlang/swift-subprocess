@@ -15,6 +15,10 @@
 @preconcurrency import SystemPackage
 #endif
 
+#if !os(Windows)
+internal import Dispatch
+#endif
+
 #if SubprocessSpan
 @available(SubprocessSpan, *)
 #endif
@@ -22,16 +26,22 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
     public typealias Failure = any Swift.Error
     public typealias Element = Buffer
 
+    #if os(Windows)
+    internal typealias DiskIO = FileDescriptor
+    #else
+    internal typealias DiskIO = DispatchIO
+    #endif
+
     @_nonSendable
     public struct Iterator: AsyncIteratorProtocol {
         public typealias Element = Buffer
 
-        private let diskIO: TrackedPlatformDiskIO
+        private let diskIO: DiskIO
         private var buffer: [UInt8]
         private var currentPosition: Int
         private var finished: Bool
 
-        internal init(diskIO: TrackedPlatformDiskIO) {
+        internal init(diskIO: DiskIO) {
             self.diskIO = diskIO
             self.buffer = []
             self.currentPosition = 0
@@ -44,16 +54,20 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
             )
             if data == nil {
                 // We finished reading. Close the file descriptor now
-                try self.diskIO.safelyClose()
+                #if os(Windows)
+                try self.diskIO.close()
+                #else
+                self.diskIO.close()
+                #endif
                 return nil
             }
             return data
         }
     }
 
-    private let diskIO: TrackedPlatformDiskIO
+    private let diskIO: DiskIO
 
-    internal init(diskIO: TrackedPlatformDiskIO) {
+    internal init(diskIO: DiskIO) {
         self.diskIO = diskIO
     }
 

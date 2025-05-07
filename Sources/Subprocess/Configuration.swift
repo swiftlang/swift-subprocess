@@ -66,7 +66,7 @@ public struct Configuration: Sendable {
         output: consuming CreatedPipe,
         error: consuming CreatedPipe,
         isolation: isolated (any Actor)? = #isolation,
-        _ body: ((Execution, TrackedPlatformDiskIO?, TrackedPlatformDiskIO?, TrackedPlatformDiskIO?) async throws -> Result)
+        _ body: ((Execution, consuming TrackedPlatformDiskIO?, consuming TrackedPlatformDiskIO?, consuming TrackedPlatformDiskIO?) async throws -> Result)
     ) async throws -> ExecutionResult<Result> {
         let spawnResults = try self.spawn(
             withInput: input,
@@ -78,15 +78,16 @@ public struct Configuration: Sendable {
         var spawnResultBox: SpawnResult?? = consume spawnResults
 
         return try await withAsyncTaskCleanupHandler {
-            let _spawnResult = spawnResultBox!.take()!
+            var _spawnResult = spawnResultBox!.take()!
+            let inputIO = _spawnResult.inputWriteEnd()
+            let outputIO = _spawnResult.outputReadEnd()
+            let errorIO = _spawnResult.errorReadEnd()
+            let processIdentifier = _spawnResult.execution.processIdentifier
 
             async let terminationStatus = try monitorProcessTermination(
-                forProcessWithIdentifier: _spawnResult.execution.processIdentifier
+                forProcessWithIdentifier: processIdentifier
             )
             // Body runs in the same isolation
-            let inputIO = _spawnResult.inputPipe.createInputPlatformDiskIO()
-            let outputIO = _spawnResult.outputPipe.createOutputPlatformDiskIO()
-            let errorIO = _spawnResult.errorPipe.createOutputPlatformDiskIO()
             let result = try await body(_spawnResult.execution, inputIO, outputIO, errorIO)
             return ExecutionResult(
                 terminationStatus: try await terminationStatus,
@@ -133,44 +134,49 @@ extension Configuration: CustomStringConvertible, CustomDebugStringConvertible {
 extension Configuration {
     /// Close each input individually, and throw the first error if there's multiple errors thrown
     @Sendable
-    internal func cleanupPreSpawn(
-        input: borrowing CreatedPipe,
-        output: borrowing CreatedPipe,
-        error: borrowing CreatedPipe
+    internal func safelyCloseMultuple(
+        inputRead: consuming TrackedFileDescriptor?,
+        inputWrite: consuming TrackedFileDescriptor?,
+        outputRead: consuming TrackedFileDescriptor?,
+        outputWrite: consuming TrackedFileDescriptor?,
+        errorRead: consuming TrackedFileDescriptor?,
+        errorWrite: consuming TrackedFileDescriptor?
     ) throws {
-        var inputError: Swift.Error?
-        var outputError: Swift.Error?
-        var errorError: Swift.Error?
+        var possibleError: (any Swift.Error)? = nil
 
         do {
-            try input.readFileDescriptor?.safelyClose()
-            try input.writeFileDescriptor?.safelyClose()
+            try inputRead?.safelyClose()
         } catch {
-            inputError = error
+            possibleError = error
         }
-
         do {
-            try output.readFileDescriptor?.safelyClose()
-            try output.writeFileDescriptor?.safelyClose()
+            try inputWrite?.safelyClose()
         } catch {
-            outputError = error
+            possibleError = error
         }
-
         do {
-            try error.readFileDescriptor?.safelyClose()
-            try error.writeFileDescriptor?.safelyClose()
+            try outputRead?.safelyClose()
         } catch {
-            errorError = error
+            possibleError = error
+        }
+        do {
+            try outputWrite?.safelyClose()
+        } catch {
+            possibleError = error
+        }
+        do {
+            try errorRead?.safelyClose()
+        } catch {
+            possibleError = error
+        }
+        do {
+            try errorWrite?.safelyClose()
+        } catch {
+            possibleError = error
         }
 
-        if let inputError = inputError {
-            throw inputError
-        }
-        if let outputError = outputError {
-            throw outputError
-        }
-        if let errorError = errorError {
-            throw errorError
+        if let actualError = possibleError {
+            throw actualError
         }
     }
 }
@@ -482,11 +488,39 @@ extension Configuration {
     #if SubprocessSpan
     @available(SubprocessSpan, *)
     #endif
+    /// After Spawn finishes, child side file descriptors
+    /// (input read, output write, error write) will be closed
+    /// by `spawn()`. It returns the parent side file descriptors
+    /// via `SpawnResult` to perform actual reads
     internal struct SpawnResult: ~Copyable {
         let execution: Execution
-        let inputPipe: CreatedPipe
-        let outputPipe: CreatedPipe
-        let errorPipe: CreatedPipe
+        var _inputWriteEnd: TrackedPlatformDiskIO?
+        var _outputReadEnd: TrackedPlatformDiskIO?
+        var _errorReadEnd: TrackedPlatformDiskIO?
+
+        init(
+            execution: Execution,
+            inputWriteEnd: consuming TrackedPlatformDiskIO?,
+            outputReadEnd: consuming TrackedPlatformDiskIO?,
+            errorReadEnd: consuming TrackedPlatformDiskIO?
+        ) {
+            self.execution = execution
+            self._inputWriteEnd = consume inputWriteEnd
+            self._outputReadEnd = consume outputReadEnd
+            self._errorReadEnd = consume errorReadEnd
+        }
+
+        mutating func inputWriteEnd() -> TrackedPlatformDiskIO? {
+            return self._inputWriteEnd.take()
+        }
+
+        mutating func outputReadEnd() -> TrackedPlatformDiskIO? {
+            return self._outputReadEnd.take()
+        }
+
+        mutating func errorReadEnd() -> TrackedPlatformDiskIO? {
+            return self._errorReadEnd.take()
+        }
     }
 }
 
@@ -548,8 +582,8 @@ internal enum StringOrRawBytes: Sendable, Hashable {
 
 /// A wrapped `FileDescriptor` and whether it should be closed
 /// automactially when done.
-internal struct TrackedFileDescriptor {
-    internal let closeWhenDone: Bool
+internal struct TrackedFileDescriptor: ~Copyable {
+    internal var closeWhenDone: Bool
     internal let fileDescriptor: FileDescriptor
 
     internal init(
@@ -560,7 +594,46 @@ internal struct TrackedFileDescriptor {
         self.closeWhenDone = closeWhenDone
     }
 
-    internal func safelyClose() throws {
+    #if os(Windows)
+    consuming func consumeDiskIO() -> FileDescriptor {
+        let result = self.fileDescriptor
+        // Transfer the ownership out and therefor
+        // don't perform close on deinit
+        self.closeWhenDone = false
+        return result
+    }
+    #endif
+
+    internal mutating func safelyClose() throws {
+        guard self.closeWhenDone else {
+            return
+        }
+        closeWhenDone = false
+
+        do {
+            try fileDescriptor.close()
+        } catch {
+            guard let errno: Errno = error as? Errno else {
+                throw error
+            }
+            // Getting `.badFileDescriptor` suggests that the file descriptor
+            // might have been closed unexpectedly. This can pose security risks
+            // if another part of the code inadvertently reuses the same file descriptor
+            // number. This problem is especially concerning on Unix systems due to POSIX’s
+            // guarantee of using the lowest available file descriptor number, making reuse
+            // more probable. We use `preconditionFailure` upon receiving `.badFileDescriptor`
+            // to prevent accidentally closing a different file descriptor.
+            guard errno != .badFileDescriptor else {
+                preconditionFailure(
+                    "FileDescriptor \(fileDescriptor.rawValue) is already closed"
+                )
+            }
+            // Throw other kinds of errors to allow user to catch them
+            throw error
+        }
+    }
+
+    deinit {
         guard self.closeWhenDone else {
             return
         }
@@ -569,15 +642,25 @@ internal struct TrackedFileDescriptor {
             try fileDescriptor.close()
         } catch {
             guard let errno: Errno = error as? Errno else {
-                throw error
+                return
             }
-            if errno != .badFileDescriptor {
-                throw errno
+            // Getting `.badFileDescriptor` suggests that the file descriptor
+            // might have been closed unexpectedly. This can pose security risks
+            // if another part of the code inadvertently reuses the same file descriptor
+            // number. This problem is especially concerning on Unix systems due to POSIX’s
+            // guarantee of using the lowest available file descriptor number, making reuse
+            // more probable. We use `preconditionFailure` upon receiving `.badFileDescriptor`
+            // to prevent accidentally closing a different file descriptor.
+            guard errno != .badFileDescriptor else {
+                preconditionFailure(
+                    "FileDescriptor \(fileDescriptor.rawValue) is already closed"
+                )
             }
+            // Otherwise ignore the error
         }
     }
 
-    internal var platformDescriptor: PlatformFileDescriptor {
+    internal func platformDescriptor() -> PlatformFileDescriptor {
         return self.fileDescriptor.platformDescriptor
     }
 }
@@ -585,9 +668,9 @@ internal struct TrackedFileDescriptor {
 #if !os(Windows)
 /// A wrapped `DispatchIO` and whether it should be closed
 /// automactially when done.
-internal struct TrackedDispatchIO {
-    internal let closeWhenDone: Bool
-    internal let dispatchIO: DispatchIO
+internal struct TrackedDispatchIO: ~Copyable {
+    internal var closeWhenDone: Bool
+    internal var dispatchIO: DispatchIO
 
     internal init(
         _ dispatchIO: DispatchIO,
@@ -597,39 +680,59 @@ internal struct TrackedDispatchIO {
         self.closeWhenDone = closeWhenDone
     }
 
-    internal func safelyClose() throws {
+    consuming func consumeDiskIO() -> DispatchIO {
+        let result = self.dispatchIO
+        // Transfer the ownership out and therefor
+        // don't perform close on deinit
+        self.closeWhenDone = false
+        return result
+    }
+
+    internal mutating func safelyClose() throws {
+        guard self.closeWhenDone else {
+            return
+        }
+        closeWhenDone = false
+        dispatchIO.close()
+    }
+
+    deinit {
         guard self.closeWhenDone else {
             return
         }
 
         dispatchIO.close()
     }
-
-    internal var platformDescriptor: PlatformFileDescriptor {
-        return self.dispatchIO.fileDescriptor
-    }
 }
 #endif
 
 internal struct CreatedPipe: ~Copyable {
-    internal let readFileDescriptor: TrackedFileDescriptor?
-    internal let writeFileDescriptor: TrackedFileDescriptor?
+    internal var _readFileDescriptor: TrackedFileDescriptor?
+    internal var _writeFileDescriptor: TrackedFileDescriptor?
 
     internal init(
-        readFileDescriptor: TrackedFileDescriptor?,
-        writeFileDescriptor: TrackedFileDescriptor?
+        readFileDescriptor: consuming TrackedFileDescriptor?,
+        writeFileDescriptor: consuming TrackedFileDescriptor?
     ) {
-        self.readFileDescriptor = readFileDescriptor
-        self.writeFileDescriptor = writeFileDescriptor
+        self._readFileDescriptor = readFileDescriptor
+        self._writeFileDescriptor = writeFileDescriptor
+    }
+
+    mutating func readFileDescriptor() -> TrackedFileDescriptor? {
+        return self._readFileDescriptor.take()
+    }
+
+    mutating func writeFileDescriptor() -> TrackedFileDescriptor? {
+        return self._writeFileDescriptor.take()
     }
 
     internal init(closeWhenDone: Bool) throws {
         let pipe = try FileDescriptor.ssp_pipe()
-        self.readFileDescriptor = .init(
+        self._readFileDescriptor = .init(
             pipe.readEnd,
             closeWhenDone: closeWhenDone
         )
-        self.writeFileDescriptor = .init(
+        self._writeFileDescriptor = .init(
             pipe.writeEnd,
             closeWhenDone: closeWhenDone
         )

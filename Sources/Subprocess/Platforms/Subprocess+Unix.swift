@@ -392,53 +392,32 @@ extension FileDescriptor {
 internal typealias PlatformFileDescriptor = CInt
 internal typealias TrackedPlatformDiskIO = TrackedDispatchIO
 
-extension CreatedPipe {
-    internal func createInputPlatformDiskIO() -> TrackedPlatformDiskIO? {
-        if let writeFileDescriptor = self.writeFileDescriptor {
-            let dispatchIO: DispatchIO = DispatchIO(
-                type: .stream,
-                fileDescriptor: writeFileDescriptor.platformDescriptor,
-                queue: .global(),
-                cleanupHandler: { error in
-                    // Close the file descriptor
-                    if writeFileDescriptor.closeWhenDone {
-                        try? writeFileDescriptor.safelyClose()
-                    }
+extension TrackedFileDescriptor {
+    internal consuming func createPlatformDiskIO() -> TrackedPlatformDiskIO {
+        let dispatchIO: DispatchIO = DispatchIO(
+            type: .stream,
+            fileDescriptor: self.platformDescriptor(),
+            queue: .global(),
+            cleanupHandler: { error in
+                // Close the file descriptor
+                if self.closeWhenDone {
+                    try? self.safelyClose()
                 }
-            )
-            return .init(dispatchIO, closeWhenDone: writeFileDescriptor.closeWhenDone)
-        }
-        return nil
-    }
-
-    internal func createOutputPlatformDiskIO() -> TrackedPlatformDiskIO? {
-        if let readFileDescriptor = self.readFileDescriptor {
-            let dispatchIO: DispatchIO = DispatchIO(
-                type: .stream,
-                fileDescriptor: readFileDescriptor.platformDescriptor,
-                queue: .global(),
-                cleanupHandler: { error in
-                    // Close the file descriptor
-                    if readFileDescriptor.closeWhenDone {
-                        try? readFileDescriptor.safelyClose()
-                    }
-                }
-            )
-            return .init(dispatchIO, closeWhenDone: readFileDescriptor.closeWhenDone)
-        }
-        return nil
+            }
+        )
+        return .init(dispatchIO, closeWhenDone: self.closeWhenDone)
     }
 }
 
 // MARK: - TrackedDispatchIO extensions
-extension TrackedDispatchIO {
-#if SubprocessSpan
+extension DispatchIO {
+    #if SubprocessSpan
     @available(SubprocessSpan, *)
-#endif
-    package func readChunk(upToLength maxLength: Int) async throws -> AsyncBufferSequence.Buffer? {
+    #endif
+    internal func readChunk(upToLength maxLength: Int) async throws -> AsyncBufferSequence.Buffer? {
         return try await withCheckedThrowingContinuation { continuation in
             var buffer: DispatchData = .empty
-            self.dispatchIO.read(
+            self.read(
                 offset: 0,
                 length: maxLength,
                 queue: .global()
@@ -469,8 +448,13 @@ extension TrackedDispatchIO {
             }
         }
     }
+}
 
-    internal func readUntilEOF(
+extension TrackedDispatchIO {
+    #if SubprocessSpan
+    @available(SubprocessSpan, *)
+    #endif
+    internal consuming func readUntilEOF(
         upToLength maxLength: Int,
         resultHandler: sending @escaping (Swift.Result<DispatchData, any Error>) -> Void
     ) {

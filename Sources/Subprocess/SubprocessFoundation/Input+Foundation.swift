@@ -133,11 +133,15 @@ extension TrackedFileDescriptor {
     internal func write(
         _ data: Data
     ) async throws -> Int {
-        try await withCheckedThrowingContinuation { continuation in
+        let fileDescriptor = self.fileDescriptor
+        return try await withCheckedThrowingContinuation { continuation in
             // TODO: Figure out a better way to asynchornously write
             DispatchQueue.global(qos: .userInitiated).async {
                 data.withUnsafeBytes {
-                    self.write($0) { writtenLength, error in
+                    Self.write(
+                        $0,
+                        to: fileDescriptor
+                    ) { writtenLength, error in
                         if let error = error {
                             continuation.resume(throwing: error)
                         } else {
