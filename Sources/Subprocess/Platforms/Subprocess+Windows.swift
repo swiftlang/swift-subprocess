@@ -25,10 +25,10 @@ extension Configuration {
     @available(SubprocessSpan, *)
     #endif
     internal func spawn(
-        withInput inputPipe: CreatedPipe,
-        outputPipe: CreatedPipe,
-        errorPipe: CreatedPipe
-    ) throws -> Execution {
+        withInput inputPipe: consuming CreatedPipe,
+        outputPipe: consuming CreatedPipe,
+        errorPipe: consuming CreatedPipe
+    ) throws -> SpawnResult {
         // Spawn differently depending on whether
         // we need to spawn as a user
         guard let userCredentials = self.platformOptions.userCredentials else {
@@ -47,20 +47,31 @@ extension Configuration {
     }
 
     internal func spawnDirect(
-        withInput inputPipe: CreatedPipe,
-        outputPipe: CreatedPipe,
-        errorPipe: CreatedPipe
-    ) throws -> Execution {
+        withInput inputPipe: consuming CreatedPipe,
+        outputPipe: consuming CreatedPipe,
+        errorPipe: consuming CreatedPipe
+    ) throws -> SpawnResult {
         let (
             applicationName,
             commandAndArgs,
             environment,
             intendedWorkingDir
         ) = try self.preSpawn()
+
+        var inputReadFileDescriptor: TrackedFileDescriptor? = inputPipe.readFileDescriptor()
+        var inputWriteFileDescriptor: TrackedFileDescriptor? = inputPipe.writeFileDescriptor()
+        var outputReadFileDescriptor: TrackedFileDescriptor? = outputPipe.readFileDescriptor()
+        var outputWriteFileDescriptor: TrackedFileDescriptor? = outputPipe.writeFileDescriptor()
+        var errorReadFileDescriptor: TrackedFileDescriptor? = errorPipe.readFileDescriptor()
+        var errorWriteFileDescriptor: TrackedFileDescriptor? = errorPipe.writeFileDescriptor()
+
         var startupInfo = try self.generateStartupInfo(
-            withInput: inputPipe,
-            output: outputPipe,
-            error: errorPipe
+            withInputRead: inputReadFileDescriptor,
+            inputWrite: inputWriteFileDescriptor,
+            outputRead: outputReadFileDescriptor,
+            outputWrite: outputWriteFileDescriptor,
+            errorRead: errorReadFileDescriptor,
+            errorWrite: errorWriteFileDescriptor
         )
         var processInfo: PROCESS_INFORMATION = PROCESS_INFORMATION()
         var createProcessFlags = self.generateCreateProcessFlag()
@@ -91,10 +102,13 @@ extension Configuration {
                         )
                         guard created else {
                             let windowsError = GetLastError()
-                            try self.cleanupPreSpawn(
-                                input: inputPipe,
-                                output: outputPipe,
-                                error: errorPipe
+                            try self.safelyCloseMultuple(
+                                inputRead: inputReadFileDescriptor.take(),
+                                inputWrite: inputWriteFileDescriptor.take(),
+                                outputRead: outputReadFileDescriptor.take(),
+                                outputWrite: outputWriteFileDescriptor.take(),
+                                errorRead: errorReadFileDescriptor.take(),
+                                errorWrite: errorWriteFileDescriptor.take()
                             )
                             throw SubprocessError(
                                 code: .init(.spawnFailed),
@@ -108,10 +122,13 @@ extension Configuration {
         // We don't need the handle objects, so close it right away
         guard CloseHandle(processInfo.hThread) else {
             let windowsError = GetLastError()
-            try self.cleanupPreSpawn(
-                input: inputPipe,
-                output: outputPipe,
-                error: errorPipe
+            try self.safelyCloseMultuple(
+                inputRead: inputReadFileDescriptor,
+                inputWrite: inputWriteFileDescriptor,
+                outputRead: outputReadFileDescriptor,
+                outputWrite: outputWriteFileDescriptor,
+                errorRead: errorReadFileDescriptor,
+                errorWrite: errorWriteFileDescriptor
             )
             throw SubprocessError(
                 code: .init(.spawnFailed),
@@ -120,69 +137,71 @@ extension Configuration {
         }
         guard CloseHandle(processInfo.hProcess) else {
             let windowsError = GetLastError()
-            try self.cleanupPreSpawn(
-                input: inputPipe,
-                output: outputPipe,
-                error: errorPipe
+            try self.safelyCloseMultuple(
+                inputRead: inputReadFileDescriptor,
+                inputWrite: inputWriteFileDescriptor,
+                outputRead: outputReadFileDescriptor,
+                outputWrite: outputWriteFileDescriptor,
+                errorRead: errorReadFileDescriptor,
+                errorWrite: errorWriteFileDescriptor
             )
             throw SubprocessError(
                 code: .init(.spawnFailed),
                 underlyingError: .init(rawValue: windowsError)
             )
         }
+
+        try self.safelyCloseMultuple(
+            inputRead: inputReadFileDescriptor,
+            inputWrite: nil,
+            outputRead: nil,
+            outputWrite: outputWriteFileDescriptor,
+            errorRead: nil,
+            errorWrite: errorWriteFileDescriptor
+        )
+
         let pid = ProcessIdentifier(
             value: processInfo.dwProcessId
         )
-
-        func captureError(_ work: () throws -> Void) -> (any Swift.Error)? {
-            do {
-                try work()
-                return nil
-            } catch {
-                return error
-            }
-        }
-        // After spawn finishes, close all child side fds
-        let inputCloseError = captureError {
-            try inputPipe.readFileDescriptor?.safelyClose()
-        }
-        let outputCloseError = captureError {
-            try outputPipe.writeFileDescriptor?.safelyClose()
-        }
-        let errorCloseError = captureError {
-            try errorPipe.writeFileDescriptor?.safelyClose()
-        }
-        if let inputCloseError = inputCloseError {
-            throw inputCloseError
-        }
-        if let outputCloseError = outputCloseError {
-            throw outputCloseError
-        }
-        if let errorCloseError = errorCloseError {
-            throw errorCloseError
-        }
-        return Execution(
+        let execution = Execution(
             processIdentifier: pid,
             consoleBehavior: self.platformOptions.consoleBehavior
+        )
+        return SpawnResult(
+            execution: execution,
+            inputWriteEnd: inputWriteFileDescriptor?.createPlatformDiskIO(),
+            outputReadEnd: outputReadFileDescriptor?.createPlatformDiskIO(),
+            errorReadEnd: errorReadFileDescriptor?.createPlatformDiskIO()
         )
     }
 
     internal func spawnAsUser(
-        withInput inputPipe: CreatedPipe,
-        outputPipe: CreatedPipe,
-        errorPipe: CreatedPipe,
+        withInput inputPipe: consuming CreatedPipe,
+        outputPipe: consuming CreatedPipe,
+        errorPipe: consuming CreatedPipe,
         userCredentials: PlatformOptions.UserCredentials
-    ) throws -> Execution {
+    ) throws -> SpawnResult {
         let (
             applicationName,
             commandAndArgs,
             environment,
             intendedWorkingDir
         ) = try self.preSpawn()
+
+        var inputReadFileDescriptor: TrackedFileDescriptor? = inputPipe.readFileDescriptor()
+        var inputWriteFileDescriptor: TrackedFileDescriptor? = inputPipe.writeFileDescriptor()
+        var outputReadFileDescriptor: TrackedFileDescriptor? = outputPipe.readFileDescriptor()
+        var outputWriteFileDescriptor: TrackedFileDescriptor? = outputPipe.writeFileDescriptor()
+        var errorReadFileDescriptor: TrackedFileDescriptor? = errorPipe.readFileDescriptor()
+        var errorWriteFileDescriptor: TrackedFileDescriptor? = errorPipe.writeFileDescriptor()
+
         var startupInfo = try self.generateStartupInfo(
-            withInput: inputPipe,
-            output: outputPipe,
-            error: errorPipe
+            withInputRead: inputReadFileDescriptor,
+            inputWrite: inputWriteFileDescriptor,
+            outputRead: outputReadFileDescriptor,
+            outputWrite: outputWriteFileDescriptor,
+            errorRead: errorReadFileDescriptor,
+            errorWrite: errorWriteFileDescriptor
         )
         var processInfo: PROCESS_INFORMATION = PROCESS_INFORMATION()
         var createProcessFlags = self.generateCreateProcessFlag()
@@ -223,10 +242,13 @@ extension Configuration {
                                     )
                                     guard created else {
                                         let windowsError = GetLastError()
-                                        try self.cleanupPreSpawn(
-                                            input: inputPipe,
-                                            output: outputPipe,
-                                            error: errorPipe
+                                        try self.safelyCloseMultuple(
+                                            inputRead: inputReadFileDescriptor.take(),
+                                            inputWrite: inputWriteFileDescriptor.take(),
+                                            outputRead: outputReadFileDescriptor.take(),
+                                            outputWrite: outputWriteFileDescriptor.take(),
+                                            errorRead: errorReadFileDescriptor.take(),
+                                            errorWrite: errorWriteFileDescriptor.take()
                                         )
                                         throw SubprocessError(
                                             code: .init(.spawnFailed),
@@ -243,10 +265,13 @@ extension Configuration {
         // We don't need the handle objects, so close it right away
         guard CloseHandle(processInfo.hThread) else {
             let windowsError = GetLastError()
-            try self.cleanupPreSpawn(
-                input: inputPipe,
-                output: outputPipe,
-                error: errorPipe
+            try self.safelyCloseMultuple(
+                inputRead: inputReadFileDescriptor,
+                inputWrite: inputWriteFileDescriptor,
+                outputRead: outputReadFileDescriptor,
+                outputWrite: outputWriteFileDescriptor,
+                errorRead: errorReadFileDescriptor,
+                errorWrite: errorWriteFileDescriptor
             )
             throw SubprocessError(
                 code: .init(.spawnFailed),
@@ -255,49 +280,42 @@ extension Configuration {
         }
         guard CloseHandle(processInfo.hProcess) else {
             let windowsError = GetLastError()
-            try self.cleanupPreSpawn(
-                input: inputPipe,
-                output: outputPipe,
-                error: errorPipe
+            try self.safelyCloseMultuple(
+                inputRead: inputReadFileDescriptor,
+                inputWrite: inputWriteFileDescriptor,
+                outputRead: outputReadFileDescriptor,
+                outputWrite: outputWriteFileDescriptor,
+                errorRead: errorReadFileDescriptor,
+                errorWrite: errorWriteFileDescriptor
             )
             throw SubprocessError(
                 code: .init(.spawnFailed),
                 underlyingError: .init(rawValue: windowsError)
             )
         }
+
+        // After spawn finishes, close all child side fds
+        try self.safelyCloseMultuple(
+            inputRead: inputReadFileDescriptor,
+            inputWrite: nil,
+            outputRead: nil,
+            outputWrite: outputWriteFileDescriptor,
+            errorRead: nil,
+            errorWrite: errorWriteFileDescriptor
+        )
+
         let pid = ProcessIdentifier(
             value: processInfo.dwProcessId
         )
-        func captureError(_ work: () throws -> Void) -> (any Swift.Error)? {
-            do {
-                try work()
-                return nil
-            } catch {
-                return error
-            }
-        }
-        // After spawn finishes, close all child side fds
-        let inputCloseError = captureError {
-            try inputPipe.readFileDescriptor?.safelyClose()
-        }
-        let outputCloseError = captureError {
-            try outputPipe.writeFileDescriptor?.safelyClose()
-        }
-        let errorCloseError = captureError {
-            try errorPipe.writeFileDescriptor?.safelyClose()
-        }
-        if let inputCloseError = inputCloseError {
-            throw inputCloseError
-        }
-        if let outputCloseError = outputCloseError {
-            throw outputCloseError
-        }
-        if let errorCloseError = errorCloseError {
-            throw errorCloseError
-        }
-        return Execution(
+        let execution = Execution(
             processIdentifier: pid,
             consoleBehavior: self.platformOptions.consoleBehavior
+        )
+        return SpawnResult(
+            execution: execution,
+            inputWriteEnd: inputWriteFileDescriptor?.createPlatformDiskIO(),
+            outputReadEnd: outputReadFileDescriptor?.createPlatformDiskIO(),
+            errorReadEnd: errorReadFileDescriptor?.createPlatformDiskIO()
         )
     }
 }
@@ -826,9 +844,12 @@ extension Configuration {
     }
 
     private func generateStartupInfo(
-        withInput input: CreatedPipe,
-        output: CreatedPipe,
-        error: CreatedPipe
+        withInputRead inputReadFileDescriptor: borrowing TrackedFileDescriptor?,
+        inputWrite inputWriteFileDescriptor: borrowing TrackedFileDescriptor?,
+        outputRead outputReadFileDescriptor: borrowing TrackedFileDescriptor?,
+        outputWrite outputWriteFileDescriptor: borrowing TrackedFileDescriptor?,
+        errorRead errorReadFileDescriptor: borrowing TrackedFileDescriptor?,
+        errorWrite errorWriteFileDescriptor: borrowing TrackedFileDescriptor?,
     ) throws -> STARTUPINFOW {
         var info: STARTUPINFOW = STARTUPINFOW()
         info.cb = DWORD(MemoryLayout<STARTUPINFOW>.size)
@@ -840,37 +861,37 @@ extension Configuration {
         }
         // Bind IOs
         // Input
-        if let inputRead = input.readFileDescriptor {
-            info.hStdInput = inputRead.platformDescriptor
+        if inputReadFileDescriptor != nil {
+            info.hStdInput = inputReadFileDescriptor!.platformDescriptor()
         }
-        if let inputWrite = input.writeFileDescriptor {
+        if inputWriteFileDescriptor != nil {
             // Set parent side to be uninhertable
             SetHandleInformation(
-                inputWrite.platformDescriptor,
+                inputWriteFileDescriptor!.platformDescriptor(),
                 DWORD(HANDLE_FLAG_INHERIT),
                 0
             )
         }
         // Output
-        if let outputWrite = output.writeFileDescriptor {
-            info.hStdOutput = outputWrite.platformDescriptor
+        if outputWriteFileDescriptor != nil {
+            info.hStdOutput = outputWriteFileDescriptor!.platformDescriptor()
         }
-        if let outputRead = output.readFileDescriptor {
+        if outputReadFileDescriptor != nil {
             // Set parent side to be uninhertable
             SetHandleInformation(
-                outputRead.platformDescriptor,
+                outputReadFileDescriptor!.platformDescriptor(),
                 DWORD(HANDLE_FLAG_INHERIT),
                 0
             )
         }
         // Error
-        if let errorWrite = error.writeFileDescriptor {
-            info.hStdError = errorWrite.platformDescriptor
+        if errorWriteFileDescriptor != nil {
+            info.hStdError = errorWriteFileDescriptor!.platformDescriptor()
         }
-        if let errorRead = error.readFileDescriptor {
+        if errorReadFileDescriptor != nil {
             // Set parent side to be uninhertable
             SetHandleInformation(
-                errorRead.platformDescriptor,
+                errorReadFileDescriptor!.platformDescriptor(),
                 DWORD(HANDLE_FLAG_INHERIT),
                 0
             )
@@ -1049,19 +1070,8 @@ extension FileDescriptor {
     }
 }
 
-extension CreatedPipe {
-    /// On Windows, we use file descriptors directly
-    internal func createInputPlatformDiskIO() -> TrackedPlatformDiskIO? {
-        return self.writeFileDescriptor
-    }
-
-    internal func createOutputPlatformDiskIO() -> TrackedPlatformDiskIO? {
-        return self.readFileDescriptor
-    }
-}
-
-extension TrackedFileDescriptor {
-    internal func readChunk(upToLength maxLength: Int) async throws -> SequenceOutput.Buffer? {
+extension FileDescriptor {
+    internal func readChunk(upToLength maxLength: Int) async throws -> AsyncBufferSequence.Buffer? {
         return try await withCheckedThrowingContinuation { continuation in
             self.readUntilEOF(
                 upToLength: maxLength
@@ -1070,7 +1080,7 @@ extension TrackedFileDescriptor {
                 case .failure(let error):
                     continuation.resume(throwing: error)
                 case .success(let bytes):
-                    continuation.resume(returning: SequenceOutput.Buffer(data: bytes))
+                    continuation.resume(returning: AsyncBufferSequence.Buffer(data: bytes))
                 }
             }
         }
@@ -1094,7 +1104,7 @@ extension TrackedFileDescriptor {
                     let bufferPtr = baseAddress.advanced(by: totalBytesRead)
                     var bytesRead: DWORD = 0
                     let readSucceed = ReadFile(
-                        self.fileDescriptor.platformDescriptor,
+                        self.platformDescriptor,
                         UnsafeMutableRawPointer(mutating: bufferPtr),
                         DWORD(maxLength - totalBytesRead),
                         &bytesRead,
@@ -1134,16 +1144,39 @@ extension TrackedFileDescriptor {
             }
         }
     }
+}
+
+extension TrackedFileDescriptor {
+    internal consuming func createPlatformDiskIO() -> TrackedPlatformDiskIO {
+        return .init(
+            self.fileDescriptor,
+            closeWhenDone: self.closeWhenDone
+        )
+    }
+
+    internal func readUntilEOF(
+        upToLength maxLength: Int,
+        resultHandler: @Sendable @escaping (Swift.Result<[UInt8], any (Error & Sendable)>) -> Void
+    ) {
+        self.fileDescriptor.readUntilEOF(
+            upToLength: maxLength,
+            resultHandler: resultHandler
+        )
+    }
 
 #if SubprocessSpan
     @available(SubprocessSpan, *)
     internal func write(
         _ span: borrowing RawSpan
     ) async throws -> Int {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int, any Error>) in
+        let fileDescriptor = self.fileDescriptor
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int, any Error>) in
             span.withUnsafeBytes { ptr in
                 // TODO: Use WriteFileEx for asyc here
-                self.write(ptr) { writtenLength, error in
+                Self.write(
+                    ptr,
+                    to: fileDescriptor
+                ) { writtenLength, error in
                     if let error = error {
                         continuation.resume(throwing: error)
                     } else {
@@ -1160,9 +1193,13 @@ extension TrackedFileDescriptor {
     ) async throws -> Int {
         try await withCheckedThrowingContinuation { continuation in
             // TODO: Figure out a better way to asynchornously write
+            let fd = self.fileDescriptor
             DispatchQueue.global(qos: .userInitiated).async {
                 array.withUnsafeBytes {
-                    self.write($0) { writtenLength, error in
+                    Self.write(
+                        $0,
+                        to: fd
+                    ) { writtenLength, error in
                         if let error = error {
                             continuation.resume(throwing: error)
                         } else {
@@ -1174,13 +1211,15 @@ extension TrackedFileDescriptor {
         }
     }
 
-    internal func write(
+    internal static func write(
         _ ptr: UnsafeRawBufferPointer,
+        to fileDescriptor: FileDescriptor,
         completion: @escaping (Int, Swift.Error?) -> Void
     ) {
+        let handle = HANDLE(bitPattern: _get_osfhandle(fileDescriptor.rawValue))!
         var writtenBytes: DWORD = 0
         let writeSucceed = WriteFile(
-            self.fileDescriptor.platformDescriptor,
+            handle,
             ptr.baseAddress,
             DWORD(ptr.count),
             &writtenBytes,

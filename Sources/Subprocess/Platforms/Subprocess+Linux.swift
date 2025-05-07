@@ -47,16 +47,23 @@ extension Configuration {
         let possiblePaths = self.executable.possibleExecutablePaths(
             withPathValue: self.environment.pathValue()
         )
-        var inputPipeBox: CreatedPipe?? = consume inputPipe
-        var outputPipeBox: CreatedPipe?? = consume outputPipe
-        var errorPipeBox: CreatedPipe?? = consume errorPipe
+        var inputPipeBox: CreatedPipe? = consume inputPipe
+        var outputPipeBox: CreatedPipe? = consume outputPipe
+        var errorPipeBox: CreatedPipe? = consume errorPipe
 
         return try self.preSpawn { args throws -> SpawnResult in
             let (env, uidPtr, gidPtr, supplementaryGroups) = args
 
-            let _inputPipe = inputPipeBox!.take()!
-            let _outputPipe = outputPipeBox!.take()!
-            let _errorPipe = errorPipeBox!.take()!
+            var _inputPipe = inputPipeBox.take()!
+            var _outputPipe = outputPipeBox.take()!
+            var _errorPipe = errorPipeBox.take()!
+
+            let inputReadFileDescriptor: TrackedFileDescriptor? = _inputPipe.readFileDescriptor()
+            let inputWriteFileDescriptor: TrackedFileDescriptor? = _inputPipe.writeFileDescriptor()
+            let outputReadFileDescriptor: TrackedFileDescriptor? = _outputPipe.readFileDescriptor()
+            let outputWriteFileDescriptor: TrackedFileDescriptor? = _outputPipe.writeFileDescriptor()
+            let errorReadFileDescriptor: TrackedFileDescriptor? = _errorPipe.readFileDescriptor()
+            let errorWriteFileDescriptor: TrackedFileDescriptor? = _errorPipe.writeFileDescriptor()
 
             for possibleExecutablePath in possiblePaths {
                 var processGroupIDPtr: UnsafeMutablePointer<gid_t>? = nil
@@ -73,12 +80,12 @@ extension Configuration {
                 }
                 // Setup input
                 let fileDescriptors: [CInt] = [
-                    _inputPipe.readFileDescriptor?.platformDescriptor ?? -1,
-                    _inputPipe.writeFileDescriptor?.platformDescriptor ?? -1,
-                    _outputPipe.writeFileDescriptor?.platformDescriptor ?? -1,
-                    _outputPipe.readFileDescriptor?.platformDescriptor ?? -1,
-                    _errorPipe.writeFileDescriptor?.platformDescriptor ?? -1,
-                    _errorPipe.readFileDescriptor?.platformDescriptor ?? -1,
+                    inputReadFileDescriptor?.platformDescriptor() ?? -1,
+                    inputWriteFileDescriptor?.platformDescriptor() ?? -1,
+                    outputWriteFileDescriptor?.platformDescriptor() ?? -1,
+                    outputReadFileDescriptor?.platformDescriptor() ?? -1,
+                    errorWriteFileDescriptor?.platformDescriptor() ?? -1,
+                    errorWriteFileDescriptor?.platformDescriptor() ?? -1,
                 ]
 
                 let workingDirectory: String = self.workingDirectory.string
@@ -114,10 +121,13 @@ extension Configuration {
                         continue
                     }
                     // Throw all other errors
-                    try self.cleanupPreSpawn(
-                        input: _inputPipe,
-                        output: _outputPipe,
-                        error: _errorPipe
+                    try self.safelyCloseMultuple(
+                        inputRead: inputReadFileDescriptor,
+                        inputWrite: inputWriteFileDescriptor,
+                        outputRead: outputReadFileDescriptor,
+                        outputWrite: outputWriteFileDescriptor,
+                        errorRead: errorReadFileDescriptor,
+                        errorWrite: errorWriteFileDescriptor
                     )
                     throw SubprocessError(
                         code: .init(.spawnFailed),
@@ -133,43 +143,23 @@ extension Configuration {
                     }
                 }
                 // After spawn finishes, close all child side fds
-                var inputCloseError: (any Swift.Error)? = nil
-                do {
-                    try _inputPipe.readFileDescriptor?.safelyClose()
-                } catch {
-                    inputCloseError = error
-                }
-                var outputCloseError: (any Swift.Error)? = nil
-                do {
-                    try _outputPipe.writeFileDescriptor?.safelyClose()
-                } catch {
-                    outputCloseError = error
-                }
-                var errorCloseError: (any Swift.Error)? = nil
-                do {
-                    try _errorPipe.writeFileDescriptor?.safelyClose()
-                } catch {
-                    errorCloseError = error
-                }
-
-                if let inputCloseError = inputCloseError {
-                    throw inputCloseError
-                }
-                if let outputCloseError = outputCloseError {
-                    throw outputCloseError
-                }
-                if let errorCloseError = errorCloseError {
-                    throw errorCloseError
-                }
+                try self.safelyCloseMultuple(
+                    inputRead: inputReadFileDescriptor,
+                    inputWrite: nil,
+                    outputRead: nil,
+                    outputWrite: outputWriteFileDescriptor,
+                    errorRead: nil,
+                    errorWrite: errorWriteFileDescriptor
+                )
 
                 let execution = Execution(
                     processIdentifier: .init(value: pid)
                 )
                 return SpawnResult(
                     execution: execution,
-                    inputPipe: _inputPipe,
-                    outputPipe: _outputPipe,
-                    errorPipe: _errorPipe
+                    inputWriteEnd: inputWriteFileDescriptor?.createPlatformDiskIO(),
+                    outputReadEnd: outputReadFileDescriptor?.createPlatformDiskIO(),
+                    errorReadEnd: errorReadFileDescriptor?.createPlatformDiskIO()
                 )
             }
 
@@ -178,7 +168,14 @@ extension Configuration {
             // provide which one is not valid, here we make a best effort guess
             // by checking whether the working directory is valid. This technically
             // still causes TOUTOC issue, but it's the best we can do for error recovery.
-            try self.cleanupPreSpawn(input: _inputPipe, output: _outputPipe, error: _errorPipe)
+            try self.safelyCloseMultuple(
+                inputRead: inputReadFileDescriptor,
+                inputWrite: inputWriteFileDescriptor,
+                outputRead: outputReadFileDescriptor,
+                outputWrite: outputWriteFileDescriptor,
+                errorRead: errorReadFileDescriptor,
+                errorWrite: errorWriteFileDescriptor
+            )
             let workingDirectory = self.workingDirectory.string
             guard Configuration.pathAccessible(workingDirectory, mode: F_OK) else {
                 throw SubprocessError(
