@@ -210,8 +210,15 @@ public struct BytesOutput: OutputProtocol {
 #endif
 public struct SequenceOutput: OutputProtocol {
     public typealias OutputType = Void
+    internal let lowWater: Int?
+    internal let highWater: Int?
+    internal let bufferSize: Int
 
-    internal init() {}
+    internal init(lowWater: Int? = nil, highWater: Int? = nil, bufferSize: Int = readBufferSize) {
+        self.lowWater = lowWater
+        self.highWater = highWater
+        self.bufferSize = bufferSize
+    }
 }
 
 #if SubprocessSpan
@@ -284,6 +291,9 @@ extension OutputProtocol where Self == SequenceOutput {
     /// to the `.standardOutput` (or `.standardError`) property
     /// of `Execution` as `AsyncSequence<Data>`.
     public static var sequence: Self { .init() }
+    public static func sequence(lowWater: Int? = nil, highWater: Int? = nil, bufferSize: Int? = nil) -> Self {
+        .init(lowWater: lowWater, highWater: highWater, bufferSize: bufferSize ?? readBufferSize)
+    }
 }
 
 // MARK: - Span Default Implementations

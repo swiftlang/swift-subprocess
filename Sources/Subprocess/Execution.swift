@@ -27,6 +27,8 @@ import Musl
 import WinSDK
 #endif
 
+internal import Dispatch
+
 /// An object that repersents a subprocess that has been
 /// executed. You can use this object to send signals to the
 /// child process as well as stream its output and error.
@@ -107,7 +109,16 @@ extension Execution where Output == SequenceOutput {
         else {
             fatalError("The standard output has already been consumed")
         }
-        return AsyncBufferSequence(diskIO: readFd)
+
+        if let lowWater = output.lowWater {
+            readFd.dispatchIO.setLimit(lowWater: lowWater)
+        }
+
+        if let highWater = output.highWater {
+            readFd.dispatchIO.setLimit(highWater: highWater)
+        }
+
+        return AsyncBufferSequence(diskIO: readFd, bufferSize: output.bufferSize)
     }
 }
 
@@ -122,7 +133,7 @@ extension Execution where Error == SequenceOutput {
     /// via pipe under the hood and each pipe can only be consumed once.
     public var standardError: AsyncBufferSequence {
         let consumptionState = self.outputConsumptionState.bitwiseXor(
-            OutputConsumptionState.standardOutputConsumed
+            OutputConsumptionState.standardErrorConsumed
         )
 
         guard consumptionState.contains(.standardErrorConsumed),
@@ -130,7 +141,16 @@ extension Execution where Error == SequenceOutput {
         else {
             fatalError("The standard output has already been consumed")
         }
-        return AsyncBufferSequence(diskIO: readFd)
+
+        if let lowWater = error.lowWater {
+            readFd.dispatchIO.setLimit(lowWater: lowWater)
+        }
+
+        if let highWater = error.highWater {
+            readFd.dispatchIO.setLimit(highWater: highWater)
+        }
+
+        return AsyncBufferSequence(diskIO: readFd, bufferSize: error.bufferSize)
     }
 }
 

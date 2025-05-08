@@ -665,6 +665,44 @@ extension SubprocessUnixTests {
         #expect(catResult.terminationStatus.isSuccess)
         #expect(catResult.standardError == expected)
     }
+
+    @Test func testSlowDripRedirectedOutputRedirectToSequence() async throws {
+        let threshold: Double = 0.5
+
+        let script = """
+        echo "DONE"
+        sleep \(threshold)
+        """
+
+        let start = ContinuousClock().now
+
+        let catResult = try await Subprocess.run(
+            .path("/bin/bash"),
+            arguments: ["-c", script],
+            output: .sequence(lowWater: 0),
+            error: .discarded,
+            body: { (execution, _) in
+                for try await chunk in execution.standardOutput {
+                    let string = chunk.withUnsafeBytes { String(decoding: $0, as: UTF8.self) }
+
+                    if string.hasPrefix("DONE") {
+                        let end = ContinuousClock().now
+
+                        if (end - start) > .seconds(threshold) {
+                            return "Failure"
+
+                        } else {
+                            return "Success"
+                        }
+                    }
+                }
+
+                return "Failure"
+            }
+        )
+        #expect(catResult.terminationStatus.isSuccess)
+        #expect(catResult.value == "Success")
+    }
 }
 
 // MARK: - PlatformOption Tests
