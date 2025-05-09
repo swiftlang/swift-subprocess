@@ -75,9 +75,8 @@ struct SubprocessLinuxTests {
             // This will intentionally hang
             .path("/usr/bin/sleep"),
             arguments: ["infinity"],
-            output: .discarded,
             error: .discarded
-        ) { subprocess in
+        ) { subprocess, standardOutput in
             // First suspend the procss
             try subprocess.send(signal: .suspend)
             #expect(
@@ -90,6 +89,7 @@ struct SubprocessLinuxTests {
             )
             // Now kill the process
             try subprocess.send(signal: .terminate)
+            for try await _ in standardOutput {}
         }
     }
 }

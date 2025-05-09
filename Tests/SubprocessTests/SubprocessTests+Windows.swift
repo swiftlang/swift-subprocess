@@ -363,11 +363,10 @@ extension SubprocessWindowsTests {
             self.cmdExe,
             arguments: ["/c", "findstr x*"],
             input: .data(expected),
-            output: .sequence,
             error: .discarded
-        ) { execution in
+        ) { execution, standardOutput in
             var buffer = Data()
-            for try await chunk in execution.standardOutput {
+            for try await chunk in standardOutput {
                 let currentChunk = chunk._withUnsafeBytes { Data($0) }
                 buffer += currentChunk
             }
@@ -404,11 +403,10 @@ extension SubprocessWindowsTests {
             self.cmdExe,
             arguments: ["/c", "findstr x*"],
             input: .sequence(stream),
-            output: .sequence,
             error: .discarded
-        ) { execution in
+        ) { execution, standardOutput in
             var buffer = Data()
-            for try await chunk in execution.standardOutput {
+            for try await chunk in standardOutput {
                 let currentChunk = chunk._withUnsafeBytes { Data($0) }
                 buffer += currentChunk
             }
@@ -502,11 +500,10 @@ extension SubprocessWindowsTests {
         let catResult = try await Subprocess.run(
             self.cmdExe,
             arguments: ["/c", "type \(theMysteriousIsland.string)"],
-            output: .sequence,
             error: .discarded
-        ) { subprocess in
+        ) { subprocess, standardOutput in
             var buffer = Data()
-            for try await chunk in subprocess.standardOutput {
+            for try await chunk in standardOutput {
                 let currentChunk = chunk._withUnsafeBytes { Data($0) }
                 buffer += currentChunk
             }
@@ -692,11 +689,11 @@ extension SubprocessWindowsTests {
             self.cmdExe,
             // This command will intentionally hang
             arguments: ["/c", "type con"],
-            output: .discarded,
             error: .discarded
-        ) { subprocess in
+        ) { subprocess, standardOutput in
             // Make sure we can kill the hung process
             try subprocess.terminate(withExitCode: 42)
+            for try await _ in standardOutput {}
         }
         // If we got here, the process was terminated
         guard case .exited(let exitCode) = stuckProcess.terminationStatus else {
@@ -714,9 +711,8 @@ extension SubprocessWindowsTests {
             self.cmdExe,
             // This command will intentionally hang
             arguments: ["/c", "type con"],
-            output: .discarded,
             error: .discarded
-        ) { subprocess in
+        ) { subprocess, standardOutput in
             try subprocess.suspend()
             // Now check the to make sure the procss is actually suspended
             // Why not spawn a nother process to do that?
@@ -754,6 +750,7 @@ extension SubprocessWindowsTests {
 
             // Now finally kill the process since it's intentionally hung
             try subprocess.terminate(withExitCode: 0)
+            for try await _ in standardOutput {}
         }
         #expect(stuckProcess.terminationStatus.isSuccess)
     }
