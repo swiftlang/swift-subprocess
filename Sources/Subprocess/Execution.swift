@@ -122,13 +122,13 @@ extension Execution where Error == SequenceOutput {
     /// via pipe under the hood and each pipe can only be consumed once.
     public var standardError: AsyncBufferSequence {
         let consumptionState = self.outputConsumptionState.bitwiseXor(
-            OutputConsumptionState.standardOutputConsumed
+            OutputConsumptionState.standardErrorConsumed
         )
 
         guard consumptionState.contains(.standardErrorConsumed),
             let readFd = self.errorPipe.readEnd
         else {
-            fatalError("The standard output has already been consumed")
+            fatalError("The standard error has already been consumed")
         }
         return AsyncBufferSequence(diskIO: readFd)
     }
