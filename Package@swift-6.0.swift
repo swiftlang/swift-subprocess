@@ -4,12 +4,12 @@
 import PackageDescription
 
 let availabilityMacro: SwiftSetting = .enableExperimentalFeature(
-    "AvailabilityMacro=SubprocessSpan: macOS 9999"
+    "AvailabilityMacro=SubprocessSpan: macOS 9999, iOS 9999, tvOS 9999, watchOS 9999, visionOS 9999",
 )
 
 let package = Package(
     name: "Subprocess",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v13), .iOS(.v16)]],
     products: [
         .library(
             name: "Subprocess",

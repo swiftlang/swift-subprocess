@@ -25,7 +25,7 @@ private func enableLintingTest() -> Bool {
     } catch {
         return false
     }
-    #elseif os(Linux) || os(Windows)
+    #else
     // Use swift-format directly
     do {
         _ = try Executable.name("swift-format")
@@ -66,7 +66,7 @@ struct SubprocessLintingTest {
             executable: .path("/usr/bin/xcrun"),
             arguments: ["swift-format", "lint", "-s", "--recursive", sourcePath]
         )
-        #elseif os(Linux) || os(Windows)
+        #else
         let configuration = Configuration(
             executable: .name("swift-format"),
             arguments: ["lint", "-s", "--recursive", sourcePath]

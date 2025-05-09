@@ -121,7 +121,7 @@ static int _subprocess_block_everything_but_something_went_seriously_wrong_signa
 
 
 // MARK: - Darwin (posix_spawn)
-#if TARGET_OS_MAC
+#if TARGET_OS_OSX
 static int _subprocess_spawn_prefork(
     pid_t  * _Nonnull  pid,
     const char  * _Nonnull  exec_path,
@@ -292,7 +292,7 @@ int _subprocess_spawn(
     return posix_spawn(pid, exec_path, file_actions, spawn_attrs, args, env);
 }
 
-#endif // TARGET_OS_MAC
+#endif // TARGET_OS_OSX
 
 // MARK: - Linux (fork/exec + posix_spawn fallback)
 #if TARGET_OS_LINUX

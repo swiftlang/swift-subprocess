@@ -37,7 +37,7 @@ internal struct AtomicBox: Sendable, ~Copyable {
 
     internal init() {
         #if canImport(Synchronization)
-        guard #available(macOS 15, *) else {
+        guard #available(macOS 15, iOS 18, tvOS 18, watchOS 11, visionOS 2, *) else {
             fatalError("Unexpected configuration")
         }
         let box = Atomic(UInt8(0))
@@ -62,7 +62,7 @@ internal struct AtomicBox: Sendable, ~Copyable {
 }
 
 #if canImport(Synchronization)
-@available(macOS 15, *)
+@available(macOS 15, iOS 18, tvOS 18, watchOS 11, visionOS 2, *)
 extension Atomic where Value == UInt8 {
     borrowing func _bitwiseXor(
         _ operand: OutputConsumptionState
