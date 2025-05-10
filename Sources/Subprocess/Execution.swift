@@ -110,15 +110,8 @@ extension Execution where Output == SequenceOutput {
             fatalError("The standard output has already been consumed")
         }
 
-        if let lowWater = output.lowWater {
-            readFd.dispatchIO.setLimit(lowWater: lowWater)
-        }
-
-        if let highWater = output.highWater {
-            readFd.dispatchIO.setLimit(highWater: highWater)
-        }
-
-        return AsyncBufferSequence(diskIO: readFd, bufferSize: output.bufferSize)
+        // TODO: Make buffer size an option
+        return AsyncBufferSequence(diskIO: readFd)
     }
 }
 
@@ -142,15 +135,8 @@ extension Execution where Error == SequenceOutput {
             fatalError("The standard output has already been consumed")
         }
 
-        if let lowWater = error.lowWater {
-            readFd.dispatchIO.setLimit(lowWater: lowWater)
-        }
-
-        if let highWater = error.highWater {
-            readFd.dispatchIO.setLimit(highWater: highWater)
-        }
-
-        return AsyncBufferSequence(diskIO: readFd, bufferSize: error.bufferSize)
+        // TODO: Make buffer size and option
+        return AsyncBufferSequence(diskIO: readFd)
     }
 }
 

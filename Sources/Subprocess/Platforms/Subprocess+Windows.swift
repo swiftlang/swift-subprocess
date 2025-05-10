@@ -1043,6 +1043,70 @@ extension CreatedPipe {
 }
 
 extension TrackedFileDescriptor {
+    internal func readDataStream(upToLength maxLength: Int) -> AsyncThrowingStream<StreamStatus, Swift.Error> {
+        return AsyncThrowingStream<StreamStatus, Swift.Error> { continuation in
+            do {
+                var totalBytesRead: Int = 0
+
+                while totalBytesRead < maxLength {
+                    let values = try [UInt8](
+                        unsafeUninitializedCapacity: maxLength
+                    ) { buffer, initializedCount in
+                        guard let baseAddress = buffer.baseAddress else {
+                            initializedCount = 0
+                            return
+                        }
+
+                        var bytesRead: DWORD = 0
+                        let readSucceed = ReadFile(
+                            self.fileDescriptor.platformDescriptor,
+                            UnsafeMutableRawPointer(mutating: baseAddress),
+                            DWORD(maxLength - totalBytesRead),
+                            &bytesRead,
+                            nil
+                        )
+
+                        if !readSucceed {
+                            // Windows throws ERROR_BROKEN_PIPE when the pipe is closed
+                            let error = GetLastError()
+                            if error == ERROR_BROKEN_PIPE {
+                                // We are done reading
+                                initializedCount = 0
+                            } else {
+                                initializedCount = 0
+                                throw SubprocessError(
+                                    code: .init(.failedToReadFromSubprocess),
+                                    underlyingError: .init(rawValue: error)
+                                )
+                            }
+                        } else {
+                            // We successfully read the current round
+                            initializedCount += Int(bytesRead)
+                        }
+                    }
+
+                    if values.count > 0 {
+                        totalBytesRead += values.count
+
+                        if totalBytesRead >= maxLength {
+                            continuation.yield(.endOfStream(SequenceOutput.Buffer(data: values)))
+                            continuation.finish()
+                            return
+                        } else {
+                            continuation.yield(.data(SequenceOutput.Buffer(data: values)))
+                        }
+                    } else {
+                        continuation.yield(.endOfFile)
+                        continuation.finish()
+                        return
+                    }
+                }
+            } catch {
+                continuation.finish(throwing: error)
+            }
+        }
+    }
+
     internal func readChunk(upToLength maxLength: Int) async throws -> SequenceOutput.Buffer? {
         return try await withCheckedThrowingContinuation { continuation in
             self.readUntilEOF(

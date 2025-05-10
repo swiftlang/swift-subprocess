@@ -29,19 +29,17 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
         public typealias Element = SequenceOutput.Buffer
 
         private let diskIO: TrackedPlatformDiskIO
-        private let bufferSize: Int
         private var buffer: [UInt8]
         private var currentPosition: Int
         private var finished: Bool
-        private var streamIterator: AsyncThrowingStream<StreamStatus, Swift.Error>.AsyncIterator
+        private var streamIterator: AsyncThrowingStream<TrackedPlatformDiskIO.StreamStatus, Swift.Error>.AsyncIterator
 
-        internal init(diskIO: TrackedPlatformDiskIO, bufferSize: Int) {
+        internal init(diskIO: TrackedPlatformDiskIO) {
             self.diskIO = diskIO
-            self.bufferSize = bufferSize
             self.buffer = []
             self.currentPosition = 0
             self.finished = false
-            self.streamIterator = Self.createDataStream(with: diskIO.dispatchIO, bufferSize: bufferSize).makeAsyncIterator()
+            self.streamIterator = diskIO.readDataStream(upToLength: readBufferSize).makeAsyncIterator()
         }
 
         public mutating func next() async throws -> SequenceOutput.Buffer? {
@@ -51,7 +49,7 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
                     return data
 
                 case .endOfStream(let data):
-                    streamIterator = Self.createDataStream(with: diskIO.dispatchIO, bufferSize: bufferSize).makeAsyncIterator()
+                    streamIterator = diskIO.readDataStream(upToLength: readBufferSize).makeAsyncIterator()
                     return data
 
                 case .endOfFile:
@@ -63,66 +61,24 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
                 return nil
             }
         }
-
-        private enum StreamStatus {
-            case data(SequenceOutput.Buffer)
-            case endOfStream(SequenceOutput.Buffer)
-            case endOfFile
-        }
-
-        private static func createDataStream(with dispatchIO: DispatchIO, bufferSize: Int) -> AsyncThrowingStream<StreamStatus, Swift.Error> {
-            return AsyncThrowingStream<StreamStatus, Swift.Error> { continuation in
-                dispatchIO.read(
-                    offset: 0,
-                    length: bufferSize,
-                    queue: .global()
-                ) { done, data, error in
-                    if error != 0 {
-                        continuation.finish(throwing: SubprocessError(
-                            code: .init(.failedToReadFromSubprocess),
-                            underlyingError: .init(rawValue: error)
-                        ))
-                        return
-                    }
-
-                    // Treat empty data and nil as the same
-                    let buffer = data.map { $0.isEmpty ? nil : $0 } ?? nil
-                    let status: StreamStatus
-
-                    switch (buffer, done) {
-                    case (.some(let data), false):
-                        status = .data(SequenceOutput.Buffer(data: data))
-
-                    case (.some(let data), true):
-                        status = .endOfStream(SequenceOutput.Buffer(data: data))
-
-                    case (nil, false):
-                        return
-
-                    case (nil, true):
-                        status = .endOfFile
-                    }
-
-                    continuation.yield(status)
-
-                    if done {
-                        continuation.finish()
-                    }
-                }
-            }
-        }
     }
 
     private let diskIO: TrackedPlatformDiskIO
-    private let bufferSize: Int
 
-    internal init(diskIO: TrackedPlatformDiskIO, bufferSize: Int) {
+    internal init(diskIO: TrackedPlatformDiskIO) {
         self.diskIO = diskIO
-        self.bufferSize = bufferSize
     }
 
     public func makeAsyncIterator() -> Iterator {
-        return Iterator(diskIO: self.diskIO, bufferSize: bufferSize)
+        return Iterator(diskIO: self.diskIO)
+    }
+}
+
+extension TrackedPlatformDiskIO {
+    internal enum StreamStatus {
+        case data(SequenceOutput.Buffer)
+        case endOfStream(SequenceOutput.Buffer)
+        case endOfFile
     }
 }
 

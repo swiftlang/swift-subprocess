@@ -412,6 +412,7 @@ extension CreatedPipe {
                     }
                 }
             )
+
             writeEnd = .init(
                 dispatchIO,
                 closeWhenDone: writeFileDescriptor.closeWhenDone
@@ -423,7 +424,7 @@ extension CreatedPipe {
         )
     }
 
-    internal func createOutputPipe() -> OutputPipe {
+    internal func createOutputPipe(with options: PlatformOptions.StreamOptions) -> OutputPipe {
         var readEnd: TrackedPlatformDiskIO? = nil
         if let readFileDescriptor = self.readFileDescriptor {
             let dispatchIO: DispatchIO = DispatchIO(
@@ -437,6 +438,15 @@ extension CreatedPipe {
                     }
                 }
             )
+
+            if let lowWater = options.lowWater {
+                dispatchIO.setLimit(lowWater: lowWater)
+            }
+
+            if let highWater = options.highWater {
+                dispatchIO.setLimit(highWater: highWater)
+            }
+
             readEnd = .init(
                 dispatchIO,
                 closeWhenDone: readFileDescriptor.closeWhenDone
@@ -451,6 +461,48 @@ extension CreatedPipe {
 
 // MARK: - TrackedDispatchIO extensions
 extension TrackedDispatchIO {
+    internal func readDataStream(upToLength maxLength: Int) -> AsyncThrowingStream<StreamStatus, Swift.Error> {
+        return AsyncThrowingStream<StreamStatus, Swift.Error> { continuation in
+            self.dispatchIO.read(
+                offset: 0,
+                length: maxLength,
+                queue: .global()
+            ) { done, data, error in
+                if error != 0 {
+                    continuation.finish(throwing: SubprocessError(
+                        code: .init(.failedToReadFromSubprocess),
+                        underlyingError: .init(rawValue: error)
+                    ))
+                    return
+                }
+
+                // Treat empty data and nil as the same
+                let buffer = data.map { $0.isEmpty ? nil : $0 } ?? nil
+                let status: StreamStatus
+
+                switch (buffer, done) {
+                case (.some(let data), false):
+                    status = .data(SequenceOutput.Buffer(data: data))
+
+                case (.some(let data), true):
+                    status = .endOfStream(SequenceOutput.Buffer(data: data))
+
+                case (nil, false):
+                    return
+
+                case (nil, true):
+                    status = .endOfFile
+                }
+
+                continuation.yield(status)
+
+                if done {
+                    continuation.finish()
+                }
+            }
+        }
+    }
+
 #if SubprocessSpan
     @available(SubprocessSpan, *)
 #endif

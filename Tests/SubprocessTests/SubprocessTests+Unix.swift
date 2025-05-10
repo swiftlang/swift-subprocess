@@ -674,12 +674,16 @@ extension SubprocessUnixTests {
         sleep \(threshold)
         """
 
+        var platformOptions = PlatformOptions()
+        platformOptions.outputOptions = .init(lowWater: 0)
+
         let start = ContinuousClock().now
 
         let catResult = try await Subprocess.run(
             .path("/bin/bash"),
             arguments: ["-c", script],
-            output: .sequence(lowWater: 0),
+            platformOptions: platformOptions,
+            output: .sequence,
             error: .discarded,
             body: { (execution, _) in
                 for try await chunk in execution.standardOutput {
