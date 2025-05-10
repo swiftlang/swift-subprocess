@@ -57,6 +57,8 @@ public struct PlatformOptions: Sendable {
     /// Creates a session and sets the process group ID
     /// i.e. Detach from the terminal.
     public var createSession: Bool = false
+    public var outputOptions: StreamOptions = .init()
+    public var errorOptions: StreamOptions = .init()
     /// An ordered list of steps in order to tear down the child
     /// process in case the parent task is cancelled before
     /// the child proces terminates.
@@ -124,6 +126,18 @@ extension PlatformOptions {
         case `default` = -1
     }
     #endif
+}
+
+extension PlatformOptions {
+    public struct StreamOptions: Sendable {
+        let lowWater: Int?
+        let highWater: Int?
+
+        init(lowWater: Int? = nil, highWater: Int? = nil) {
+            self.lowWater = lowWater
+            self.highWater = highWater
+        }
+    }
 }
 
 extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible {
@@ -355,8 +369,8 @@ extension Configuration {
                     output: output,
                     error: error,
                     inputPipe: inputPipe.createInputPipe(),
-                    outputPipe: outputPipe.createOutputPipe(),
-                    errorPipe: errorPipe.createOutputPipe()
+                    outputPipe: outputPipe.createOutputPipe(with: platformOptions.outputOptions),
+                    errorPipe: errorPipe.createOutputPipe(with: platformOptions.errorOptions)
                 )
             }
 
