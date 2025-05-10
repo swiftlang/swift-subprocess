@@ -27,6 +27,8 @@ import Musl
 import WinSDK
 #endif
 
+internal import Dispatch
+
 /// An object that repersents a subprocess that has been
 /// executed. You can use this object to send signals to the
 /// child process as well as stream its output and error.
@@ -107,7 +109,9 @@ extension Execution where Output == SequenceOutput {
         else {
             fatalError("The standard output has already been consumed")
         }
-        return AsyncBufferSequence(diskIO: readFd)
+
+        // TODO: Make buffer size and option
+        return AsyncBufferSequence(diskIO: readFd, bufferSize: readBufferSize)
     }
 }
 
@@ -130,7 +134,9 @@ extension Execution where Error == SequenceOutput {
         else {
             fatalError("The standard error has already been consumed")
         }
-        return AsyncBufferSequence(diskIO: readFd)
+
+        // TODO: Make buffer size and option
+        return AsyncBufferSequence(diskIO: readFd, bufferSize: readBufferSize)
     }
 }
 
