@@ -872,7 +872,7 @@ internal struct CreatedPipe {
 
     internal init(
         readFileDescriptor: TrackedFileDescriptor?,
-        writeFileDescriptor: TrackedFileDescriptor?,
+        writeFileDescriptor: TrackedFileDescriptor?
     ) {
         self.readFileDescriptor = readFileDescriptor
         self.writeFileDescriptor = writeFileDescriptor

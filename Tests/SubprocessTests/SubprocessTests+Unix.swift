@@ -938,7 +938,7 @@ extension SubprocessUnixTests {
             group.addTask {
                 return try await Subprocess.run(
                     .path("/bin/sh"),
-                    arguments: ["-c", "trap 'echo no' TERM; while true; do sleep 1; done"],
+                    arguments: ["-c", "trap 'echo no' TERM; while true; do sleep 1; done"]
                 ).terminationStatus
             }
             group.addTask {
