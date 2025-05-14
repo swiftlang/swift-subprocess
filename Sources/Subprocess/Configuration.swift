@@ -621,10 +621,10 @@ internal struct TrackedFileDescriptor: ~Copyable {
             // if another part of the code inadvertently reuses the same file descriptor
             // number. This problem is especially concerning on Unix systems due to POSIX’s
             // guarantee of using the lowest available file descriptor number, making reuse
-            // more probable. We use `preconditionFailure` upon receiving `.badFileDescriptor`
+            // more probable. We use `fatalError` upon receiving `.badFileDescriptor`
             // to prevent accidentally closing a different file descriptor.
             guard errno != .badFileDescriptor else {
-                preconditionFailure(
+                fatalError(
                     "FileDescriptor \(fileDescriptor.rawValue) is already closed"
                 )
             }
@@ -649,10 +649,10 @@ internal struct TrackedFileDescriptor: ~Copyable {
             // if another part of the code inadvertently reuses the same file descriptor
             // number. This problem is especially concerning on Unix systems due to POSIX’s
             // guarantee of using the lowest available file descriptor number, making reuse
-            // more probable. We use `preconditionFailure` upon receiving `.badFileDescriptor`
+            // more probable. We use `fatalError` upon receiving `.badFileDescriptor`
             // to prevent accidentally closing a different file descriptor.
             guard errno != .badFileDescriptor else {
-                preconditionFailure(
+                fatalError(
                     "FileDescriptor \(fileDescriptor.rawValue) is already closed"
                 )
             }
