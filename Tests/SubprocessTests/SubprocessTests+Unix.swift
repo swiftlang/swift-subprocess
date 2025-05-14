@@ -666,7 +666,22 @@ extension SubprocessUnixTests {
         #expect(catResult.standardError == expected)
     }
 
-    @Test func testSlowDripRedirectedOutputRedirectToSequence() async throws {
+    @Test(
+        .enabled(
+            if: {
+                if #available(SubprocessSpan , *) {
+                    true
+                } else {
+                    false
+                }
+            }(),
+            "This test requires SubprocessSpan"
+        )
+    )
+    func testSlowDripRedirectedOutputRedirectToSequence() async throws {
+        guard #available(SubprocessSpan , *) else {
+            return
+        }
         let threshold: Double = 0.5
 
         let script = """
@@ -687,7 +702,7 @@ extension SubprocessUnixTests {
             error: .discarded,
             body: { (execution, _) in
                 for try await chunk in execution.standardOutput {
-                    let string = chunk.withUnsafeBytes { String(decoding: $0, as: UTF8.self) }
+                    let string = chunk._withUnsafeBytes { String(decoding: $0, as: UTF8.self) }
 
                     if string.hasPrefix("DONE") {
                         let end = ContinuousClock().now
