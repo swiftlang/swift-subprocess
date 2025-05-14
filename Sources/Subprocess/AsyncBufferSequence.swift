@@ -75,6 +75,9 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
 }
 
 extension TrackedPlatformDiskIO {
+#if SubprocessSpan
+@available(SubprocessSpan, *)
+#endif
     internal enum StreamStatus {
         case data(SequenceOutput.Buffer)
         case endOfStream(SequenceOutput.Buffer)

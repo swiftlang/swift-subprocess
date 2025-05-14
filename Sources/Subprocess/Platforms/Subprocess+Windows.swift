@@ -1043,6 +1043,9 @@ extension CreatedPipe {
 }
 
 extension TrackedFileDescriptor {
+#if SubprocessSpan
+@available(SubprocessSpan, *)
+#endif
     internal func readDataStream(upToLength maxLength: Int) -> AsyncThrowingStream<StreamStatus, Swift.Error> {
         return AsyncThrowingStream<StreamStatus, Swift.Error> { continuation in
             do {
