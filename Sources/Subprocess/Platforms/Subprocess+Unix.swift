@@ -490,7 +490,7 @@ extension TrackedDispatchIO {
                 status = .endOfChunk(SequenceOutput.Buffer(data: data))
 
             case (nil, false):
-                return
+                fatalError("Unexpectedly received no data from DispatchIO with it indicating it is not done.")
 
             case (nil, true):
                 status = .endOfFile
