@@ -464,82 +464,42 @@ extension TrackedDispatchIO {
 #if SubprocessSpan
 @available(SubprocessSpan, *)
 #endif
-    internal func readDataStream(upToLength maxLength: Int) -> AsyncThrowingStream<StreamStatus, Swift.Error> {
-        return AsyncThrowingStream<StreamStatus, Swift.Error> { continuation in
-            self.dispatchIO.read(
-                offset: 0,
-                length: maxLength,
-                queue: .global()
-            ) { done, data, error in
-                if error != 0 {
-                    continuation.finish(throwing: SubprocessError(
-                        code: .init(.failedToReadFromSubprocess),
-                        underlyingError: .init(rawValue: error)
-                    ))
-                    return
-                }
-
-                // Treat empty data and nil as the same
-                let buffer = data.map { $0.isEmpty ? nil : $0 } ?? nil
-                let status: StreamStatus
-
-                switch (buffer, done) {
-                case (.some(let data), false):
-                    status = .data(SequenceOutput.Buffer(data: data))
-
-                case (.some(let data), true):
-                    status = .endOfStream(SequenceOutput.Buffer(data: data))
-
-                case (nil, false):
-                    return
-
-                case (nil, true):
-                    status = .endOfFile
-                }
-
-                continuation.yield(status)
-
-                if done {
-                    continuation.finish()
-                }
+    internal func readChunk(upToLength maxLength: Int, continuation: AsyncBufferSequence.Iterator.Stream.Continuation) {
+        self.dispatchIO.read(
+            offset: 0,
+            length: maxLength,
+            queue: .global()
+        ) { done, data, error in
+            if error != 0 {
+                continuation.finish(throwing: SubprocessError(
+                    code: .init(.failedToReadFromSubprocess),
+                    underlyingError: .init(rawValue: error)
+                ))
+                return
             }
-        }
-    }
 
-#if SubprocessSpan
-    @available(SubprocessSpan, *)
-#endif
-    package func readChunk(upToLength maxLength: Int) async throws -> SequenceOutput.Buffer? {
-        return try await withCheckedThrowingContinuation { continuation in
-            var buffer: DispatchData = .empty
-            self.dispatchIO.read(
-                offset: 0,
-                length: maxLength,
-                queue: .global()
-            ) { done, data, error in
-                if error != 0 {
-                    continuation.resume(
-                        throwing: SubprocessError(
-                            code: .init(.failedToReadFromSubprocess),
-                            underlyingError: .init(rawValue: error)
-                        )
-                    )
-                    return
-                }
-                if let data = data {
-                    if buffer.isEmpty {
-                        buffer = data
-                    } else {
-                        buffer.append(data)
-                    }
-                }
-                if done {
-                    if !buffer.isEmpty {
-                        continuation.resume(returning: SequenceOutput.Buffer(data: buffer))
-                    } else {
-                        continuation.resume(returning: nil)
-                    }
-                }
+            // Treat empty data and nil as the same
+            let buffer = data.map { $0.isEmpty ? nil : $0 } ?? nil
+            let status: StreamStatus
+
+            switch (buffer, done) {
+            case (.some(let data), false):
+                status = .data(SequenceOutput.Buffer(data: data))
+
+            case (.some(let data), true):
+                status = .endOfChunk(SequenceOutput.Buffer(data: data))
+
+            case (nil, false):
+                return
+
+            case (nil, true):
+                status = .endOfFile
+            }
+
+            continuation.yield(status)
+
+            if done {
+                continuation.finish()
             }
         }
     }
