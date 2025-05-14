@@ -424,7 +424,7 @@ extension CreatedPipe {
         )
     }
 
-    internal func createOutputPipe(with options: PlatformOptions.StreamOptions) -> OutputPipe {
+    internal func createOutputPipe(with options: PlatformOptions) -> OutputPipe {
         var readEnd: TrackedPlatformDiskIO? = nil
         if let readFileDescriptor = self.readFileDescriptor {
             let dispatchIO: DispatchIO = DispatchIO(
@@ -439,12 +439,22 @@ extension CreatedPipe {
                 }
             )
 
-            if let lowWater = options.lowWater {
-                dispatchIO.setLimit(lowWater: lowWater)
-            }
-
-            if let highWater = options.highWater {
-                dispatchIO.setLimit(highWater: highWater)
+            if let preferredStreamBufferSizeRange = options.preferredStreamBufferSizeRange {
+                if let range = preferredStreamBufferSizeRange as? Range<Int> {
+                    dispatchIO.setLimit(lowWater: range.lowerBound)
+                    dispatchIO.setLimit(highWater: range.upperBound)
+                } else if let range = preferredStreamBufferSizeRange as? ClosedRange<Int> {
+                    dispatchIO.setLimit(lowWater: range.lowerBound)
+                    dispatchIO.setLimit(highWater: range.upperBound)
+                } else if let range = preferredStreamBufferSizeRange as? PartialRangeFrom<Int> {
+                    dispatchIO.setLimit(lowWater: range.lowerBound)
+                } else if let range = preferredStreamBufferSizeRange as? PartialRangeUpTo<Int> {
+                    dispatchIO.setLimit(highWater: range.upperBound - 1)
+                } else if let range = preferredStreamBufferSizeRange as? PartialRangeThrough<Int> {
+                    dispatchIO.setLimit(highWater: range.upperBound)
+                } else {
+                    fatalError("Unsupported preferredStreamBufferSizeRange: \(preferredStreamBufferSizeRange)")
+                }
             }
 
             readEnd = .init(

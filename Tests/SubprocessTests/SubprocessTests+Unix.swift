@@ -675,7 +675,7 @@ extension SubprocessUnixTests {
         """
 
         var platformOptions = PlatformOptions()
-        platformOptions.outputOptions = .init(lowWater: 0)
+        platformOptions.setPreferredStreamBufferSizeRange(0...)
 
         let start = ContinuousClock().now
 

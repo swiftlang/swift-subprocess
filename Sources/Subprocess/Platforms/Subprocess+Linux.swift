@@ -176,8 +176,9 @@ public struct PlatformOptions: Sendable {
     // Creates a session and sets the process group ID
     // i.e. Detach from the terminal.
     public var createSession: Bool = false
-    public var outputOptions: StreamOptions = .init()
-    public var errorOptions: StreamOptions = .init()
+
+    private(set) var preferredStreamBufferSizeRange: (any RangeExpression & Sendable)? = nil
+
     /// An ordered list of steps in order to tear down the child
     /// process in case the parent task is cancelled before
     /// the child proces terminates.
@@ -196,18 +197,16 @@ public struct PlatformOptions: Sendable {
     /// call any necessary process setup functions.
     public var preSpawnProcessConfigurator: (@convention(c) @Sendable () -> Void)? = nil
 
-    public init() {}
-}
+    public init() {
+        self.preferredStreamBufferSizeRange = nil
+    }
 
-extension PlatformOptions {
-    public struct StreamOptions: Sendable {
-        let lowWater: Int?
-        let highWater: Int?
+    public init<R>(preferredStreamBufferSizeRange: R?) where R: RangeExpression & Sendable, R.Bound == Int {
+        self.preferredStreamBufferSizeRange = preferredStreamBufferSizeRange
+    }
 
-        init(lowWater: Int? = nil, highWater: Int? = nil) {
-            self.lowWater = lowWater
-            self.highWater = highWater
-        }
+    mutating func setPreferredStreamBufferSizeRange<R>(_ range: R?) where R: RangeExpression & Sendable, R.Bound == Int {
+        self.preferredStreamBufferSizeRange = range
     }
 }
 

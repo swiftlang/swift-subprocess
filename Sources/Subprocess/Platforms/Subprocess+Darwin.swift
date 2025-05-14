@@ -57,8 +57,9 @@ public struct PlatformOptions: Sendable {
     /// Creates a session and sets the process group ID
     /// i.e. Detach from the terminal.
     public var createSession: Bool = false
-    public var outputOptions: StreamOptions = .init()
-    public var errorOptions: StreamOptions = .init()
+
+    private(set) var preferredStreamBufferSizeRange: (any RangeExpression & Sendable)? = nil
+
     /// An ordered list of steps in order to tear down the child
     /// process in case the parent task is cancelled before
     /// the child proces terminates.
@@ -84,7 +85,17 @@ public struct PlatformOptions: Sendable {
             ) throws -> Void
         )? = nil
 
-    public init() {}
+    public init() {
+        self.preferredStreamBufferSizeRange = nil
+    }
+
+    public init<R>(preferredStreamBufferSizeRange: R?) where R: RangeExpression & Sendable, R.Bound == Int {
+        self.preferredStreamBufferSizeRange = preferredStreamBufferSizeRange
+    }
+
+    mutating func setPreferredStreamBufferSizeRange<R>(_ range: R?) where R: RangeExpression & Sendable, R.Bound == Int {
+        self.preferredStreamBufferSizeRange = range
+    }
 }
 
 extension PlatformOptions {
@@ -126,18 +137,6 @@ extension PlatformOptions {
         case `default` = -1
     }
     #endif
-}
-
-extension PlatformOptions {
-    public struct StreamOptions: Sendable {
-        let lowWater: Int?
-        let highWater: Int?
-
-        init(lowWater: Int? = nil, highWater: Int? = nil) {
-            self.lowWater = lowWater
-            self.highWater = highWater
-        }
-    }
 }
 
 extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible {
@@ -369,8 +368,8 @@ extension Configuration {
                     output: output,
                     error: error,
                     inputPipe: inputPipe.createInputPipe(),
-                    outputPipe: outputPipe.createOutputPipe(with: platformOptions.outputOptions),
-                    errorPipe: errorPipe.createOutputPipe(with: platformOptions.errorOptions)
+                    outputPipe: outputPipe.createOutputPipe(with: platformOptions),
+                    errorPipe: errorPipe.createOutputPipe(with: platformOptions)
                 )
             }
 
