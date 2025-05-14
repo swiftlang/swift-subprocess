@@ -412,6 +412,7 @@ extension CreatedPipe {
                     }
                 }
             )
+
             writeEnd = .init(
                 dispatchIO,
                 closeWhenDone: writeFileDescriptor.closeWhenDone
@@ -423,7 +424,7 @@ extension CreatedPipe {
         )
     }
 
-    internal func createOutputPipe() -> OutputPipe {
+    internal func createOutputPipe(with options: PlatformOptions) -> OutputPipe {
         var readEnd: TrackedPlatformDiskIO? = nil
         if let readFileDescriptor = self.readFileDescriptor {
             let dispatchIO: DispatchIO = DispatchIO(
@@ -437,6 +438,25 @@ extension CreatedPipe {
                     }
                 }
             )
+
+            if let preferredStreamBufferSizeRange = options.preferredStreamBufferSizeRange {
+                if let range = preferredStreamBufferSizeRange as? Range<Int> {
+                    dispatchIO.setLimit(lowWater: range.lowerBound)
+                    dispatchIO.setLimit(highWater: range.upperBound)
+                } else if let range = preferredStreamBufferSizeRange as? ClosedRange<Int> {
+                    dispatchIO.setLimit(lowWater: range.lowerBound)
+                    dispatchIO.setLimit(highWater: range.upperBound)
+                } else if let range = preferredStreamBufferSizeRange as? PartialRangeFrom<Int> {
+                    dispatchIO.setLimit(lowWater: range.lowerBound)
+                } else if let range = preferredStreamBufferSizeRange as? PartialRangeUpTo<Int> {
+                    dispatchIO.setLimit(highWater: range.upperBound - 1)
+                } else if let range = preferredStreamBufferSizeRange as? PartialRangeThrough<Int> {
+                    dispatchIO.setLimit(highWater: range.upperBound)
+                } else {
+                    fatalError("Unsupported preferredStreamBufferSizeRange: \(preferredStreamBufferSizeRange)")
+                }
+            }
+
             readEnd = .init(
                 dispatchIO,
                 closeWhenDone: readFileDescriptor.closeWhenDone
@@ -452,39 +472,44 @@ extension CreatedPipe {
 // MARK: - TrackedDispatchIO extensions
 extension TrackedDispatchIO {
 #if SubprocessSpan
-    @available(SubprocessSpan, *)
+@available(SubprocessSpan, *)
 #endif
-    package func readChunk(upToLength maxLength: Int) async throws -> SequenceOutput.Buffer? {
-        return try await withCheckedThrowingContinuation { continuation in
-            var buffer: DispatchData = .empty
-            self.dispatchIO.read(
-                offset: 0,
-                length: maxLength,
-                queue: .global()
-            ) { done, data, error in
-                if error != 0 {
-                    continuation.resume(
-                        throwing: SubprocessError(
-                            code: .init(.failedToReadFromSubprocess),
-                            underlyingError: .init(rawValue: error)
-                        )
-                    )
-                    return
-                }
-                if let data = data {
-                    if buffer.isEmpty {
-                        buffer = data
-                    } else {
-                        buffer.append(data)
-                    }
-                }
-                if done {
-                    if !buffer.isEmpty {
-                        continuation.resume(returning: SequenceOutput.Buffer(data: buffer))
-                    } else {
-                        continuation.resume(returning: nil)
-                    }
-                }
+    internal func readChunk(upToLength maxLength: Int, continuation: AsyncBufferSequence.Iterator.Stream.Continuation) {
+        self.dispatchIO.read(
+            offset: 0,
+            length: maxLength,
+            queue: .global()
+        ) { done, data, error in
+            if error != 0 {
+                continuation.finish(throwing: SubprocessError(
+                    code: .init(.failedToReadFromSubprocess),
+                    underlyingError: .init(rawValue: error)
+                ))
+                return
+            }
+
+            // Treat empty data and nil as the same
+            let buffer = data.map { $0.isEmpty ? nil : $0 } ?? nil
+            let status: StreamStatus
+
+            switch (buffer, done) {
+            case (.some(let data), false):
+                status = .data(SequenceOutput.Buffer(data: data))
+
+            case (.some(let data), true):
+                status = .endOfChunk(SequenceOutput.Buffer(data: data))
+
+            case (nil, false):
+                fatalError("Unexpectedly received no data from DispatchIO with it indicating it is not done.")
+
+            case (nil, true):
+                status = .endOfFile
+            }
+
+            continuation.yield(status)
+
+            if done {
+                continuation.finish()
             }
         }
     }

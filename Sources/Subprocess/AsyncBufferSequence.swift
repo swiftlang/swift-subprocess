@@ -15,6 +15,8 @@
 @preconcurrency import SystemPackage
 #endif
 
+internal import Dispatch
+
 #if SubprocessSpan
 @available(SubprocessSpan, *)
 #endif
@@ -25,29 +27,51 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
     @_nonSendable
     public struct Iterator: AsyncIteratorProtocol {
         public typealias Element = SequenceOutput.Buffer
+        internal typealias Stream = AsyncThrowingStream<TrackedPlatformDiskIO.StreamStatus, Swift.Error>
 
         private let diskIO: TrackedPlatformDiskIO
         private var buffer: [UInt8]
         private var currentPosition: Int
         private var finished: Bool
+        private var streamIterator: Stream.AsyncIterator
+        private let continuation: Stream.Continuation
+        private var needsNextChunk: Bool
 
         internal init(diskIO: TrackedPlatformDiskIO) {
             self.diskIO = diskIO
             self.buffer = []
             self.currentPosition = 0
             self.finished = false
+            let (stream, continuation) = AsyncThrowingStream<TrackedPlatformDiskIO.StreamStatus, Swift.Error>.makeStream()
+            self.streamIterator = stream.makeAsyncIterator()
+            self.continuation = continuation
+            self.needsNextChunk = true
         }
 
-        public func next() async throws -> SequenceOutput.Buffer? {
-            let data = try await self.diskIO.readChunk(
-                upToLength: readBufferSize
-            )
-            if data == nil {
-                // We finished reading. Close the file descriptor now
+        public mutating func next() async throws -> SequenceOutput.Buffer? {
+
+            if needsNextChunk {
+                diskIO.readChunk(upToLength: readBufferSize, continuation: continuation)
+                needsNextChunk = false
+            }
+
+            if let status = try await streamIterator.next() {
+                switch status {
+                case .data(let data):
+                    return data
+
+                case .endOfChunk(let data):
+                    needsNextChunk = true
+                    return data
+
+                case .endOfFile:
+                    try self.diskIO.safelyClose()
+                    return nil
+                }
+            } else {
                 try self.diskIO.safelyClose()
                 return nil
             }
-            return data
         }
     }
 
@@ -59,6 +83,17 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
 
     public func makeAsyncIterator() -> Iterator {
         return Iterator(diskIO: self.diskIO)
+    }
+}
+
+extension TrackedPlatformDiskIO {
+#if SubprocessSpan
+@available(SubprocessSpan, *)
+#endif
+    internal enum StreamStatus {
+        case data(SequenceOutput.Buffer)
+        case endOfChunk(SequenceOutput.Buffer)
+        case endOfFile
     }
 }
 

@@ -57,6 +57,9 @@ public struct PlatformOptions: Sendable {
     /// Creates a session and sets the process group ID
     /// i.e. Detach from the terminal.
     public var createSession: Bool = false
+
+    private(set) var preferredStreamBufferSizeRange: (any RangeExpression & Sendable)? = nil
+
     /// An ordered list of steps in order to tear down the child
     /// process in case the parent task is cancelled before
     /// the child proces terminates.
@@ -82,7 +85,17 @@ public struct PlatformOptions: Sendable {
             ) throws -> Void
         )? = nil
 
-    public init() {}
+    public init() {
+        self.preferredStreamBufferSizeRange = nil
+    }
+
+    public init<R>(preferredStreamBufferSizeRange: R?) where R: RangeExpression & Sendable, R.Bound == Int {
+        self.preferredStreamBufferSizeRange = preferredStreamBufferSizeRange
+    }
+
+    mutating func setPreferredStreamBufferSizeRange<R>(_ range: R?) where R: RangeExpression & Sendable, R.Bound == Int {
+        self.preferredStreamBufferSizeRange = range
+    }
 }
 
 extension PlatformOptions {
@@ -355,8 +368,8 @@ extension Configuration {
                     output: output,
                     error: error,
                     inputPipe: inputPipe.createInputPipe(),
-                    outputPipe: outputPipe.createOutputPipe(),
-                    errorPipe: errorPipe.createOutputPipe()
+                    outputPipe: outputPipe.createOutputPipe(with: platformOptions),
+                    errorPipe: errorPipe.createOutputPipe(with: platformOptions)
                 )
             }
 
