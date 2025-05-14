@@ -127,8 +127,8 @@ extension Configuration {
                     output: output,
                     error: error,
                     inputPipe: inputPipe.createInputPipe(),
-                    outputPipe: outputPipe.createOutputPipe(with: platformOptions.outputOptions),
-                    errorPipe: errorPipe.createOutputPipe(with: platformOptions.errorOptions)
+                    outputPipe: outputPipe.createOutputPipe(with: platformOptions),
+                    errorPipe: errorPipe.createOutputPipe(with: platformOptions)
                 )
             }
 
