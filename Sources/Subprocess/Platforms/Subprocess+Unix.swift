@@ -9,7 +9,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#if canImport(Darwin) || canImport(Glibc) || canImport(Bionic) || canImport(Musl)
+#if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl)
 
 #if canImport(System)
 @preconcurrency import System
@@ -21,15 +21,15 @@ import _SubprocessCShims
 
 #if canImport(Darwin)
 import Darwin
-#elseif canImport(Bionic)
-import Bionic
+#elseif canImport(Android)
+import Android
 #elseif canImport(Glibc)
 import Glibc
 #elseif canImport(Musl)
 import Musl
 #endif
 
-package import Dispatch
+internal import Dispatch
 
 // MARK: - Signals
 
@@ -390,19 +390,78 @@ extension FileDescriptor {
     }
 
     internal var platformDescriptor: PlatformFileDescriptor {
-        return self
+        return self.rawValue
+    }
+}
+
+internal typealias PlatformFileDescriptor = CInt
+internal typealias TrackedPlatformDiskIO = TrackedDispatchIO
+
+extension CreatedPipe {
+    internal func createInputPipe() -> InputPipe {
+        var writeEnd: TrackedPlatformDiskIO? = nil
+        if let writeFileDescriptor = self.writeFileDescriptor {
+            let dispatchIO: DispatchIO = DispatchIO(
+                type: .stream,
+                fileDescriptor: writeFileDescriptor.platformDescriptor,
+                queue: .global(),
+                cleanupHandler: { error in
+                    // Close the file descriptor
+                    if writeFileDescriptor.closeWhenDone {
+                        try? writeFileDescriptor.safelyClose()
+                    }
+                }
+            )
+            writeEnd = .init(
+                dispatchIO,
+                closeWhenDone: writeFileDescriptor.closeWhenDone
+            )
+        }
+        return InputPipe(
+            readEnd: self.readFileDescriptor,
+            writeEnd: writeEnd
+        )
     }
 
-    #if SubprocessSpan
+    internal func createOutputPipe() -> OutputPipe {
+        var readEnd: TrackedPlatformDiskIO? = nil
+        if let readFileDescriptor = self.readFileDescriptor {
+            let dispatchIO: DispatchIO = DispatchIO(
+                type: .stream,
+                fileDescriptor: readFileDescriptor.platformDescriptor,
+                queue: .global(),
+                cleanupHandler: { error in
+                    // Close the file descriptor
+                    if readFileDescriptor.closeWhenDone {
+                        try? readFileDescriptor.safelyClose()
+                    }
+                }
+            )
+            readEnd = .init(
+                dispatchIO,
+                closeWhenDone: readFileDescriptor.closeWhenDone
+            )
+        }
+        return OutputPipe(
+            readEnd: readEnd,
+            writeEnd: self.writeFileDescriptor
+        )
+    }
+}
+
+// MARK: - TrackedDispatchIO extensions
+extension TrackedDispatchIO {
+#if SubprocessSpan
     @available(SubprocessSpan, *)
-    #endif
+#endif
     package func readChunk(upToLength maxLength: Int) async throws -> SequenceOutput.Buffer? {
         return try await withCheckedThrowingContinuation { continuation in
-            DispatchIO.read(
-                fromFileDescriptor: self.rawValue,
-                maxLength: maxLength,
-                runningHandlerOn: .global()
-            ) { data, error in
+            var buffer: DispatchData = .empty
+            self.dispatchIO.read(
+                offset: 0,
+                length: maxLength,
+                queue: .global()
+            ) { done, data, error in
                 if error != 0 {
                     continuation.resume(
                         throwing: SubprocessError(
@@ -412,10 +471,19 @@ extension FileDescriptor {
                     )
                     return
                 }
-                if data.isEmpty {
-                    continuation.resume(returning: nil)
-                } else {
-                    continuation.resume(returning: SequenceOutput.Buffer(data: data))
+                if let data = data {
+                    if buffer.isEmpty {
+                        buffer = data
+                    } else {
+                        buffer.append(data)
+                    }
+                }
+                if done {
+                    if !buffer.isEmpty {
+                        continuation.resume(returning: SequenceOutput.Buffer(data: buffer))
+                    } else {
+                        continuation.resume(returning: nil)
+                    }
                 }
             }
         }
@@ -425,19 +493,13 @@ extension FileDescriptor {
         upToLength maxLength: Int,
         resultHandler: sending @escaping (Swift.Result<DispatchData, any Error>) -> Void
     ) {
-        let dispatchIO = DispatchIO(
-            type: .stream,
-            fileDescriptor: self.rawValue,
-            queue: .global()
-        ) { error in }
         var buffer: DispatchData?
-        dispatchIO.read(
+        self.dispatchIO.read(
             offset: 0,
             length: maxLength,
             queue: .global()
         ) { done, data, error in
             guard error == 0, let chunkData = data else {
-                dispatchIO.close()
                 resultHandler(
                     .failure(
                         SubprocessError(
@@ -451,7 +513,6 @@ extension FileDescriptor {
             // Easy case: if we are done and buffer is nil, this means
             // there is only one chunk of data
             if done && buffer == nil {
-                dispatchIO.close()
                 buffer = chunkData
                 resultHandler(.success(chunkData))
                 return
@@ -464,16 +525,15 @@ extension FileDescriptor {
             }
 
             if done {
-                dispatchIO.close()
                 resultHandler(.success(buffer!))
                 return
             }
         }
     }
 
-    #if SubprocessSpan
+#if SubprocessSpan
     @available(SubprocessSpan, *)
-    package func write(
+    internal func write(
         _ span: borrowing RawSpan
     ) async throws -> Int {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int, any Error>) in
@@ -497,9 +557,9 @@ extension FileDescriptor {
             }
         }
     }
-    #endif  // SubprocessSpan
+#endif  // SubprocessSpan
 
-    package func write(
+    internal func write(
         _ array: [UInt8]
     ) async throws -> Int {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int, any Error>) in
@@ -524,16 +584,21 @@ extension FileDescriptor {
         }
     }
 
-    package func write(
+    internal func write(
         _ dispatchData: DispatchData,
         queue: DispatchQueue = .global(),
         completion: @escaping (Int, Error?) -> Void
     ) {
-        DispatchIO.write(
-            toFileDescriptor: self.rawValue,
+        self.dispatchIO.write(
+            offset: 0,
             data: dispatchData,
-            runningHandlerOn: queue
-        ) { unwritten, error in
+            queue: queue
+        ) { done, unwritten, error in
+            guard done else {
+                // Wait until we are done writing or encountered some error
+                return
+            }
+
             let unwrittenLength = unwritten?.count ?? 0
             let writtenLength = dispatchData.count - unwrittenLength
             guard error != 0 else {
@@ -551,6 +616,4 @@ extension FileDescriptor {
     }
 }
 
-internal typealias PlatformFileDescriptor = FileDescriptor
-
-#endif  // canImport(Darwin) || canImport(Glibc) || canImport(Bionic) || canImport(Musl)
+#endif  // canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl)

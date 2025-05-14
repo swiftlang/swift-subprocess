@@ -339,7 +339,7 @@ extension SubprocessUnixTests {
             .readOnly
         )
         let cat = try await Subprocess.run(
-            .name("cat"),
+            .path("/bin/cat"),
             input: .fileDescriptor(text, closeAfterSpawningProcess: true),
             output: .data(limit: 2048 * 1024)
         )
@@ -729,7 +729,7 @@ extension SubprocessUnixTests {
         var platformOptions = PlatformOptions()
         platformOptions.supplementaryGroups = Array(expectedGroups)
         let idResult = try await Subprocess.run(
-            .name("swift"),
+            .path("/usr/bin/swift"),
             arguments: [getgroupsSwift.string],
             platformOptions: platformOptions,
             output: .string
@@ -746,6 +746,10 @@ extension SubprocessUnixTests {
         .enabled(
             if: getgid() == 0,
             "This test requires root privileges"
+        ),
+        .enabled(
+            if: (try? Executable.name("ps").resolveExecutablePath(in: .inherit)) != nil,
+            "This test requires ps (install procps package on Debian or RedHat Linux distros)"
         )
     )
     func testSubprocessPlatformOptionsProcessGroupID() async throws {
@@ -764,15 +768,19 @@ extension SubprocessUnixTests {
         #expect(psResult.terminationStatus.isSuccess)
         let resultValue = try #require(
             psResult.standardOutput
-        ).split { $0.isWhitespace || $0.isNewline }
-        #expect(resultValue.count == 4)
-        #expect(resultValue[0] == "PID")
-        #expect(resultValue[1] == "PGID")
+        )
+        let match = try #require(try #/\s*PID\s*PGID\s*(?<pid>[\-]?[0-9]+)\s*(?<pgid>[\-]?[0-9]+)\s*/#.wholeMatch(in: resultValue), "ps output was in an unexpected format:\n\n\(resultValue)")
         // PGID should == PID
-        #expect(resultValue[2] == resultValue[3])
+        #expect(match.output.pid == match.output.pgid)
     }
 
-    @Test func testSubprocessPlatformOptionsCreateSession() async throws {
+    @Test(
+        .enabled(
+            if: (try? Executable.name("ps").resolveExecutablePath(in: .inherit)) != nil,
+            "This test requires ps (install procps package on Debian or RedHat Linux distros)"
+        )
+    )
+    func testSubprocessPlatformOptionsCreateSession() async throws {
         guard #available(SubprocessSpan , *) else {
             return
         }
@@ -903,6 +911,50 @@ extension SubprocessUnixTests {
         // .standardOutputConsumed ^ .standardOutputConsumed = 0
         #expect(atomicBox.bitwiseXor(.standardOutputConsumed) == OutputConsumptionState(rawValue: 0))
     }
+
+    @Test func testExitSignal() async throws {
+        guard #available(SubprocessSpan , *) else {
+            return
+        }
+
+        let signalsToTest: [CInt] = [SIGKILL, SIGTERM, SIGINT]
+        for signal in signalsToTest {
+            let result = try await Subprocess.run(
+                .path("/bin/sh"),
+                arguments: ["-c", "kill -\(signal) $$"]
+            )
+            #expect(result.terminationStatus == .unhandledException(signal))
+        }
+    }
+
+    @Test func testCanReliablyKillProcessesEvenWithSigmask() async throws {
+        guard #available(SubprocessSpan , *) else {
+            return
+        }
+        let result = try await withThrowingTaskGroup(
+            of: TerminationStatus?.self,
+            returning: TerminationStatus.self
+        ) { group in
+            group.addTask {
+                return try await Subprocess.run(
+                    .path("/bin/sh"),
+                    arguments: ["-c", "trap 'echo no' TERM; while true; do sleep 1; done"]
+                ).terminationStatus
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return nil
+            }
+            while let result = try await group.next() {
+                group.cancelAll()
+                if let result = result {
+                    return result
+                }
+            }
+            preconditionFailure("Task shold have returned a result")
+        }
+        #expect(result == .unhandledException(SIGKILL))
+    }
 }
 
 // MARK: - Utils
@@ -941,19 +993,14 @@ internal func assertNewSessionCreated<Output: OutputProtocol>(
     #expect(result.terminationStatus.isSuccess)
     let psValue = try #require(
         result.standardOutput
-    ).split {
-        return $0.isNewline || $0.isWhitespace
-    }
-    #expect(psValue.count == 6)
+    )
+    let match = try #require(try #/\s*PID\s*PGID\s*TPGID\s*(?<pid>[\-]?[0-9]+)\s*(?<pgid>[\-]?[0-9]+)\s*(?<tpgid>[\-]?[0-9]+)\s*/#.wholeMatch(in: psValue), "ps output was in an unexpected format:\n\n\(psValue)")
     // If setsid() has been called successfully, we shold observe:
     // - pid == pgid
     // - tpgid <= 0
-    #expect(psValue[0] == "PID")
-    #expect(psValue[1] == "PGID")
-    #expect(psValue[2] == "TPGID")
-    let pid = try #require(Int(psValue[3]))
-    let pgid = try #require(Int(psValue[4]))
-    let tpgid = try #require(Int(psValue[5]))
+    let pid = try #require(Int(match.output.pid))
+    let pgid = try #require(Int(match.output.pgid))
+    let tpgid = try #require(Int(match.output.tpgid))
     #expect(pid == pgid)
     #expect(tpgid <= 0)
 }
@@ -1009,11 +1056,14 @@ extension SubprocessUnixTests {
             let limitString = limitResult
                 .standardOutput?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
-            let limit = Int(limitString)
+            let ulimit = Int(limitString)
         else {
             Issue.record("Failed to run  ulimit -n")
             return
         }
+        // Constrain to an ultimate upper limit of 4096, since Docker containers can have limits like 2^20 which is a bit too high for this test.
+        // Common defaults are 2560 for macOS and 1024 for Linux.
+        let limit = min(ulimit, 4096)
         // Since we open two pipes per `run`, launch
         // limit / 4 subprocesses should reveal any
         // file descriptor leaks
@@ -1073,6 +1123,40 @@ extension SubprocessUnixTests {
                 }
             }
             try await group.waitForAll()
+        }
+    }
+
+    @Test func testCancelProcessVeryEarlyOnStressTest() async throws {
+        guard #available(SubprocessSpan , *) else {
+            return
+        }
+
+        for i in 0..<100 {
+            let terminationStatus = try await withThrowingTaskGroup(
+                of: TerminationStatus?.self,
+                returning: TerminationStatus.self
+            ) { group in
+                group.addTask {
+                    return try await Subprocess.run(
+                        .path("/bin/sleep"),
+                        arguments: ["100000"]
+                    ).terminationStatus
+                }
+                group.addTask {
+                    let waitNS = UInt64.random(in: 0..<10_000_000)
+                    try? await Task.sleep(nanoseconds: waitNS)
+                    return nil
+                }
+
+                while let result = try await group.next() {
+                    group.cancelAll()
+                    if let result = result {
+                        return result
+                    }
+                }
+                preconditionFailure("this should be impossible, task should've returned a result")
+            }
+            #expect(terminationStatus == .unhandledException(SIGKILL), "iteration \(i)")
         }
     }
 }

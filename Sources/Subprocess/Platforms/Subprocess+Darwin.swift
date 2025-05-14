@@ -195,7 +195,7 @@ extension Configuration {
                 // Input
                 var result: Int32 = -1
                 if let inputRead = inputPipe.readFileDescriptor {
-                    result = posix_spawn_file_actions_adddup2(&fileActions, inputRead.wrapped.rawValue, 0)
+                    result = posix_spawn_file_actions_adddup2(&fileActions, inputRead.platformDescriptor, 0)
                     guard result == 0 else {
                         try self.cleanupPreSpawn(input: inputPipe, output: outputPipe, error: errorPipe)
                         throw SubprocessError(
@@ -206,7 +206,7 @@ extension Configuration {
                 }
                 if let inputWrite = inputPipe.writeFileDescriptor {
                     // Close parent side
-                    result = posix_spawn_file_actions_addclose(&fileActions, inputWrite.wrapped.rawValue)
+                    result = posix_spawn_file_actions_addclose(&fileActions, inputWrite.platformDescriptor)
                     guard result == 0 else {
                         try self.cleanupPreSpawn(input: inputPipe, output: outputPipe, error: errorPipe)
                         throw SubprocessError(
@@ -217,7 +217,7 @@ extension Configuration {
                 }
                 // Output
                 if let outputWrite = outputPipe.writeFileDescriptor {
-                    result = posix_spawn_file_actions_adddup2(&fileActions, outputWrite.wrapped.rawValue, 1)
+                    result = posix_spawn_file_actions_adddup2(&fileActions, outputWrite.platformDescriptor, 1)
                     guard result == 0 else {
                         try self.cleanupPreSpawn(input: inputPipe, output: outputPipe, error: errorPipe)
                         throw SubprocessError(
@@ -228,7 +228,7 @@ extension Configuration {
                 }
                 if let outputRead = outputPipe.readFileDescriptor {
                     // Close parent side
-                    result = posix_spawn_file_actions_addclose(&fileActions, outputRead.wrapped.rawValue)
+                    result = posix_spawn_file_actions_addclose(&fileActions, outputRead.platformDescriptor)
                     guard result == 0 else {
                         try self.cleanupPreSpawn(input: inputPipe, output: outputPipe, error: errorPipe)
                         throw SubprocessError(
@@ -239,7 +239,7 @@ extension Configuration {
                 }
                 // Error
                 if let errorWrite = errorPipe.writeFileDescriptor {
-                    result = posix_spawn_file_actions_adddup2(&fileActions, errorWrite.wrapped.rawValue, 2)
+                    result = posix_spawn_file_actions_adddup2(&fileActions, errorWrite.platformDescriptor, 2)
                     guard result == 0 else {
                         try self.cleanupPreSpawn(input: inputPipe, output: outputPipe, error: errorPipe)
                         throw SubprocessError(
@@ -250,7 +250,7 @@ extension Configuration {
                 }
                 if let errorRead = errorPipe.readFileDescriptor {
                     // Close parent side
-                    result = posix_spawn_file_actions_addclose(&fileActions, errorRead.wrapped.rawValue)
+                    result = posix_spawn_file_actions_addclose(&fileActions, errorRead.platformDescriptor)
                     guard result == 0 else {
                         try self.cleanupPreSpawn(input: inputPipe, output: outputPipe, error: errorPipe)
                         throw SubprocessError(
@@ -354,8 +354,9 @@ extension Configuration {
                     processIdentifier: .init(value: pid),
                     output: output,
                     error: error,
-                    outputPipe: outputPipe,
-                    errorPipe: errorPipe
+                    inputPipe: inputPipe.createInputPipe(),
+                    outputPipe: outputPipe.createOutputPipe(),
+                    errorPipe: errorPipe.createOutputPipe()
                 )
             }
 

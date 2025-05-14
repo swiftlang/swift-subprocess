@@ -9,7 +9,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#if canImport(Glibc) || canImport(Bionic) || canImport(Musl)
+#if canImport(Glibc) || canImport(Android) || canImport(Musl)
 
 #if canImport(System)
 @preconcurrency import System
@@ -19,8 +19,8 @@
 
 #if canImport(Glibc)
 import Glibc
-#elseif canImport(Bionic)
-import Bionic
+#elseif canImport(Android)
+import Android
 #elseif canImport(Musl)
 import Musl
 #endif
@@ -71,12 +71,12 @@ extension Configuration {
                 }
                 // Setup input
                 let fileDescriptors: [CInt] = [
-                    inputPipe.readFileDescriptor?.wrapped.rawValue ?? -1,
-                    inputPipe.writeFileDescriptor?.wrapped.rawValue ?? -1,
-                    outputPipe.writeFileDescriptor?.wrapped.rawValue ?? -1,
-                    outputPipe.readFileDescriptor?.wrapped.rawValue ?? -1,
-                    errorPipe.writeFileDescriptor?.wrapped.rawValue ?? -1,
-                    errorPipe.readFileDescriptor?.wrapped.rawValue ?? -1,
+                    inputPipe.readFileDescriptor?.platformDescriptor ?? -1,
+                    inputPipe.writeFileDescriptor?.platformDescriptor ?? -1,
+                    outputPipe.writeFileDescriptor?.platformDescriptor ?? -1,
+                    outputPipe.readFileDescriptor?.platformDescriptor ?? -1,
+                    errorPipe.writeFileDescriptor?.platformDescriptor ?? -1,
+                    errorPipe.readFileDescriptor?.platformDescriptor ?? -1,
                 ]
 
                 let workingDirectory: String = self.workingDirectory.string
@@ -126,8 +126,9 @@ extension Configuration {
                     processIdentifier: .init(value: pid),
                     output: output,
                     error: error,
-                    outputPipe: outputPipe,
-                    errorPipe: errorPipe
+                    inputPipe: inputPipe.createInputPipe(),
+                    outputPipe: outputPipe.createOutputPipe(),
+                    errorPipe: errorPipe.createOutputPipe()
                 )
             }
 
@@ -257,29 +258,51 @@ private let _childProcessContinuations:
 
 private let signalSource: SendableSourceSignal = SendableSourceSignal()
 
+private extension siginfo_t {
+    var si_status: Int32 {
+        #if canImport(Glibc)
+        return _sifields._sigchld.si_status
+        #elseif canImport(Musl)
+        return __si_fields.__si_common.__second.__sigchld.si_status
+        #elseif canImport(Bionic)
+        return _sifields._sigchld._status
+        #endif
+    }
+
+    var si_pid: pid_t {
+        #if canImport(Glibc)
+        return _sifields._sigchld.si_pid
+        #elseif canImport(Musl)
+        return __si_fields.__si_common.__first.__piduid.si_pid
+        #elseif canImport(Bionic)
+        return _sifields._kill._pid
+        #endif
+    }
+}
+
 private let setup: () = {
     signalSource.setEventHandler {
-        _childProcessContinuations.withLock { continuations in
-            while true {
-                var siginfo = siginfo_t()
-                guard waitid(P_ALL, id_t(0), &siginfo, WEXITED) == 0 else {
-                    return
-                }
-                var status: TerminationStatus? = nil
-                switch siginfo.si_code {
-                case .init(CLD_EXITED):
-                    status = .exited(siginfo._sifields._sigchld.si_status)
-                case .init(CLD_KILLED), .init(CLD_DUMPED):
-                    status = .unhandledException(siginfo._sifields._sigchld.si_status)
-                case .init(CLD_TRAPPED), .init(CLD_STOPPED), .init(CLD_CONTINUED):
-                    // Ignore these signals because they are not related to
-                    // process exiting
-                    break
-                default:
-                    fatalError("Unexpected exit status: \(siginfo.si_code)")
-                }
-                if let status = status {
-                    let pid = siginfo._sifields._sigchld.si_pid
+        while true {
+            var siginfo = siginfo_t()
+            guard waitid(P_ALL, id_t(0), &siginfo, WEXITED) == 0 || errno == EINTR else {
+                return
+            }
+            var status: TerminationStatus? = nil
+            switch siginfo.si_code {
+            case .init(CLD_EXITED):
+                status = .exited(siginfo.si_status)
+            case .init(CLD_KILLED), .init(CLD_DUMPED):
+                status = .unhandledException(siginfo.si_status)
+            case .init(CLD_TRAPPED), .init(CLD_STOPPED), .init(CLD_CONTINUED):
+                // Ignore these signals because they are not related to
+                // process exiting
+                break
+            default:
+                fatalError("Unexpected exit status: \(siginfo.si_code)")
+            }
+            if let status = status {
+                _childProcessContinuations.withLock { continuations in
+                    let pid = siginfo.si_pid
                     if let existing = continuations.removeValue(forKey: pid),
                         case .continuation(let c) = existing
                     {
@@ -321,4 +344,4 @@ private func _setupMonitorSignalHandler() {
     setup
 }
 
-#endif  // canImport(Glibc) || canImport(Bionic) || canImport(Musl)
+#endif  // canImport(Glibc) || canImport(Android) || canImport(Musl)

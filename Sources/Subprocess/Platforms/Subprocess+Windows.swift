@@ -151,8 +151,9 @@ extension Configuration {
             processIdentifier: pid,
             output: output,
             error: error,
-            outputPipe: outputPipe,
-            errorPipe: errorPipe,
+            inputPipe: inputPipe.createInputPipe(),
+            outputPipe: outputPipe.createOutputPipe(),
+            errorPipe: errorPipe.createOutputPipe(),
             consoleBehavior: self.platformOptions.consoleBehavior
         )
     }
@@ -267,8 +268,9 @@ extension Configuration {
             processIdentifier: pid,
             output: output,
             error: error,
-            outputPipe: outputPipe,
-            errorPipe: errorPipe,
+            inputPipe: inputPipe.createInputPipe(),
+            outputPipe: outputPipe.createOutputPipe(),
+            errorPipe: errorPipe.createOutputPipe(),
             consoleBehavior: self.platformOptions.consoleBehavior
         )
     }
@@ -971,8 +973,10 @@ extension Configuration {
     }
 }
 
-// MARK: - PlatformFileDescriptor Type
+// MARK: - Type alias
 internal typealias PlatformFileDescriptor = HANDLE
+
+internal typealias TrackedPlatformDiskIO = TrackedFileDescriptor
 
 // MARK: - Pipe Support
 extension FileDescriptor {
@@ -1019,7 +1023,26 @@ extension FileDescriptor {
     var platformDescriptor: PlatformFileDescriptor {
         return HANDLE(bitPattern: _get_osfhandle(self.rawValue))!
     }
+}
 
+extension CreatedPipe {
+    /// On Windows, we use file descriptors directly
+    internal func createInputPipe() -> InputPipe {
+        return InputPipe(
+            readEnd: self.readFileDescriptor,
+            writeEnd: self.writeFileDescriptor
+        )
+    }
+
+    internal func createOutputPipe() -> OutputPipe {
+        return OutputPipe(
+            readEnd: self.readFileDescriptor,
+            writeEnd: self.writeFileDescriptor
+        )
+    }
+}
+
+extension TrackedFileDescriptor {
     internal func readChunk(upToLength maxLength: Int) async throws -> SequenceOutput.Buffer? {
         return try await withCheckedThrowingContinuation { continuation in
             self.readUntilEOF(
@@ -1053,7 +1076,7 @@ extension FileDescriptor {
                     let bufferPtr = baseAddress.advanced(by: totalBytesRead)
                     var bytesRead: DWORD = 0
                     let readSucceed = ReadFile(
-                        self.platformDescriptor,
+                        self.fileDescriptor.platformDescriptor,
                         UnsafeMutableRawPointer(mutating: bufferPtr),
                         DWORD(maxLength - totalBytesRead),
                         &bytesRead,
@@ -1094,7 +1117,7 @@ extension FileDescriptor {
         }
     }
 
-    #if SubprocessSpan
+#if SubprocessSpan
     @available(SubprocessSpan, *)
     internal func write(
         _ span: borrowing RawSpan
@@ -1112,7 +1135,7 @@ extension FileDescriptor {
             }
         }
     }
-    #endif
+#endif
 
     internal func write(
         _ array: [UInt8]
@@ -1133,32 +1156,26 @@ extension FileDescriptor {
         }
     }
 
-    package func write(
+    internal func write(
         _ ptr: UnsafeRawBufferPointer,
         completion: @escaping (Int, Swift.Error?) -> Void
     ) {
-        func _write(
-            _ ptr: UnsafeRawBufferPointer,
-            count: Int,
-            completion: @escaping (Int, Swift.Error?) -> Void
-        ) {
-            var writtenBytes: DWORD = 0
-            let writeSucceed = WriteFile(
-                self.platformDescriptor,
-                ptr.baseAddress,
-                DWORD(count),
-                &writtenBytes,
-                nil
+        var writtenBytes: DWORD = 0
+        let writeSucceed = WriteFile(
+            self.fileDescriptor.platformDescriptor,
+            ptr.baseAddress,
+            DWORD(ptr.count),
+            &writtenBytes,
+            nil
+        )
+        if !writeSucceed {
+            let error = SubprocessError(
+                code: .init(.failedToWriteToSubprocess),
+                underlyingError: .init(rawValue: GetLastError())
             )
-            if !writeSucceed {
-                let error = SubprocessError(
-                    code: .init(.failedToWriteToSubprocess),
-                    underlyingError: .init(rawValue: GetLastError())
-                )
-                completion(Int(writtenBytes), error)
-            } else {
-                completion(Int(writtenBytes), nil)
-            }
+            completion(Int(writtenBytes), error)
+        } else {
+            completion(Int(writtenBytes), nil)
         }
     }
 }
