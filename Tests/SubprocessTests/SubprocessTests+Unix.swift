@@ -666,22 +666,8 @@ extension SubprocessUnixTests {
         #expect(catResult.standardError == expected)
     }
 
-    @Test(
-        .enabled(
-            if: {
-                if #available(SubprocessSpan , *) {
-                    true
-                } else {
-                    false
-                }
-            }(),
-            "This test requires SubprocessSpan"
-        )
-    )
+    @Test(.enabled(if: hasSubprocessSpan, "This test requires SubprocessSpan"))
     func testSlowDripRedirectedOutputRedirectToSequence() async throws {
-        guard #available(SubprocessSpan , *) else {
-            return
-        }
         let threshold: Double = 0.5
 
         let script = """
