@@ -33,7 +33,7 @@ struct SubprocessLinuxTests {
             setgid(4321)
         }
         let idResult = try await Subprocess.run(
-            .name("/usr/bin/id"),
+            .path("/usr/bin/id"),
             arguments: ["-g"],
             platformOptions: platformOptions,
             output: .string

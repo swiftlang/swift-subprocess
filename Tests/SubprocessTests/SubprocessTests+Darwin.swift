@@ -41,7 +41,7 @@ struct SubprocessDarwinTests {
         // Check the proces ID (pid), pross group ID (pgid), and
         // controling terminal's process group ID (tpgid)
         let psResult = try await Subprocess.run(
-            .name("/bin/bash"),
+            .path("/bin/bash"),
             arguments: ["-c", "ps -o pid,pgid,tpgid -p $$"],
             platformOptions: platformOptions,
             output: .string
