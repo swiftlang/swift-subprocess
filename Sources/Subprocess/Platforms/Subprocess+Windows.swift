@@ -1088,7 +1088,7 @@ extension TrackedFileDescriptor {
                     totalBytesRead += values.count
 
                     if totalBytesRead >= maxLength {
-                        continuation.yield(.endOfStream(SequenceOutput.Buffer(data: values)))
+                        continuation.yield(.endOfChunk(SequenceOutput.Buffer(data: values)))
                         continuation.finish()
                         return
                     } else {
