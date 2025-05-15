@@ -955,6 +955,25 @@ extension SubprocessUnixTests {
         }
         #expect(result == .unhandledException(SIGKILL))
     }
+
+    @Test func testUnlimitedBufferByDefault() async throws {
+        guard #available(SubprocessSpan , *) else {
+            return
+        }
+
+        // Make sure we can read long text from standard input
+        let expected: Data = try Data(
+            contentsOf: URL(filePath: theMysteriousIsland.string)
+        )
+        // Launch cat with default output `.string`
+        let cat = try await Subprocess.run(
+            .path("/bin/cat"),
+            arguments: ["\(theMysteriousIsland.string)"]
+        )
+        #expect(cat.terminationStatus.isSuccess)
+        // Make sure we read all bytes
+        #expect(cat.standardOutput!.data(using: .utf8) == expected)
+    }
 }
 
 // MARK: - Utils
