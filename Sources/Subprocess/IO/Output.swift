@@ -241,6 +241,9 @@ extension OutputProtocol where Self == FileDescriptorOutput {
 #endif
 extension OutputProtocol where Self == StringOutput<UTF8> {
     /// Create a `Subprocess` output that collects output as UTF8 String
+    /// with an unlimited buffer size. The memory requirement for collecting
+    /// output is directly proportional to the size of the output
+    /// emitted by the child process.
     public static var string: Self {
         .init(limit: .max, encoding: UTF8.self)
     }
@@ -264,7 +267,10 @@ extension OutputProtocol {
 @available(SubprocessSpan, *)
 #endif
 extension OutputProtocol where Self == BytesOutput {
-    /// Create a `Subprocess` output that collects output as `Buffer` 
+    /// Create a `Subprocess` output that collects output as a `Buffer`
+    /// with an unlimited buffer size. The memory requirement for collecting
+    /// output is directly proportional to the size of the output
+    /// emitted by the child process.
     public static var bytes: Self { .init(limit: .max) }
 
     /// Create a `Subprocess` output that collects output as
