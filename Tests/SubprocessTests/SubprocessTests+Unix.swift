@@ -429,11 +429,10 @@ extension SubprocessUnixTests {
         let result = try await Subprocess.run(
             .path("/bin/cat"),
             input: .data(expected),
-            output: .sequence,
             error: .discarded
-        ) { execution in
+        ) { execution, standardOutput in
             var buffer = Data()
-            for try await chunk in execution.standardOutput {
+            for try await chunk in standardOutput {
                 let currentChunk = chunk._withUnsafeBytes { Data($0) }
                 buffer += currentChunk
             }
@@ -469,11 +468,10 @@ extension SubprocessUnixTests {
         let result = try await Subprocess.run(
             .path("/bin/cat"),
             input: .sequence(stream),
-            output: .sequence,
             error: .discarded
-        ) { execution in
+        ) { execution, standardOutput in
             var buffer = Data()
-            for try await chunk in execution.standardOutput {
+            for try await chunk in standardOutput {
                 let currentChunk = chunk._withUnsafeBytes { Data($0) }
                 buffer += currentChunk
             }
@@ -618,11 +616,10 @@ extension SubprocessUnixTests {
         let catResult = try await Subprocess.run(
             .path("/bin/cat"),
             arguments: [theMysteriousIsland.string],
-            output: .sequence,
             error: .discarded
-        ) { execution in
+        ) { execution, standardOutput in
             var buffer = Data()
-            for try await chunk in execution.standardOutput {
+            for try await chunk in standardOutput {
                 let currentChunk = chunk._withUnsafeBytes { Data($0) }
                 buffer += currentChunk
             }
@@ -816,9 +813,8 @@ extension SubprocessUnixTests {
                 """,
             ],
             input: .none,
-            output: .sequence,
             error: .discarded
-        ) { subprocess in
+        ) { subprocess, standardOutput in
             return try await withThrowingTaskGroup(of: Void.self) { group in
                 group.addTask {
                     try await Task.sleep(for: .milliseconds(200))
@@ -831,7 +827,7 @@ extension SubprocessUnixTests {
                 }
                 group.addTask {
                     var outputs: [String] = []
-                    for try await bit in subprocess.standardOutput {
+                    for try await bit in standardOutput {
                         let bitString = bit._withUnsafeBytes { ptr in
                             return String(decoding: ptr, as: UTF8.self)
                         }.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -881,35 +877,17 @@ extension SubprocessUnixTests {
         let stuckResult = try await Subprocess.run(
             // This will intentionally hang
             .path("/bin/cat"),
-            output: .discarded,
             error: .discarded
-        ) { subprocess in
+        ) { subprocess, standardOutput in
             // Make sure we can send signals to terminate the process
             try subprocess.send(signal: .terminate)
+            for try await _ in standardOutput {}
         }
         guard case .unhandledException(let exception) = stuckResult.terminationStatus else {
             Issue.record("Wrong termination status repored: \(stuckResult.terminationStatus)")
             return
         }
         #expect(exception == Signal.terminate.rawValue)
-    }
-
-    @Test func testAtomicBox() async throws {
-        // Start with 0
-        let atomicBox = AtomicBox()
-        // After first insert: 0 ^ .standardErrorConsumed = .standardErrorConsumed
-        #expect(atomicBox.bitwiseXor(.standardErrorConsumed) == .standardErrorConsumed)
-        // Second insert:
-        // .standardErrorConsumed ^ .standardOutputConsumed =
-        //      (.standardErrorConsumed & .standardOutputConsumed)
-        #expect(atomicBox.bitwiseXor(.standardOutputConsumed).contains(.standardOutputConsumed))
-        // Thrid xor insert should remove error, but retain output:
-        // (.standardErrorConsumed & .standardOutputConsumed) ^ .standardErrorConsumed =
-        //    .standardOutputConsumed
-        #expect(atomicBox.bitwiseXor(.standardErrorConsumed).contains(.standardOutputConsumed))
-        // Fourth xor insert should clear out output as well:
-        // .standardOutputConsumed ^ .standardOutputConsumed = 0
-        #expect(atomicBox.bitwiseXor(.standardOutputConsumed) == OutputConsumptionState(rawValue: 0))
     }
 
     @Test func testExitSignal() async throws {

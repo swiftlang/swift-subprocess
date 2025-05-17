@@ -33,168 +33,31 @@ import WinSDK
 #if SubprocessSpan
 @available(SubprocessSpan, *)
 #endif
-public final class Execution<
-    Output: OutputProtocol,
-    Error: OutputProtocol
->: Sendable {
+public struct Execution: Sendable {
     /// The process identifier of the current execution
     public let processIdentifier: ProcessIdentifier
-
-    internal let output: Output
-    internal let error: Error
-    internal let inputPipe: InputPipe
-    internal let outputPipe: OutputPipe
-    internal let errorPipe: OutputPipe
-    internal let outputConsumptionState: AtomicBox
 
     #if os(Windows)
     internal let consoleBehavior: PlatformOptions.ConsoleBehavior
 
     init(
         processIdentifier: ProcessIdentifier,
-        output: Output,
-        error: Error,
-        inputPipe: InputPipe,
-        outputPipe: OutputPipe,
-        errorPipe: OutputPipe,
         consoleBehavior: PlatformOptions.ConsoleBehavior
     ) {
         self.processIdentifier = processIdentifier
-        self.output = output
-        self.error = error
-        self.inputPipe = inputPipe
-        self.outputPipe = outputPipe
-        self.errorPipe = errorPipe
-        self.outputConsumptionState = AtomicBox()
         self.consoleBehavior = consoleBehavior
     }
     #else
     init(
-        processIdentifier: ProcessIdentifier,
-        output: Output,
-        error: Error,
-        inputPipe: InputPipe,
-        outputPipe: OutputPipe,
-        errorPipe: OutputPipe
+        processIdentifier: ProcessIdentifier
     ) {
         self.processIdentifier = processIdentifier
-        self.output = output
-        self.error = error
-        self.inputPipe = inputPipe
-        self.outputPipe = outputPipe
-        self.errorPipe = errorPipe
-        self.outputConsumptionState = AtomicBox()
     }
     #endif  // os(Windows)
-}
-
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
-extension Execution where Output == SequenceOutput {
-    /// The standard output of the subprocess.
-    ///
-    /// Accessing this property will **fatalError** if this property was
-    /// accessed multiple times. Subprocess communicates with parent process
-    /// via pipe under the hood and each pipe can only be consumed once.
-    public var standardOutput: AsyncBufferSequence {
-        let consumptionState = self.outputConsumptionState.bitwiseXor(
-            OutputConsumptionState.standardOutputConsumed
-        )
-
-        guard consumptionState.contains(.standardOutputConsumed),
-            let readFd = self.outputPipe.readEnd
-        else {
-            fatalError("The standard output has already been consumed")
-        }
-        return AsyncBufferSequence(diskIO: readFd)
-    }
-}
-
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
-extension Execution where Error == SequenceOutput {
-    /// The standard error of the subprocess.
-    ///
-    /// Accessing this property will **fatalError** if this property was
-    /// accessed multiple times. Subprocess communicates with parent process
-    /// via pipe under the hood and each pipe can only be consumed once.
-    public var standardError: AsyncBufferSequence {
-        let consumptionState = self.outputConsumptionState.bitwiseXor(
-            OutputConsumptionState.standardErrorConsumed
-        )
-
-        guard consumptionState.contains(.standardErrorConsumed),
-            let readFd = self.errorPipe.readEnd
-        else {
-            fatalError("The standard error has already been consumed")
-        }
-        return AsyncBufferSequence(diskIO: readFd)
-    }
 }
 
 // MARK: - Output Capture
 internal enum OutputCapturingState<Output: Sendable, Error: Sendable>: Sendable {
     case standardOutputCaptured(Output)
     case standardErrorCaptured(Error)
-}
-
-internal struct OutputConsumptionState: OptionSet {
-    typealias RawValue = UInt8
-
-    internal let rawValue: UInt8
-
-    internal init(rawValue: UInt8) {
-        self.rawValue = rawValue
-    }
-
-    static let standardOutputConsumed: Self = .init(rawValue: 0b0001)
-    static let standardErrorConsumed: Self = .init(rawValue: 0b0010)
-}
-
-internal typealias CapturedIOs<
-    Output: Sendable,
-    Error: Sendable
-> = (standardOutput: Output, standardError: Error)
-
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
-extension Execution {
-    internal func captureIOs() async throws -> CapturedIOs<
-        Output.OutputType, Error.OutputType
-    > {
-        return try await withThrowingTaskGroup(
-            of: OutputCapturingState<Output.OutputType, Error.OutputType>.self
-        ) { group in
-            group.addTask {
-                let stdout = try await self.output.captureOutput(
-                    from: self.outputPipe.readEnd
-                )
-                return .standardOutputCaptured(stdout)
-            }
-            group.addTask {
-                let stderr = try await self.error.captureOutput(
-                    from: self.errorPipe.readEnd
-                )
-                return .standardErrorCaptured(stderr)
-            }
-
-            var stdout: Output.OutputType!
-            var stderror: Error.OutputType!
-            while let state = try await group.next() {
-                switch state {
-                case .standardOutputCaptured(let output):
-                    stdout = output
-                case .standardErrorCaptured(let error):
-                    stderror = error
-                }
-            }
-            return (
-                standardOutput: stdout,
-                standardError: stderror
-            )
-        }
-    }
 }
