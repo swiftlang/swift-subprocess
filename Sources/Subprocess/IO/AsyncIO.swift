@@ -54,6 +54,8 @@ final class AsyncIO: Sendable {
         }
     }
 
+    static let shared: AsyncIO = AsyncIO()
+
     private enum Event {
         case read
         case write
