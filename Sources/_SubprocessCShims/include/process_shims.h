@@ -21,6 +21,11 @@
 #include <spawn.h>
 #endif
 
+#if TARGET_OS_LINUX
+#include <sys/epoll.h>
+#include <sys/eventfd.h>
+#endif // TARGET_OS_LINUX
+
 #if __has_include(<mach/vm_page_size.h>)
 vm_size_t _subprocess_vm_size(void);
 #endif
