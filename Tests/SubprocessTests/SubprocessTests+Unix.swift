@@ -433,7 +433,7 @@ extension SubprocessUnixTests {
         ) { execution, standardOutput in
             var buffer = Data()
             for try await chunk in standardOutput {
-                let currentChunk = chunk._withUnsafeBytes { Data($0) }
+                let currentChunk = chunk.withUnsafeBytes { Data($0) }
                 buffer += currentChunk
             }
             return buffer
@@ -472,7 +472,7 @@ extension SubprocessUnixTests {
         ) { execution, standardOutput in
             var buffer = Data()
             for try await chunk in standardOutput {
-                let currentChunk = chunk._withUnsafeBytes { Data($0) }
+                let currentChunk = chunk.withUnsafeBytes { Data($0) }
                 buffer += currentChunk
             }
             return buffer
@@ -620,7 +620,7 @@ extension SubprocessUnixTests {
         ) { execution, standardOutput in
             var buffer = Data()
             for try await chunk in standardOutput {
-                let currentChunk = chunk._withUnsafeBytes { Data($0) }
+                let currentChunk = chunk.withUnsafeBytes { Data($0) }
                 buffer += currentChunk
             }
             return buffer
@@ -828,7 +828,7 @@ extension SubprocessUnixTests {
                 group.addTask {
                     var outputs: [String] = []
                     for try await bit in standardOutput {
-                        let bitString = bit._withUnsafeBytes { ptr in
+                        let bitString = bit.withUnsafeBytes { ptr in
                             return String(decoding: ptr, as: UTF8.self)
                         }.trimmingCharacters(in: .whitespacesAndNewlines)
                         if bitString.contains("\n") {

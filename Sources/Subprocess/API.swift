@@ -168,7 +168,7 @@ public func run<Result, Input: InputProtocol, Error: OutputProtocol>(
     workingDirectory: FilePath? = nil,
     platformOptions: PlatformOptions = PlatformOptions(),
     input: Input = .none,
-    error: Error,
+    error: Error = .discarded,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, AsyncBufferSequence) async throws -> Result)
 ) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
@@ -267,7 +267,7 @@ public func run<Result, Error: OutputProtocol>(
     environment: Environment = .inherit,
     workingDirectory: FilePath? = nil,
     platformOptions: PlatformOptions = PlatformOptions(),
-    error: Error,
+    error: Error = .discarded,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
 ) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
