@@ -46,7 +46,7 @@ public protocol OutputProtocol: Sendable, ~Copyable {
 #endif
 extension OutputProtocol {
     /// The max amount of data to collect for this output.
-    public var maxSize: Int { 128 * 1024 }
+    public var maxSize: Int { .max }
 }
 
 /// A concrete `Output` type for subprocesses that indicates that
@@ -240,10 +240,12 @@ extension OutputProtocol where Self == FileDescriptorOutput {
 @available(SubprocessSpan, *)
 #endif
 extension OutputProtocol where Self == StringOutput<UTF8> {
-    /// Create a `Subprocess` output that collects output as
-    /// UTF8 String with 128kb limit.
+    /// Create a `Subprocess` output that collects output as UTF8 String
+    /// with an unlimited buffer size. The memory requirement for collecting
+    /// output is directly proportional to the size of the output
+    /// emitted by the child process.
     public static var string: Self {
-        .init(limit: 128 * 1024, encoding: UTF8.self)
+        .init(limit: .max, encoding: UTF8.self)
     }
 }
 
@@ -265,9 +267,11 @@ extension OutputProtocol {
 @available(SubprocessSpan, *)
 #endif
 extension OutputProtocol where Self == BytesOutput {
-    /// Create a `Subprocess` output that collects output as
-    /// `Buffer` with 128kb limit.
-    public static var bytes: Self { .init(limit: 128 * 1024) }
+    /// Create a `Subprocess` output that collects output as a `Buffer`
+    /// with an unlimited buffer size. The memory requirement for collecting
+    /// output is directly proportional to the size of the output
+    /// emitted by the child process.
+    public static var bytes: Self { .init(limit: .max) }
 
     /// Create a `Subprocess` output that collects output as
     /// `Buffer` up to limit it bytes.
