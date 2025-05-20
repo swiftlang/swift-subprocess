@@ -117,7 +117,7 @@ extension AsyncBufferSequence.Buffer {
                 let span = RawSpan(_unsafeElements: ptr)
                 return _overrideLifetime(of: span, to: self)
             case .array(let array):
-                let span = array.bytes
+                let span = array.span.bytes
                 return _overrideLifetime(of: span, to: self)
             }
         }
