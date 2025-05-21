@@ -39,6 +39,19 @@ public func _overrideLifetime<
     dependent
 }
 
+@available(SubprocessSpan, *)
+extension Span where Element: BitwiseCopyable {
+
+    internal var _bytes: RawSpan {
+        @lifetime(copy self)
+        @_alwaysEmitIntoClient
+        get {
+            let rawSpan = RawSpan(_elements: self)
+            return _overrideLifetime(of: rawSpan, copyingFrom: self)
+        }
+    }
+}
+
 #if canImport(Glibc) || canImport(Bionic) || canImport(Musl)
 internal import Dispatch
 

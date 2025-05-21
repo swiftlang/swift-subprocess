@@ -41,7 +41,7 @@ struct SubprocessDarwinTests {
         // Check the proces ID (pid), pross group ID (pgid), and
         // controling terminal's process group ID (tpgid)
         let psResult = try await Subprocess.run(
-            .name("/bin/bash"),
+            .path("/bin/bash"),
             arguments: ["-c", "ps -o pid,pgid,tpgid -p $$"],
             platformOptions: platformOptions,
             output: .string
@@ -85,9 +85,8 @@ struct SubprocessDarwinTests {
         _ = try await Subprocess.run(
             // This will intentionally hang
             .path("/bin/cat"),
-            output: .discarded,
             error: .discarded
-        ) { subprocess in
+        ) { subprocess, standardOutput in
             // First suspend the procss
             try subprocess.send(signal: .suspend)
             var suspendedStatus: Int32 = 0
@@ -101,6 +100,7 @@ struct SubprocessDarwinTests {
 
             // Now kill the process
             try subprocess.send(signal: .terminate)
+            for try await _ in standardOutput {}
         }
     }
 }

@@ -26,7 +26,7 @@ Then, adding the `Subprocess` module to your target dependencies:
 )
 ```
 
-On Swift 6.1 and above, `Subprocess` offers two [package traits](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0450-swiftpm-package-traits.md):
+`Subprocess` offers two [package traits](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0450-swiftpm-package-traits.md):
 
 - `SubprocessFoundation`: includes a dependency on `Foundation` and adds extensions on Foundation types like `Data`. This trait is enabled by default.
 - `SubprocessSpan`: makes Subprocess’ API, mainly `OutputProtocol`, `RawSpan` based. This trait is enabled whenever `RawSpan` is available and should only be disabled when `RawSpan` is not available.
@@ -35,7 +35,7 @@ Please find the API proposal [here](https://github.com/swiftlang/swift-foundatio
 
 ### Swift Versions
 
-The minimal supported Swift version is Swift 6.0.
+The minimal supported Swift version is **Swift 6.1**.
 
 To experiment with the `SubprocessSpan` trait, Swift 6.2 is required. Currently, you can download the Swift 6.2 toolchain (`main` development snapshot) [here](https://www.swift.org/install/macos/#development-snapshots).
 

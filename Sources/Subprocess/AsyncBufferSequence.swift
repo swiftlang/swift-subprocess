@@ -15,19 +15,29 @@
 @preconcurrency import SystemPackage
 #endif
 
+#if !os(Windows)
+internal import Dispatch
+#endif
+
 #if SubprocessSpan
 @available(SubprocessSpan, *)
 #endif
 public struct AsyncBufferSequence: AsyncSequence, Sendable {
     public typealias Failure = any Swift.Error
-    public typealias Element = SequenceOutput.Buffer
+    public typealias Element = Buffer
+
+    #if os(Windows)
+    internal typealias DiskIO = FileDescriptor
+    #else
+    internal typealias DiskIO = DispatchIO
+    #endif
 
     @_nonSendable
     public struct Iterator: AsyncIteratorProtocol {
-        public typealias Element = SequenceOutput.Buffer
-        internal typealias Stream = AsyncThrowingStream<TrackedPlatformDiskIO.StreamStatus, Swift.Error>
+        public typealias Element = Buffer
+        internal typealias Stream = AsyncThrowingStream<StreamStatus, Swift.Error>
 
-        private let diskIO: TrackedPlatformDiskIO
+        private let diskIO: DiskIO
         private var buffer: [UInt8]
         private var currentPosition: Int
         private var finished: Bool
@@ -35,18 +45,28 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
         private let continuation: Stream.Continuation
         private var needsNextChunk: Bool
 
-        internal init(diskIO: TrackedPlatformDiskIO) {
+        internal init(diskIO: DiskIO, streamOptions: PlatformOptions.StreamOptions) {
             self.diskIO = diskIO
             self.buffer = []
             self.currentPosition = 0
             self.finished = false
-            let (stream, continuation) = AsyncThrowingStream<TrackedPlatformDiskIO.StreamStatus, Swift.Error>.makeStream()
+            let (stream, continuation) = AsyncThrowingStream<StreamStatus, Swift.Error>.makeStream()
             self.streamIterator = stream.makeAsyncIterator()
             self.continuation = continuation
             self.needsNextChunk = true
+
+            #if !os(Windows)
+            if let minimumBufferSize = streamOptions.minimumBufferSize {
+                diskIO.setLimit(lowWater: minimumBufferSize)
+            }
+
+            if let maximumBufferSize = streamOptions.maximumBufferSize {
+                diskIO.setLimit(highWater: maximumBufferSize)
+            }
+            #endif
         }
 
-        public mutating func next() async throws -> SequenceOutput.Buffer? {
+        public mutating func next() async throws -> Buffer? {
 
             if needsNextChunk {
                 diskIO.readChunk(upToLength: readBufferSize, continuation: continuation)
@@ -63,34 +83,44 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
                     return data
 
                 case .endOfFile:
-                    try self.diskIO.safelyClose()
+                    #if os(Windows)
+                    try self.diskIO.close()
+                    #else
+                    self.diskIO.close()
+                    #endif
                     return nil
                 }
             } else {
-                try self.diskIO.safelyClose()
+                #if os(Windows)
+                try self.diskIO.close()
+                #else
+                self.diskIO.close()
+                #endif
                 return nil
             }
         }
     }
 
-    private let diskIO: TrackedPlatformDiskIO
+    private let diskIO: DiskIO
+    private let streamOptions: PlatformOptions.StreamOptions
 
-    internal init(diskIO: TrackedPlatformDiskIO) {
+    internal init(diskIO: DiskIO, streamOptions: PlatformOptions.StreamOptions) {
         self.diskIO = diskIO
+        self.streamOptions = streamOptions
     }
 
     public func makeAsyncIterator() -> Iterator {
-        return Iterator(diskIO: self.diskIO)
+        return Iterator(diskIO: self.diskIO, streamOptions: streamOptions)
     }
 }
 
-extension TrackedPlatformDiskIO {
+extension AsyncBufferSequence {
 #if SubprocessSpan
 @available(SubprocessSpan, *)
 #endif
     internal enum StreamStatus {
-        case data(SequenceOutput.Buffer)
-        case endOfChunk(SequenceOutput.Buffer)
+        case data(AsyncBufferSequence.Buffer)
+        case endOfChunk(AsyncBufferSequence.Buffer)
         case endOfFile
     }
 }

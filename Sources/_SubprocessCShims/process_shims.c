@@ -236,7 +236,7 @@ static int _subprocess_spawn_prefork(
         *pid = childPid;
         // Read from the pipe until pipe is closed
         // either due to exec succeeds or error is written
-        while (true) {
+        while (TRUE) {
             int childError = 0;
             ssize_t read_rc = read(pipefd[0], &childError, sizeof(childError));
             if (read_rc == 0) {

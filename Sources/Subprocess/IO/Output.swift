@@ -125,7 +125,6 @@ public struct FileDescriptorOutput: OutputProtocol {
 public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol {
     public typealias OutputType = String?
     public let maxSize: Int
-    private let encoding: Encoding.Type
 
     #if SubprocessSpan
     public func output(from span: RawSpan) throws -> String? {
@@ -134,7 +133,7 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol {
         for index in 0..<span.byteCount {
             array.append(span.unsafeLoad(fromByteOffset: index, as: UInt8.self))
         }
-        return String(decodingBytes: array, as: self.encoding)
+        return String(decodingBytes: array, as: Encoding.self)
     }
     #else
     public func output(from buffer: some Sequence<UInt8>) throws -> String? {
@@ -146,7 +145,6 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol {
 
     internal init(limit: Int, encoding: Encoding.Type) {
         self.maxSize = limit
-        self.encoding = encoding
     }
 }
 
@@ -161,14 +159,16 @@ public struct BytesOutput: OutputProtocol {
     public let maxSize: Int
 
     internal func captureOutput(
-        from diskIO: TrackedPlatformDiskIO?
+        from diskIO: consuming TrackedPlatformDiskIO?
     ) async throws -> [UInt8] {
+        var diskIOBox: TrackedPlatformDiskIO? = consume diskIO
         return try await withCheckedThrowingContinuation { continuation in
-            guard let diskIO = diskIO else {
+            let _diskIO = diskIOBox.take()
+            guard let _diskIO = _diskIO else {
                 // Show not happen due to type system constraints
                 fatalError("Trying to capture output without file descriptor")
             }
-            diskIO.readUntilEOF(upToLength: self.maxSize) { result in
+            _diskIO.readUntilEOF(upToLength: self.maxSize) { result in
                 switch result {
                 case .success(let data):
                     // FIXME: remove workaround for
@@ -208,7 +208,7 @@ public struct BytesOutput: OutputProtocol {
 #if SubprocessSpan
 @available(SubprocessSpan, *)
 #endif
-public struct SequenceOutput: OutputProtocol {
+internal struct SequenceOutput: OutputProtocol {
     public typealias OutputType = Void
 
     internal init() {}
@@ -276,16 +276,6 @@ extension OutputProtocol where Self == BytesOutput {
     }
 }
 
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
-extension OutputProtocol where Self == SequenceOutput {
-    /// Create a `Subprocess` output that redirects the output
-    /// to the `.standardOutput` (or `.standardError`) property
-    /// of `Execution` as `AsyncSequence<Data>`.
-    public static var sequence: Self { .init() }
-}
-
 // MARK: - Span Default Implementations
 #if SubprocessSpan
 @available(SubprocessSpan, *)
@@ -300,21 +290,6 @@ extension OutputProtocol {
 }
 #endif
 
-// MARK: - OutputPipe
-internal struct OutputPipe {
-    // On Darwin and Linux, parent end (read end) should be
-    // wrapped as `DispatchIO` for reading
-    internal let readEnd: TrackedPlatformDiskIO?
-    internal let writeEnd: TrackedFileDescriptor?
-
-    internal init(
-        readEnd: TrackedPlatformDiskIO?,
-        writeEnd: TrackedFileDescriptor?
-    ) {
-        self.readEnd = readEnd
-        self.writeEnd = writeEnd
-    }
-}
 
 // MARK: - Default Implementations
 #if SubprocessSpan
@@ -335,22 +310,23 @@ extension OutputProtocol {
     /// Capture the output from the subprocess up to maxSize
     @_disfavoredOverload
     internal func captureOutput(
-        from diskIO: TrackedPlatformDiskIO?
+        from diskIO: consuming TrackedPlatformDiskIO?
     ) async throws -> OutputType {
         if let bytesOutput = self as? BytesOutput {
             return try await bytesOutput.captureOutput(from: diskIO) as! Self.OutputType
         }
+        var diskIOBox: TrackedPlatformDiskIO? = consume diskIO
         return try await withCheckedThrowingContinuation { continuation in
             if OutputType.self == Void.self {
                 continuation.resume(returning: () as! OutputType)
                 return
             }
-            guard let diskIO = diskIO else {
+            guard let _diskIO = diskIOBox.take() else {
                 // Show not happen due to type system constraints
                 fatalError("Trying to capture output without file descriptor")
             }
 
-            diskIO.readUntilEOF(upToLength: self.maxSize) { result in
+            _diskIO.readUntilEOF(upToLength: self.maxSize) { result in
                 do {
                     switch result {
                     case .success(let data):
@@ -374,7 +350,7 @@ extension OutputProtocol {
 @available(SubprocessSpan, *)
 #endif
 extension OutputProtocol where OutputType == Void {
-    internal func captureOutput(from fileDescriptor: TrackedPlatformDiskIO?) async throws {}
+    internal func captureOutput(from fileDescriptor: consuming TrackedPlatformDiskIO?) async throws {}
 
     #if SubprocessSpan
     /// Convert the output from Data to expected output type
@@ -391,6 +367,20 @@ extension OutputProtocol where OutputType == Void {
 #if SubprocessSpan
 @available(SubprocessSpan, *)
 extension OutputProtocol {
+    #if os(Windows)
+    internal func output(from data: [UInt8]) throws -> OutputType {
+        guard !data.isEmpty else {
+            let empty = UnsafeRawBufferPointer(start: nil, count: 0)
+            let span = RawSpan(_unsafeBytes: empty)
+            return try self.output(from: span)
+        }
+
+        return try data.withUnsafeBufferPointer { ptr in
+            let span = RawSpan(_unsafeBytes: UnsafeRawBufferPointer(ptr))
+            return try self.output(from: span)
+        }
+    }
+    #else
     internal func output(from data: DispatchData) throws -> OutputType {
         guard !data.isEmpty else {
             let empty = UnsafeRawBufferPointer(start: nil, count: 0)
@@ -404,6 +394,7 @@ extension OutputProtocol {
             return try self.output(from: span)
         }
     }
+    #endif // os(Windows)
 }
 #endif
 
