@@ -58,7 +58,7 @@ public struct PlatformOptions: Sendable {
     /// i.e. Detach from the terminal.
     public var createSession: Bool = false
 
-    private(set) var preferredStreamBufferSizeRange: (any RangeExpression & Sendable)? = nil
+    public var streamOptions: StreamOptions = .init()
 
     /// An ordered list of steps in order to tear down the child
     /// process in case the parent task is cancelled before
@@ -85,16 +85,18 @@ public struct PlatformOptions: Sendable {
             ) throws -> Void
         )? = nil
 
-    public init() {
-        self.preferredStreamBufferSizeRange = nil
-    }
+    public init() {}
+}
 
-    public init<R>(preferredStreamBufferSizeRange: R?) where R: RangeExpression & Sendable, R.Bound == Int {
-        self.preferredStreamBufferSizeRange = preferredStreamBufferSizeRange
-    }
+extension PlatformOptions {
+    public struct StreamOptions: Sendable {
+        let minimumBufferSize: Int?
+        let maximumBufferSize: Int?
 
-    mutating func setPreferredStreamBufferSizeRange<R>(_ range: R?) where R: RangeExpression & Sendable, R.Bound == Int {
-        self.preferredStreamBufferSizeRange = range
+        public init(minimumBufferSize: Int? = nil, maximumBufferSize: Int? = nil) {
+            self.minimumBufferSize = minimumBufferSize
+            self.maximumBufferSize = maximumBufferSize
+        }
     }
 }
 

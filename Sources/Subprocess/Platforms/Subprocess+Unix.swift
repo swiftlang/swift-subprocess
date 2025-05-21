@@ -439,22 +439,12 @@ extension CreatedPipe {
                 }
             )
 
-            if let preferredStreamBufferSizeRange = options.preferredStreamBufferSizeRange {
-                if let range = preferredStreamBufferSizeRange as? Range<Int> {
-                    dispatchIO.setLimit(lowWater: range.lowerBound)
-                    dispatchIO.setLimit(highWater: range.upperBound)
-                } else if let range = preferredStreamBufferSizeRange as? ClosedRange<Int> {
-                    dispatchIO.setLimit(lowWater: range.lowerBound)
-                    dispatchIO.setLimit(highWater: range.upperBound)
-                } else if let range = preferredStreamBufferSizeRange as? PartialRangeFrom<Int> {
-                    dispatchIO.setLimit(lowWater: range.lowerBound)
-                } else if let range = preferredStreamBufferSizeRange as? PartialRangeUpTo<Int> {
-                    dispatchIO.setLimit(highWater: range.upperBound - 1)
-                } else if let range = preferredStreamBufferSizeRange as? PartialRangeThrough<Int> {
-                    dispatchIO.setLimit(highWater: range.upperBound)
-                } else {
-                    fatalError("Unsupported preferredStreamBufferSizeRange: \(preferredStreamBufferSizeRange)")
-                }
+            if let minimumBufferSize = options.streamOptions.minimumBufferSize {
+                dispatchIO.setLimit(lowWater: minimumBufferSize)
+            }
+
+            if let maximumBufferSize = options.streamOptions.maximumBufferSize {
+                dispatchIO.setLimit(lowWater: maximumBufferSize)
             }
 
             readEnd = .init(
