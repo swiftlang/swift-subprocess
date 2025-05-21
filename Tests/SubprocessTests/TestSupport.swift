@@ -42,11 +42,3 @@ internal func directory(_ lhs: String, isSameAs rhs: String) -> Bool {
 
     return canonicalLhs == canonicalRhs
 }
-
-internal var hasSubprocessSpan: Bool {
-    if #available(SubprocessSpan , *) {
-        true
-    } else {
-        false
-    }
-}
