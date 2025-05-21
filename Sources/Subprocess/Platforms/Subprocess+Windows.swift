@@ -1093,7 +1093,7 @@ extension FileDescriptor {
 
                     var bytesRead: DWORD = 0
                     let readSucceed = ReadFile(
-                        self.fileDescriptor.platformDescriptor,
+                        self.platformDescriptor,
                         UnsafeMutableRawPointer(mutating: baseAddress),
                         DWORD(maxLength - totalBytesRead),
                         &bytesRead,
@@ -1123,11 +1123,11 @@ extension FileDescriptor {
                     totalBytesRead += values.count
 
                     if totalBytesRead >= maxLength {
-                        continuation.yield(.endOfChunk(SequenceOutput.Buffer(data: values)))
+                        continuation.yield(.endOfChunk(AsyncBufferSequence.Buffer(data: values)))
                         continuation.finish()
                         return
                     } else {
-                        continuation.yield(.data(SequenceOutput.Buffer(data: values)))
+                        continuation.yield(.data(AsyncBufferSequence.Buffer(data: values)))
                     }
                 } else {
                     continuation.yield(.endOfFile)
