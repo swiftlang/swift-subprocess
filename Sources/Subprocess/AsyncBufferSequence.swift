@@ -15,8 +15,6 @@
 @preconcurrency import SystemPackage
 #endif
 
-internal import Dispatch
-
 #if SubprocessSpan
 @available(SubprocessSpan, *)
 #endif
