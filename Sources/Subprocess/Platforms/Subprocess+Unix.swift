@@ -421,7 +421,7 @@ extension DispatchIO {
             length: maxLength,
             queue: .global()
         ) { done, data, error in
-            if error != 0 {
+            guard error == 0 else {
                 continuation.finish(throwing: SubprocessError(
                     code: .init(.failedToReadFromSubprocess),
                     underlyingError: .init(rawValue: error)
@@ -429,11 +429,18 @@ extension DispatchIO {
                 return
             }
 
-            // Treat empty data and nil as the same
-            if let data = data.map({ $0.isEmpty ? nil : $0 }) ?? nil {
+            guard let data else {
+                fatalError("Unexpectedly received nil data from DispatchIO with error == 0.")
+            }
+
+            if !data.isEmpty {
+                // We have non-empty data. Yield it to the continuation
                 continuation.yield(AsyncBufferSequence.Buffer(data: data))
             } else if done {
+                // Receiving an empty data and done == true means we've reached the end of the file.
                 continuation.finish()
+            } else {
+                fatalError("Unexpectedly received no data from DispatchIO with it indicating it is not done.")
             }
         }
     }

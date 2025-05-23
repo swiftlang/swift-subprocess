@@ -73,7 +73,21 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
                 diskIO.stream(upToLength: readBufferSize, continuation: continuation)
             }
 
-            if let buffer = try await streamIterator.next() {
+            let buffer: Buffer?
+
+            do {
+                buffer = try await streamIterator.next()
+            } catch {
+                #if os(Windows)
+                try self.diskIO.close()
+                #else
+                self.diskIO.close()
+                #endif
+
+                throw error
+            }
+
+            if let buffer {
                 bytesRemaining -= buffer.count
                 return buffer
             } else {
@@ -82,6 +96,7 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
                 #else
                 self.diskIO.close()
                 #endif
+
                 return nil
             }
         }
