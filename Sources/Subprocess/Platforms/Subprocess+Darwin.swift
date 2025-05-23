@@ -57,6 +57,9 @@ public struct PlatformOptions: Sendable {
     /// Creates a session and sets the process group ID
     /// i.e. Detach from the terminal.
     public var createSession: Bool = false
+
+    public var streamOptions: StreamOptions = .init()
+
     /// An ordered list of steps in order to tear down the child
     /// process in case the parent task is cancelled before
     /// the child proces terminates.
@@ -124,6 +127,18 @@ extension PlatformOptions {
         case `default` = -1
     }
     #endif
+}
+
+extension PlatformOptions {
+    public struct StreamOptions: Sendable {
+        let minimumBufferSize: Int?
+        let maximumBufferSize: Int?
+
+        public init(minimumBufferSize: Int? = nil, maximumBufferSize: Int? = nil) {
+            self.minimumBufferSize = minimumBufferSize
+            self.maximumBufferSize = maximumBufferSize
+        }
+    }
 }
 
 extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible {
@@ -441,9 +456,9 @@ extension Configuration {
                 )
                 return SpawnResult(
                     execution: execution,
-                    inputWriteEnd: inputWriteFileDescriptor?.createPlatformDiskIO(),
-                    outputReadEnd: outputReadFileDescriptor?.createPlatformDiskIO(),
-                    errorReadEnd: errorReadFileDescriptor?.createPlatformDiskIO()
+                    inputWriteEnd: inputWriteFileDescriptor?.createPlatformDiskIO(with: platformOptions.streamOptions),
+                    outputReadEnd: outputReadFileDescriptor?.createPlatformDiskIO(with: platformOptions.streamOptions),
+                    errorReadEnd: errorReadFileDescriptor?.createPlatformDiskIO(with: platformOptions.streamOptions)
                 )
             }
 

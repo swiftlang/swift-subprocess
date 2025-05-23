@@ -35,33 +35,59 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
     @_nonSendable
     public struct Iterator: AsyncIteratorProtocol {
         public typealias Element = Buffer
+        internal typealias Stream = AsyncThrowingStream<Buffer, Swift.Error>
 
         private let diskIO: DiskIO
         private var buffer: [UInt8]
         private var currentPosition: Int
         private var finished: Bool
+        private var streamIterator: Stream.AsyncIterator
+        private let continuation: Stream.Continuation
+        private var bytesRemaining: Int
 
         internal init(diskIO: DiskIO) {
             self.diskIO = diskIO
             self.buffer = []
             self.currentPosition = 0
             self.finished = false
+            let (stream, continuation) = AsyncThrowingStream<Buffer, Swift.Error>.makeStream()
+            self.streamIterator = stream.makeAsyncIterator()
+            self.continuation = continuation
+            self.bytesRemaining = 0
         }
 
-        public func next() async throws -> Buffer? {
-            let data = try await self.diskIO.readChunk(
-                upToLength: readBufferSize
-            )
-            if data == nil {
-                // We finished reading. Close the file descriptor now
+        public mutating func next() async throws -> Buffer? {
+            if bytesRemaining <= 0 {
+                bytesRemaining = readBufferSize
+                diskIO.stream(upToLength: readBufferSize, continuation: continuation)
+            }
+
+            let buffer: Buffer?
+
+            do {
+                buffer = try await streamIterator.next()
+            } catch {
                 #if os(Windows)
                 try self.diskIO.close()
                 #else
                 self.diskIO.close()
                 #endif
+
+                throw error
+            }
+
+            if let buffer {
+                bytesRemaining -= buffer.count
+                return buffer
+            } else {
+                #if os(Windows)
+                try self.diskIO.close()
+                #else
+                self.diskIO.close()
+                #endif
+
                 return nil
             }
-            return data
         }
     }
 
