@@ -35,7 +35,7 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
     @_nonSendable
     public struct Iterator: AsyncIteratorProtocol {
         public typealias Element = Buffer
-        internal typealias Stream = AsyncThrowingStream<StreamStatus, Swift.Error>
+        internal typealias Stream = AsyncThrowingStream<Buffer, Swift.Error>
 
         private let diskIO: DiskIO
         private var buffer: [UInt8]
@@ -43,17 +43,17 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
         private var finished: Bool
         private var streamIterator: Stream.AsyncIterator
         private let continuation: Stream.Continuation
-        private var needsNextChunk: Bool
+        private var bytesRemaining: Int
 
         internal init(diskIO: DiskIO, streamOptions: PlatformOptions.StreamOptions) {
             self.diskIO = diskIO
             self.buffer = []
             self.currentPosition = 0
             self.finished = false
-            let (stream, continuation) = AsyncThrowingStream<StreamStatus, Swift.Error>.makeStream()
+            let (stream, continuation) = AsyncThrowingStream<Buffer, Swift.Error>.makeStream()
             self.streamIterator = stream.makeAsyncIterator()
             self.continuation = continuation
-            self.needsNextChunk = true
+            self.bytesRemaining = 0
 
             #if !os(Windows)
             if let minimumBufferSize = streamOptions.minimumBufferSize {
@@ -68,28 +68,14 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
 
         public mutating func next() async throws -> Buffer? {
 
-            if needsNextChunk {
-                diskIO.readChunk(upToLength: readBufferSize, continuation: continuation)
-                needsNextChunk = false
+            if bytesRemaining <= 0 {
+                bytesRemaining = readBufferSize
+                diskIO.stream(upToLength: readBufferSize, continuation: continuation)
             }
 
-            if let status = try await streamIterator.next() {
-                switch status {
-                case .data(let data):
-                    return data
-
-                case .endOfChunk(let data):
-                    needsNextChunk = true
-                    return data
-
-                case .endOfFile:
-                    #if os(Windows)
-                    try self.diskIO.close()
-                    #else
-                    self.diskIO.close()
-                    #endif
-                    return nil
-                }
+            if let buffer = try await streamIterator.next() {
+                bytesRemaining -= buffer.count
+                return buffer
             } else {
                 #if os(Windows)
                 try self.diskIO.close()
@@ -111,17 +97,6 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
 
     public func makeAsyncIterator() -> Iterator {
         return Iterator(diskIO: self.diskIO, streamOptions: streamOptions)
-    }
-}
-
-extension AsyncBufferSequence {
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
-    internal enum StreamStatus {
-        case data(AsyncBufferSequence.Buffer)
-        case endOfChunk(AsyncBufferSequence.Buffer)
-        case endOfFile
     }
 }
 

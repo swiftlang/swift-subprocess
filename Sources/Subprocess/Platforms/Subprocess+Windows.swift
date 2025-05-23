@@ -1078,7 +1078,7 @@ extension FileDescriptor {
 }
 
 extension FileDescriptor {
-    internal func readChunk(upToLength maxLength: Int, continuation: AsyncBufferSequence.Iterator.Stream.Continuation) {
+    internal func stream(upToLength maxLength: Int, continuation: AsyncBufferSequence.Iterator.Stream.Continuation) {
         do {
             var totalBytesRead: Int = 0
 
@@ -1121,16 +1121,8 @@ extension FileDescriptor {
 
                 if values.count > 0 {
                     totalBytesRead += values.count
-
-                    if totalBytesRead >= maxLength {
-                        continuation.yield(.endOfChunk(AsyncBufferSequence.Buffer(data: values)))
-                        continuation.finish()
-                        return
-                    } else {
-                        continuation.yield(.data(AsyncBufferSequence.Buffer(data: values)))
-                    }
+                    continuation.yield(AsyncBufferSequence.Buffer(data: values))
                 } else {
-                    continuation.yield(.endOfFile)
                     continuation.finish()
                     return
                 }

@@ -415,7 +415,7 @@ extension DispatchIO {
     #if SubprocessSpan
     @available(SubprocessSpan, *)
     #endif
-    internal func readChunk(upToLength maxLength: Int, continuation: AsyncBufferSequence.Iterator.Stream.Continuation) {
+    internal func stream(upToLength maxLength: Int, continuation: AsyncBufferSequence.Iterator.Stream.Continuation) {
         self.read(
             offset: 0,
             length: maxLength,
@@ -430,26 +430,9 @@ extension DispatchIO {
             }
 
             // Treat empty data and nil as the same
-            let buffer = data.map { $0.isEmpty ? nil : $0 } ?? nil
-            let status: AsyncBufferSequence.StreamStatus
-
-            switch (buffer, done) {
-            case (.some(let data), false):
-                status = .data(AsyncBufferSequence.Buffer(data: data))
-
-            case (.some(let data), true):
-                status = .endOfChunk(AsyncBufferSequence.Buffer(data: data))
-
-            case (nil, false):
-                fatalError("Unexpectedly received no data from DispatchIO with it indicating it is not done.")
-
-            case (nil, true):
-                status = .endOfFile
-            }
-
-            continuation.yield(status)
-
-            if done {
+            if let data = data.map({ $0.isEmpty ? nil : $0 }) ?? nil {
+                continuation.yield(AsyncBufferSequence.Buffer(data: data))
+            } else if done {
                 continuation.finish()
             }
         }
