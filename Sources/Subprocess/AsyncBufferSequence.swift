@@ -45,7 +45,7 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
         private let continuation: Stream.Continuation
         private var bytesRemaining: Int
 
-        internal init(diskIO: DiskIO, streamOptions: PlatformOptions.StreamOptions) {
+        internal init(diskIO: DiskIO) {
             self.diskIO = diskIO
             self.buffer = []
             self.currentPosition = 0
@@ -54,20 +54,9 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
             self.streamIterator = stream.makeAsyncIterator()
             self.continuation = continuation
             self.bytesRemaining = 0
-
-            #if !os(Windows)
-            if let minimumBufferSize = streamOptions.minimumBufferSize {
-                diskIO.setLimit(lowWater: minimumBufferSize)
-            }
-
-            if let maximumBufferSize = streamOptions.maximumBufferSize {
-                diskIO.setLimit(highWater: maximumBufferSize)
-            }
-            #endif
         }
 
         public mutating func next() async throws -> Buffer? {
-
             if bytesRemaining <= 0 {
                 bytesRemaining = readBufferSize
                 diskIO.stream(upToLength: readBufferSize, continuation: continuation)
@@ -103,15 +92,13 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
     }
 
     private let diskIO: DiskIO
-    private let streamOptions: PlatformOptions.StreamOptions
 
-    internal init(diskIO: DiskIO, streamOptions: PlatformOptions.StreamOptions) {
+    internal init(diskIO: DiskIO) {
         self.diskIO = diskIO
-        self.streamOptions = streamOptions
     }
 
     public func makeAsyncIterator() -> Iterator {
-        return Iterator(diskIO: self.diskIO, streamOptions: streamOptions)
+        return Iterator(diskIO: self.diskIO)
     }
 }
 

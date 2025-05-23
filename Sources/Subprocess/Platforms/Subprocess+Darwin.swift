@@ -456,9 +456,9 @@ extension Configuration {
                 )
                 return SpawnResult(
                     execution: execution,
-                    inputWriteEnd: inputWriteFileDescriptor?.createPlatformDiskIO(),
-                    outputReadEnd: outputReadFileDescriptor?.createPlatformDiskIO(),
-                    errorReadEnd: errorReadFileDescriptor?.createPlatformDiskIO()
+                    inputWriteEnd: inputWriteFileDescriptor?.createPlatformDiskIO(with: platformOptions.streamOptions),
+                    outputReadEnd: outputReadFileDescriptor?.createPlatformDiskIO(with: platformOptions.streamOptions),
+                    errorReadEnd: errorReadFileDescriptor?.createPlatformDiskIO(with: platformOptions.streamOptions)
                 )
             }
 

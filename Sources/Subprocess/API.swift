@@ -200,7 +200,7 @@ public func run<Result, Input: InputProtocol, Error: OutputProtocol>(
             }
 
             // Body runs in the same isolation
-            let outputSequence = AsyncBufferSequence(diskIO: outputIOBox.take()!.consumeDiskIO(), streamOptions: platformOptions.streamOptions)
+            let outputSequence = AsyncBufferSequence(diskIO: outputIOBox.take()!.consumeDiskIO())
             let result = try await body(execution, outputSequence)
             try await group.waitForAll()
             return result
@@ -250,7 +250,7 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
             }
 
             // Body runs in the same isolation
-            let errorSequence = AsyncBufferSequence(diskIO: errorIOBox.take()!.consumeDiskIO(), streamOptions: platformOptions.streamOptions)
+            let errorSequence = AsyncBufferSequence(diskIO: errorIOBox.take()!.consumeDiskIO())
             let result = try await body(execution, errorSequence)
             try await group.waitForAll()
             return result
@@ -286,7 +286,7 @@ public func run<Result, Error: OutputProtocol>(
         error: try error.createPipe()
     ) { execution, inputIO, outputIO, errorIO in
         let writer = StandardInputWriter(diskIO: inputIO!)
-        let outputSequence = AsyncBufferSequence(diskIO: outputIO!.consumeDiskIO(), streamOptions: platformOptions.streamOptions)
+        let outputSequence = AsyncBufferSequence(diskIO: outputIO!.consumeDiskIO())
         return try await body(execution, writer, outputSequence)
     }
 }
@@ -319,7 +319,7 @@ public func run<Result, Output: OutputProtocol>(
         error: try error.createPipe()
     ) { execution, inputIO, outputIO, errorIO in
         let writer = StandardInputWriter(diskIO: inputIO!)
-        let errorSequence = AsyncBufferSequence(diskIO: errorIO!.consumeDiskIO(), streamOptions: platformOptions.streamOptions)
+        let errorSequence = AsyncBufferSequence(diskIO: errorIO!.consumeDiskIO())
         return try await body(execution, writer, errorSequence)
     }
 }
@@ -376,8 +376,8 @@ public func run<Result>(
         error: try error.createPipe()
     ) { execution, inputIO, outputIO, errorIO in
         let writer = StandardInputWriter(diskIO: inputIO!)
-        let outputSequence = AsyncBufferSequence(diskIO: outputIO!.consumeDiskIO(), streamOptions: platformOptions.streamOptions)
-        let errorSequence = AsyncBufferSequence(diskIO: errorIO!.consumeDiskIO(), streamOptions: platformOptions.streamOptions)
+        let outputSequence = AsyncBufferSequence(diskIO: outputIO!.consumeDiskIO())
+        let errorSequence = AsyncBufferSequence(diskIO: errorIO!.consumeDiskIO())
         return try await body(execution, writer, outputSequence, errorSequence)
     }
 }
@@ -503,8 +503,8 @@ public func run<Result>(
         error: try error.createPipe()
     ) { execution, inputIO, outputIO, errorIO in
         let writer = StandardInputWriter(diskIO: inputIO!)
-        let outputSequence = AsyncBufferSequence(diskIO: outputIO!.consumeDiskIO(), streamOptions: configuration.platformOptions.streamOptions)
-        let errorSequence = AsyncBufferSequence(diskIO: errorIO!.consumeDiskIO(), streamOptions: configuration.platformOptions.streamOptions)
+        let outputSequence = AsyncBufferSequence(diskIO: outputIO!.consumeDiskIO())
+        let errorSequence = AsyncBufferSequence(diskIO: errorIO!.consumeDiskIO())
         return try await body(execution, writer, outputSequence, errorSequence)
     }
 }

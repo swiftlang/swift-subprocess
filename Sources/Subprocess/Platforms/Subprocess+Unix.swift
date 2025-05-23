@@ -393,7 +393,7 @@ internal typealias PlatformFileDescriptor = CInt
 internal typealias TrackedPlatformDiskIO = TrackedDispatchIO
 
 extension TrackedFileDescriptor {
-    internal consuming func createPlatformDiskIO() -> TrackedPlatformDiskIO {
+    internal consuming func createPlatformDiskIO(with streamOptions: PlatformOptions.StreamOptions) -> TrackedPlatformDiskIO {
         let dispatchIO: DispatchIO = DispatchIO(
             type: .stream,
             fileDescriptor: self.platformDescriptor(),
@@ -405,6 +405,14 @@ extension TrackedFileDescriptor {
                 }
             }
         )
+
+        if let minimumBufferSize = streamOptions.minimumBufferSize {
+            dispatchIO.setLimit(lowWater: minimumBufferSize)
+        }
+
+        if let maximumBufferSize = streamOptions.maximumBufferSize {
+            dispatchIO.setLimit(highWater: maximumBufferSize)
+        }
 
         return .init(dispatchIO, closeWhenDone: self.closeWhenDone)
     }

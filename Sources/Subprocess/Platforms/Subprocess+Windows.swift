@@ -417,7 +417,6 @@ public struct PlatformOptions: Sendable {
     /// process in case the parent task is cancelled before
     /// the child proces terminates.
     /// Always ends in forcefully terminate at the end.
-    internal var streamOptions: StreamOptions = .init()
     public var teardownSequence: [TeardownStep] = []
     /// A closure to configure platform-specific
     /// spawning constructs. This closure enables direct
@@ -440,12 +439,6 @@ public struct PlatformOptions: Sendable {
         )? = nil
 
     public init() {}
-}
-
-extension PlatformOptions {
-    internal struct StreamOptions: Sendable {
-        internal init() {}
-    }
 }
 
 extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible {
