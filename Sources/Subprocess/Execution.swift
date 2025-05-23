@@ -27,8 +27,6 @@ import Musl
 import WinSDK
 #endif
 
-internal import Dispatch
-
 /// An object that repersents a subprocess that has been
 /// executed. You can use this object to send signals to the
 /// child process as well as stream its output and error.
