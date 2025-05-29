@@ -933,6 +933,124 @@ extension SubprocessUnixTests {
         }
         #expect(result == .unhandledException(SIGKILL))
     }
+
+    @Test func testLineSequence() async throws {
+        guard #available(SubprocessSpan , *) else {
+            return
+        }
+
+        typealias TestCase = (value: String, count: Int, newLine: String)
+        enum TestCaseSize: CaseIterable {
+            case large      // (1.0 ~ 2.0) * buffer size
+            case medium     // (0.2 ~ 1.0) * buffer size
+            case small      // Less than 16 characters
+        }
+
+        let newLineCharacters: [[UInt8]] = [
+            [0x0A],             // Line feed
+            [0x0B],             // Vertical tab
+            [0x0C],             // Form feed
+            [0x0D],             // Carriage return
+            [0x0D, 0x0A],       // Carriage return + Line feed
+            [0xC2, 0x85],       // New line
+            [0xE2, 0x80, 0xA8], // Line Separator
+            [0xE2, 0x80, 0xA9]  // Paragraph separator
+        ]
+
+        // Geneate test cases
+        func generateString(size: TestCaseSize) -> [UInt8] {
+            // Basic Latin has the range U+0020 ... U+007E
+            let range: ClosedRange<UInt8> = 0x20 ... 0x7E // 0x4E ... 0x5A
+
+            let length: Int
+            switch size {
+            case .large:
+                length = Int(Double.random(in: 1.0 ..< 2.0) * Double(readBufferSize))
+            case .medium:
+                length = Int(Double.random(in: 0.2 ..< 1.0) * Double(readBufferSize))
+            case .small:
+                length = Int.random(in: 0 ..< 16)
+            }
+
+            var buffer: [UInt8] = Array(repeating: 0, count: length)
+            for index in 0 ..< length {
+                buffer[index] = UInt8.random(in: range)
+            }
+            return buffer
+        }
+
+        // Generate at least 2 long lines that is longer than buffer size
+        func generateTestCases(count: Int) -> [TestCase] {
+            var targetSizes: [TestCaseSize] = TestCaseSize.allCases.flatMap {
+                Array(repeating: $0, count: count / 3)
+            }
+            // Fill the remainder
+            let remaining = count - targetSizes.count
+            let rest = TestCaseSize.allCases.shuffled().prefix(remaining)
+            targetSizes.append(contentsOf: rest)
+            // Do a final shuffle to achiave random order
+            targetSizes.shuffle()
+            // Now generate test cases based on sizes
+            var testCases: [TestCase] = []
+            for size in targetSizes {
+                let components = generateString(size: size)
+                // Choose a random new line
+                let newLine = newLineCharacters.randomElement()!
+                let string = String(decoding: components + newLine, as: UTF8.self)
+                testCases.append((
+                    value: string,
+                    count: components.count + newLine.count,
+                    newLine: String(decoding: newLine, as: UTF8.self)
+                ))
+            }
+            return testCases
+        }
+
+        func writeTestCasesToFile(_ testCases: [TestCase], at url: URL) throws {
+            #if canImport(Darwin)
+            FileManager.default.createFile(atPath: url.path(), contents: nil, attributes: nil)
+            let fileHadle = try FileHandle(forWritingTo: url)
+            for testCase in testCases {
+                fileHadle.write(testCase.value.data(using: .utf8)!)
+            }
+            try fileHadle.close()
+            #else
+            var result = ""
+            for testCase in testCases {
+                result += testCase.value
+            }
+            try result.write(to: url, atomically: true, encoding: .utf8)
+            #endif
+        }
+
+        let testCaseCount = 60
+        let testFilePath = URL.temporaryDirectory.appending(path: "NewLines.txt")
+        if FileManager.default.fileExists(atPath: testFilePath.path()) {
+            try FileManager.default.removeItem(at: testFilePath)
+        }
+        let testCases = generateTestCases(count: testCaseCount)
+        try writeTestCasesToFile(testCases, at: testFilePath)
+
+        _ = try await Subprocess.run(
+            .path("/bin/cat"),
+            arguments: [testFilePath.path()],
+            error: .discarded
+        ) { execution, standardOutput in
+            var index = 0
+            for try await line in standardOutput.lines(encoding: UTF8.self) {
+                #expect(
+                    line == testCases[index].value,
+                    """
+                    Found mistachig line at index \(index)
+                    Expected: [\(testCases[index].value)]
+                      Actual: [\(line)]
+                    Line Ending \(Array(testCases[index].newLine.utf8))
+                    """
+                )
+                index += 1
+            }
+        }
+    }
 }
 
 // MARK: - Utils
