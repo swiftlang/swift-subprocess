@@ -9,7 +9,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl)
 @preconcurrency internal import Dispatch
+#endif
 
 #if SubprocessSpan
 @available(SubprocessSpan, *)
@@ -18,16 +20,32 @@ extension AsyncBufferSequence {
     /// A immutable collection of bytes
     public struct Buffer: Sendable {
         #if os(Windows)
-        internal var data: [UInt8]
+        internal let data: [UInt8]
 
         internal init(data: [UInt8]) {
             self.data = data
         }
-        #else
-        internal var data: DispatchData
 
-        internal init(data: DispatchData) {
+        internal static func createFrom(_ data: [UInt8]) -> [Buffer] {
+            return [.init(data: data)]
+        }
+        #else
+        // We need to keep the backingData alive while Slice is alive
+        internal let backingData: DispatchData
+        internal let data: DispatchData.Slice
+
+        internal init(data: DispatchData.Slice, backingData: DispatchData) {
             self.data = data
+            self.backingData = backingData
+        }
+
+        internal static func createFrom(_ data: DispatchData) -> [Buffer] {
+            let slices = data.slices
+            // In most (all?) cases data should only have one slice
+            if _fastPath(slices.count == 1) {
+                return [.init(data: slices[0], backingData: data)]
+            }
+            return slices.map{ .init(data: $0, backingData: data) }
         }
         #endif
     }
@@ -64,17 +82,7 @@ extension AsyncBufferSequence.Buffer {
     public func withUnsafeBytes<ResultType>(
         _ body: (UnsafeRawBufferPointer) throws -> ResultType
     ) rethrows -> ResultType {
-        #if os(Windows)
         return try self.data.withUnsafeBytes(body)
-        #else
-        // Although DispatchData was designed to be uncontiguous, in practice
-        // we found that almost all DispatchData are contiguous. Therefore
-        // we can access this body in O(1) most of the time.
-        return try self.data.withUnsafeBytes { ptr in
-            let bytes = UnsafeRawBufferPointer(start: ptr, count: self.data.count)
-            return try body(bytes)
-        }
-        #endif
     }
 
     #if SubprocessSpan
@@ -82,52 +90,12 @@ extension AsyncBufferSequence.Buffer {
     public var bytes: RawSpan {
         @lifetime(borrow self)
         borrowing get {
-            var backing: SpanBacking?
-            #if os(Windows)
-            self.data.withUnsafeBufferPointer {
-                backing = .pointer($0)
-            }
-            #else
-            self.data.enumerateBytes { buffer, byteIndex, stop in
-                if _fastPath(backing == nil) {
-                    // In practice, almost all `DispatchData` is contiguous
-                    backing = .pointer(buffer)
-                } else {
-                    // This DispatchData is not contiguous. We need to copy
-                    // the bytes out
-                    let contents = Array(buffer)
-                    switch backing! {
-                    case .pointer(let ptr):
-                        // Convert the ptr to array
-                        let existing = Array(ptr)
-                        backing = .array(existing + contents)
-                    case .array(let array):
-                        backing = .array(array + contents)
-                    }
-                }
-            }
-            #endif
-            guard let backing = backing else {
-                let empty = UnsafeRawBufferPointer(start: nil, count: 0)
-                let span = RawSpan(_unsafeBytes: empty)
-                return _overrideLifetime(of: span, to: self)
-            }
-            switch backing {
-            case .pointer(let ptr):
-                let span = RawSpan(_unsafeElements: ptr)
-                return _overrideLifetime(of: span, to: self)
-            case .array(let array):
-                let span = array.span.bytes
-                return _overrideLifetime(of: span, to: self)
-            }
+            let ptr = self.data.withUnsafeBytes { $0 }
+            let bytes = RawSpan(_unsafeBytes: ptr)
+            return _overrideLifetime(of: bytes, to: self)
         }
     }
     #endif  // SubprocessSpan
-
-    private enum SpanBacking {
-        case pointer(UnsafeBufferPointer<UInt8>)
-        case array([UInt8])
-    }
 }
 
 // MARK: - Hashable, Equatable
@@ -144,51 +112,53 @@ extension AsyncBufferSequence.Buffer: Equatable, Hashable {
 
     public func hash(into hasher: inout Hasher) {
         self.data.withUnsafeBytes { ptr in
-            let bytes = UnsafeRawBufferPointer(
-                start: ptr,
-                count: self.data.count
-            )
-            hasher.combine(bytes: bytes)
+            hasher.combine(bytes: ptr)
         }
     }
     #endif
 }
 
-// MARK: - Initializers
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
-extension String {
-    /// Create a String with the given encoding from `Buffer`.
-    /// - Parameters:
-    ///   - buffer: the buffer to copy from
-    ///   - encoding: the encoding to encode Self with
-    public init?<Encoding: _UnicodeEncoding>(buffer: AsyncBufferSequence.Buffer, as encoding: Encoding.Type) {
-#if os(Windows)
-        let source = buffer.data.map { Encoding.CodeUnit($0) }
-        self = String(decoding: source, as: encoding)
-#else
-        self = buffer.withUnsafeBytes { ptr in
-            return String(
-                decoding: ptr.bindMemory(to: Encoding.CodeUnit.self).lazy.map { $0 },
-                as: encoding
-            )
+// MARK: - DispatchData.Block
+#if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl)
+extension DispatchData {
+    /// Unfortunitely `DispatchData.Region` is not available on Linux, hence our own wrapper
+    internal struct Slice: @unchecked Sendable, RandomAccessCollection {
+        typealias Element = UInt8
+
+        internal let bytes: UnsafeBufferPointer<UInt8>
+
+        internal var startIndex: Int { self.bytes.startIndex }
+        internal var endIndex: Int { self.bytes.endIndex }
+
+        internal init(bytes: UnsafeBufferPointer<UInt8>) {
+            self.bytes = bytes
         }
-#endif
+
+        internal func withUnsafeBytes<ResultType>(_ body: (UnsafeRawBufferPointer) throws -> ResultType) rethrows -> ResultType {
+            return try body(UnsafeRawBufferPointer(self.bytes))
+        }
+
+        @discardableResult
+        internal func copyBytes<DestinationType>(
+            to ptr: UnsafeMutableBufferPointer<DestinationType>, count: Int
+        ) -> Int {
+            self.bytes.copyBytes(to: ptr, count: count)
+        }
+
+        subscript(position: Int) -> UInt8 {
+            _read {
+                yield self.bytes[position]
+            }
+        }
+    }
+
+    internal var slices: [Slice] {
+        var slices = [Slice]()
+        enumerateBytes { (bytes, index, stop) in
+            slices.append(Slice(bytes: bytes))
+        }
+        return slices
     }
 }
 
-#if SubprocessSpan
-@available(SubprocessSpan, *)
 #endif
-extension Array where Element == UInt8 {
-    /// Create an Array from `Buffer`
-    /// - Parameter buffer: the buffer to copy from
-    public init(buffer: AsyncBufferSequence.Buffer) {
-#if os(Windows)
-        self = buffer.data
-#else
-        self = Array(buffer.data)
-#endif
-    }
-}

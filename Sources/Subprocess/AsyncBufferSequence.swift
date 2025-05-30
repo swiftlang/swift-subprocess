@@ -37,22 +37,23 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
         public typealias Element = Buffer
 
         private let diskIO: DiskIO
-        private var buffer: [UInt8]
-        private var currentPosition: Int
-        private var finished: Bool
+        private var buffer: [Buffer]
 
         internal init(diskIO: DiskIO) {
             self.diskIO = diskIO
             self.buffer = []
-            self.currentPosition = 0
-            self.finished = false
         }
 
-        public func next() async throws -> Buffer? {
-            let data = try await self.diskIO.readChunk(
+        public mutating func next() async throws -> Buffer? {
+            // If we have more left in buffer, use that
+            guard self.buffer.isEmpty else {
+                return self.buffer.removeFirst()
+            }
+            // Read more data
+            let data = try await self.diskIO.read(
                 upToLength: readBufferSize
             )
-            if data == nil {
+            guard let data = data else {
                 // We finished reading. Close the file descriptor now
                 #if os(Windows)
                 try self.diskIO.close()
@@ -61,7 +62,15 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
                 #endif
                 return nil
             }
-            return data
+            let createdBuffers = Buffer.createFrom(data)
+            // Most (all?) cases there should be only one buffer
+            // because DispatchData are motsly contiguous
+            if _fastPath(createdBuffers.count == 1) {
+                // No need to push to the stack
+                return createdBuffers[0]
+            }
+            self.buffer = createdBuffers
+            return self.buffer.removeFirst()
         }
     }
 
@@ -144,7 +153,10 @@ extension AsyncBufferSequence {
                         capacity: buffer.data.count
                     )
                     defer { temporary.deallocate() }
-                    let actualBytesCopied = buffer.data.copyBytes(to: temporary)
+                    let actualBytesCopied = buffer.data.copyBytes(
+                        to: temporary,
+                        count: buffer.data.count
+                    )
 
                     // Calculate how many CodePoint elements we have
                     let elementCount = actualBytesCopied / MemoryLayout<Encoding.CodeUnit>.stride

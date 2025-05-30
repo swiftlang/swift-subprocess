@@ -605,7 +605,7 @@ extension SubprocessUnixTests {
         }
     }
 
-    @Test func testRedirectedOutputRedirectToSequence() async throws {
+    @Test func testRedirectedOutputWithUnsafeBytes() async throws {
         guard #available(SubprocessSpan , *) else {
             return
         }
@@ -622,6 +622,30 @@ extension SubprocessUnixTests {
             for try await chunk in standardOutput {
                 let currentChunk = chunk.withUnsafeBytes { Data($0) }
                 buffer += currentChunk
+            }
+            return buffer
+        }
+        #expect(catResult.terminationStatus.isSuccess)
+        #expect(catResult.value == expected)
+    }
+
+    @Test func testRedirectedOutputBytes() async throws {
+        guard #available(SubprocessSpan , *) else {
+            return
+        }
+
+        // Make ure we can read long text redirected to AsyncSequence
+        let expected: Data = try Data(
+            contentsOf: URL(filePath: theMysteriousIsland.string)
+        )
+        let catResult = try await Subprocess.run(
+            .path("/bin/cat"),
+            arguments: [theMysteriousIsland.string],
+            error: .discarded
+        ) { execution, standardOutput in
+            var buffer: Data = Data()
+            for try await chunk in standardOutput {
+                buffer += Data(bytes: chunk.bytes)
             }
             return buffer
         }
@@ -661,6 +685,15 @@ extension SubprocessUnixTests {
         )
         #expect(catResult.terminationStatus.isSuccess)
         #expect(catResult.standardError == expected)
+    }
+}
+
+extension Data {
+    init(bytes: borrowing RawSpan) {
+        let data = bytes.withUnsafeBytes {
+            return Data(bytes: $0.baseAddress!, count: $0.count)
+        }
+        self = data
     }
 }
 

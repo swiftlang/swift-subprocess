@@ -161,29 +161,17 @@ public struct BytesOutput: OutputProtocol {
     internal func captureOutput(
         from diskIO: consuming TrackedPlatformDiskIO?
     ) async throws -> [UInt8] {
-        var diskIOBox: TrackedPlatformDiskIO? = consume diskIO
-        return try await withCheckedThrowingContinuation { continuation in
-            let _diskIO = diskIOBox.take()
-            guard let _diskIO = _diskIO else {
-                // Show not happen due to type system constraints
-                fatalError("Trying to capture output without file descriptor")
-            }
-            _diskIO.readUntilEOF(upToLength: self.maxSize) { result in
-                switch result {
-                case .success(let data):
-                    // FIXME: remove workaround for
-                    // rdar://143992296
-                    // https://github.com/swiftlang/swift-subprocess/issues/3
-                    #if os(Windows)
-                    continuation.resume(returning: data)
-                    #else
-                    continuation.resume(returning: data.array())
-                    #endif
-                case .failure(let error):
-                    continuation.resume(throwing: error)
-                }
-            }
+        guard let diskIO = diskIO else {
+            // Show not happen due to type system constraints
+            fatalError("Trying to capture output without file descriptor")
         }
+        #if os(Windows)
+        let result = try await diskIO.fileDescriptor.read(upToLength: self.maxSize)
+        #else
+        let result = try await diskIO.dispatchIO.read(upToLength: self.maxSize)
+        #endif
+
+        return result?.array() ?? []
     }
 
     #if SubprocessSpan
@@ -315,34 +303,23 @@ extension OutputProtocol {
         if let bytesOutput = self as? BytesOutput {
             return try await bytesOutput.captureOutput(from: diskIO) as! Self.OutputType
         }
-        var diskIOBox: TrackedPlatformDiskIO? = consume diskIO
-        return try await withCheckedThrowingContinuation { continuation in
-            if OutputType.self == Void.self {
-                continuation.resume(returning: () as! OutputType)
-                return
-            }
-            guard let _diskIO = diskIOBox.take() else {
-                // Show not happen due to type system constraints
-                fatalError("Trying to capture output without file descriptor")
-            }
 
-            _diskIO.readUntilEOF(upToLength: self.maxSize) { result in
-                do {
-                    switch result {
-                    case .success(let data):
-                        // FIXME: remove workaround for
-                        // rdar://143992296
-                        // https://github.com/swiftlang/swift-subprocess/issues/3
-                        let output = try self.output(from: data)
-                        continuation.resume(returning: output)
-                    case .failure(let error):
-                        continuation.resume(throwing: error)
-                    }
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
+        if OutputType.self == Void.self {
+            return () as! OutputType
         }
+
+        guard let diskIO = diskIO else {
+            // Show not happen due to type system constraints
+            fatalError("Trying to capture output without file descriptor")
+        }
+
+        #if os(Windows)
+        let result = try await diskIO.fileDescriptor.read(upToLength: self.maxSize)
+        #else
+        let result = try await diskIO.dispatchIO.read(upToLength: self.maxSize)
+        #endif
+
+        return try self.output(from: result ?? .empty)
     }
 }
 
