@@ -1071,7 +1071,7 @@ extension FileDescriptor {
 }
 
 extension FileDescriptor {
-    internal func readChunk(upToLength maxLength: Int) async throws -> AsyncBufferSequence.Buffer? {
+    internal func read(upToLength maxLength: Int) async throws -> [UInt8]? {
         return try await withCheckedThrowingContinuation { continuation in
             self.readUntilEOF(
                 upToLength: maxLength
@@ -1080,7 +1080,7 @@ extension FileDescriptor {
                 case .failure(let error):
                     continuation.resume(throwing: error)
                 case .success(let bytes):
-                    continuation.resume(returning: AsyncBufferSequence.Buffer(data: bytes))
+                    continuation.resume(returning: bytes)
                 }
             }
         }
