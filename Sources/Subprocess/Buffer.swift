@@ -13,9 +13,7 @@
 @preconcurrency internal import Dispatch
 #endif
 
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
+
 extension AsyncBufferSequence {
     /// A immutable collection of bytes
     public struct Buffer: Sendable {
@@ -52,9 +50,6 @@ extension AsyncBufferSequence {
 }
 
 // MARK: - Properties
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 extension AsyncBufferSequence.Buffer {
     /// Number of bytes stored in the buffer
     public var count: Int {
@@ -68,9 +63,6 @@ extension AsyncBufferSequence.Buffer {
 }
 
 // MARK: - Accessors
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 extension AsyncBufferSequence.Buffer {
     /// Access the raw bytes stored in this buffer
     /// - Parameter body: A closure with an `UnsafeRawBufferPointer` parameter that
@@ -87,6 +79,9 @@ extension AsyncBufferSequence.Buffer {
 
     #if SubprocessSpan
     // Access the storge backing this Buffer
+    #if SubprocessSpan
+    @available(SubprocessSpan, *)
+    #endif
     public var bytes: RawSpan {
         @lifetime(borrow self)
         borrowing get {
@@ -99,9 +94,6 @@ extension AsyncBufferSequence.Buffer {
 }
 
 // MARK: - Hashable, Equatable
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 extension AsyncBufferSequence.Buffer: Equatable, Hashable {
     #if os(Windows)
     // Compiler generated conformances

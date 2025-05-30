@@ -420,9 +420,6 @@ extension SubprocessUnixTests {
     }
 
     @Test func testInputSequenceCustomExecutionBody() async throws {
-        guard #available(SubprocessSpan , *) else {
-            return
-        }
         let expected: Data = try Data(
             contentsOf: URL(filePath: theMysteriousIsland.string)
         )
@@ -443,9 +440,6 @@ extension SubprocessUnixTests {
     }
 
     @Test func testInputAsyncSequenceCustomExecutionBody() async throws {
-        guard #available(SubprocessSpan , *) else {
-            return
-        }
         // Maeks ure we can read long text as AsyncSequence
         let fd: FileDescriptor = try .open(theMysteriousIsland, .readOnly)
         let expected: Data = try Data(
@@ -606,9 +600,6 @@ extension SubprocessUnixTests {
     }
 
     @Test func testRedirectedOutputWithUnsafeBytes() async throws {
-        guard #available(SubprocessSpan , *) else {
-            return
-        }
         // Make ure we can read long text redirected to AsyncSequence
         let expected: Data = try Data(
             contentsOf: URL(filePath: theMysteriousIsland.string)
@@ -629,20 +620,16 @@ extension SubprocessUnixTests {
         #expect(catResult.value == expected)
     }
 
+    #if SubprocessSpan
     @Test func testRedirectedOutputBytes() async throws {
-        guard #available(SubprocessSpan , *) else {
-            return
-        }
-
         // Make ure we can read long text redirected to AsyncSequence
         let expected: Data = try Data(
             contentsOf: URL(filePath: theMysteriousIsland.string)
         )
         let catResult = try await Subprocess.run(
             .path("/bin/cat"),
-            arguments: [theMysteriousIsland.string],
-            error: .discarded
-        ) { execution, standardOutput in
+            arguments: [theMysteriousIsland.string]
+        ) { (execution: Execution, standardOutput: AsyncBufferSequence) -> Data in
             var buffer: Data = Data()
             for try await chunk in standardOutput {
                 buffer += Data(bytes: chunk.bytes)
@@ -652,6 +639,7 @@ extension SubprocessUnixTests {
         #expect(catResult.terminationStatus.isSuccess)
         #expect(catResult.value == expected)
     }
+    #endif
 
     @Test func testBufferOutput() async throws {
         guard #available(SubprocessSpan , *) else {
@@ -688,6 +676,8 @@ extension SubprocessUnixTests {
     }
 }
 
+#if SubprocessSpan
+@available(SubprocessSpan, *)
 extension Data {
     init(bytes: borrowing RawSpan) {
         let data = bytes.withUnsafeBytes {
@@ -696,6 +686,7 @@ extension Data {
         self = data
     }
 }
+#endif
 
 // MARK: - PlatformOption Tests
 extension SubprocessUnixTests {
@@ -968,10 +959,6 @@ extension SubprocessUnixTests {
     }
 
     @Test func testLineSequence() async throws {
-        guard #available(SubprocessSpan , *) else {
-            return
-        }
-
         typealias TestCase = (value: String, count: Int, newLine: String)
         enum TestCaseSize: CaseIterable {
             case large      // (1.0 ~ 2.0) * buffer size

@@ -19,9 +19,6 @@
 internal import Dispatch
 #endif
 
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 public struct AsyncBufferSequence: AsyncSequence, Sendable {
     public typealias Failure = any Swift.Error
     public typealias Element = Buffer
@@ -93,9 +90,6 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
 }
 
 // MARK: - LineSequence
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 extension AsyncBufferSequence {
     public struct LineSequence<Encoding: _UnicodeEncoding>: AsyncSequence, Sendable {
         public typealias Element = String
@@ -308,9 +302,6 @@ extension AsyncBufferSequence {
     }
 }
 
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 extension AsyncBufferSequence.LineSequence {
     public enum BufferingPolicy: Sendable {
         /// Continue to add to the buffer, without imposing a limit

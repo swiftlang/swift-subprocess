@@ -166,12 +166,11 @@ public struct BytesOutput: OutputProtocol {
             fatalError("Trying to capture output without file descriptor")
         }
         #if os(Windows)
-        let result = try await diskIO.fileDescriptor.read(upToLength: self.maxSize)
+        return try await diskIO.fileDescriptor.read(upToLength: self.maxSize) ?? []
         #else
         let result = try await diskIO.dispatchIO.read(upToLength: self.maxSize)
-        #endif
-
         return result?.array() ?? []
+        #endif
     }
 
     #if SubprocessSpan
@@ -315,11 +314,11 @@ extension OutputProtocol {
 
         #if os(Windows)
         let result = try await diskIO.fileDescriptor.read(upToLength: self.maxSize)
+        return try self.output(from: result ?? [])
         #else
         let result = try await diskIO.dispatchIO.read(upToLength: self.maxSize)
-        #endif
-
         return try self.output(from: result ?? .empty)
+        #endif
     }
 }
 
