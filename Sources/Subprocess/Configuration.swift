@@ -204,7 +204,7 @@ public struct Executable: Sendable, Hashable {
         return .init(_config: .executable(executableName))
     }
     /// Locate the executable by its full path.
-    /// `Subprocess` will use this  path directly.
+    /// `Subprocess` will use this path directly.
     public static func path(_ filePath: FilePath) -> Self {
         return .init(_config: .path(filePath))
     }
