@@ -27,7 +27,7 @@ import Testing
 // MARK: PlatformOption Tests
 @Suite(.serialized)
 struct SubprocessLinuxTests {
-    @Test func testSubprocessPlatfomOptionsPreSpawnProcessConfigurator() async throws {
+    @Test func testSubprocessPlatformOptionsPreSpawnProcessConfigurator() async throws {
         var platformOptions = PlatformOptions()
         platformOptions.preSpawnProcessConfigurator = {
             setgid(4321)
@@ -77,7 +77,7 @@ struct SubprocessLinuxTests {
             arguments: ["infinity"],
             error: .discarded
         ) { subprocess, standardOutput in
-            // First suspend the procss
+            // First suspend the process
             try subprocess.send(signal: .suspend)
             #expect(
                 try isProcessSuspended(subprocess.processIdentifier.value)

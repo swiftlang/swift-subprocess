@@ -108,9 +108,6 @@ extension ProcessIdentifier: CustomStringConvertible, CustomDebugStringConvertib
     public var debugDescription: String { "\(self.value)" }
 }
 
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 extension Execution {
     /// Send the given signal to the child process.
     /// - Parameters:
@@ -378,7 +375,7 @@ extension FileDescriptor {
     }
 
     internal static func openDevNull(
-        withAcessMode mode: FileDescriptor.AccessMode
+        withAccessMode mode: FileDescriptor.AccessMode
     ) throws -> FileDescriptor {
         let devnull: FileDescriptor = try .open("/dev/null", mode)
         return devnull
@@ -411,9 +408,6 @@ extension TrackedFileDescriptor {
 
 // MARK: - TrackedDispatchIO extensions
 extension DispatchIO {
-    #if SubprocessSpan
-    @available(SubprocessSpan, *)
-    #endif
     internal func read(upToLength maxLength: Int) async throws -> DispatchData? {
         return try await withCheckedThrowingContinuation { continuation in
             var buffer: DispatchData = .empty
@@ -451,7 +445,7 @@ extension DispatchIO {
 }
 
 extension TrackedDispatchIO {
-#if SubprocessSpan
+    #if SubprocessSpan
     @available(SubprocessSpan, *)
     internal func write(
         _ span: borrowing RawSpan
@@ -477,7 +471,7 @@ extension TrackedDispatchIO {
             }
         }
     }
-#endif  // SubprocessSpan
+    #endif  // SubprocessSpan
 
     internal func write(
         _ array: [UInt8]

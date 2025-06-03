@@ -143,7 +143,7 @@ public func run<
 // MARK: - Custom Execution Body
 
 /// Run an executable with given parameters and a custom closure
-/// to manage the running subprocess' lifetime and its IOs.
+/// to manage the running subprocess' lifetime and stream its standard output.
 /// - Parameters:
 ///   - executable: The executable to run.
 ///   - arguments: The arguments to pass to the executable.
@@ -155,7 +155,7 @@ public func run<
 ///   - error: How to manager executable standard error.
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom execution body to manually control the running process
-/// - Returns a ExecutableResult type containing the return value
+/// - Returns an executableResult type containing the return value
 ///     of the closure.
 public func run<Result, Input: InputProtocol, Error: OutputProtocol>(
     _ executable: Executable,
@@ -204,7 +204,7 @@ public func run<Result, Input: InputProtocol, Error: OutputProtocol>(
     }
 }
 
-/// Run a executable with given parameters and a custom closure
+/// Run an executable with given parameters and a custom closure
 /// to manage the running subprocess' lifetime and stream its standard error.
 /// - Parameters:
 ///   - executable: The executable to run.
@@ -217,7 +217,7 @@ public func run<Result, Input: InputProtocol, Error: OutputProtocol>(
 ///   - output: How to manager executable standard output.
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom execution body to manually control the running process
-/// - Returns a ExecutableResult type containing the return value
+/// - Returns an executableResult type containing the return value
 ///     of the closure.
 public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
     _ executable: Executable,
@@ -266,7 +266,7 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
     }
 }
 
-/// Run a executable with given parameters and a custom closure
+/// Run an executable with given parameters and a custom closure
 /// to manage the running subprocess' lifetime, write to its
 /// standard input, and stream its standard output.
 /// - Parameters:
@@ -279,7 +279,7 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
 ///   - error: How to manager executable standard error.
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom execution body to manually control the running process
-/// - Returns a ExecutableResult type containing the return value
+/// - Returns an executableResult type containing the return value
 ///     of the closure.
 public func run<Result, Error: OutputProtocol>(
     _ executable: Executable,
@@ -311,7 +311,7 @@ public func run<Result, Error: OutputProtocol>(
     }
 }
 
-/// Run a executable with given parameters and a custom closure
+/// Run an executable with given parameters and a custom closure
 /// to manage the running subprocess' lifetime, write to its
 /// standard input, and stream its standard error.
 /// - Parameters:
@@ -324,7 +324,7 @@ public func run<Result, Error: OutputProtocol>(
 ///   - output: How to manager executable standard output.
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom execution body to manually control the running process
-/// - Returns a ExecutableResult type containing the return value
+/// - Returns an executableResult type containing the return value
 ///     of the closure.
 public func run<Result, Output: OutputProtocol>(
     _ executable: Executable,
@@ -356,7 +356,7 @@ public func run<Result, Output: OutputProtocol>(
     }
 }
 
-/// Run a executable with given parameters and a custom closure
+/// Run an executable with given parameters and a custom closure
 /// to manage the running subprocess' lifetime, write to its
 /// standard input, and stream its standard output and standard error.
 /// - Parameters:
@@ -368,7 +368,7 @@ public func run<Result, Output: OutputProtocol>(
 ///     when running the executable.
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom execution body to manually control the running process
-/// - Returns a ExecutableResult type containing the return value
+/// - Returns an executableResult type containing the return value
 ///     of the closure.
 public func run<Result>(
     _ executable: Executable,
@@ -411,7 +411,7 @@ public func run<Result>(
 
 // MARK: - Configuration Based
 
-/// Run a `Configuration` asynchrously and returns
+/// Run a `Configuration` asynchronously and returns
 /// a `CollectedResult` containing the output of the child process.
 /// - Parameters:
 ///   - configuration: The `Subprocess` configuration to run.
@@ -503,14 +503,14 @@ public func run<
     )
 }
 
-/// Run a executable with given parameters specified by a `Configuration`
+/// Run an executable with given parameters specified by a `Configuration`
 /// - Parameters:
 ///   - configuration: The `Subprocess` configuration to run.
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom configuration body to manually control
 ///       the running process, write to its standard input, stream
 ///       its standard output and standard error.
-/// - Returns a ExecutableResult type containing the return value
+/// - Returns an executableResult type containing the return value
 ///     of the closure.
 public func run<Result>(
     _ configuration: Configuration,
@@ -534,7 +534,7 @@ public func run<Result>(
 
 // MARK: - Detached
 
-/// Run a executable with given parameters and return its process
+/// Run an executable with given parameters and return its process
 /// identifier immediately without monitoring the state of the
 /// subprocess nor waiting until it exits.
 ///
@@ -571,7 +571,7 @@ public func runDetached(
     return try runDetached(config, input: input, output: output, error: error)
 }
 
-/// Run a executable with given configuration and return its process
+/// Run an executable with given configuration and return its process
 /// identifier immediately without monitoring the state of the
 /// subprocess nor waiting until it exits.
 ///

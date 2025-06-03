@@ -94,7 +94,7 @@ extension SubprocessWindowsTests {
         do {
             // Since we are using the path directly,
             // we expect the error to be thrown by the underlying
-            // CreateProcssW
+            // CreateProcessW
             _ = try await Subprocess.run(.path("X:\\do-not-exist"))
             Issue.record("Expected to throw POSIXError")
         } catch {
@@ -322,7 +322,7 @@ extension SubprocessWindowsTests {
     #endif
     @Test func testInputAsyncSequence() async throws {
         let chunkSize = 4096
-        // Maeks ure we can read long text as AsyncSequence
+        // Make sure we can read long text as AsyncSequence
         let fd: FileDescriptor = try .open(theMysteriousIsland, .readOnly)
         let expected: Data = try Data(
             contentsOf: URL(filePath: theMysteriousIsland.string)
@@ -380,7 +380,7 @@ extension SubprocessWindowsTests {
     @available(SubprocessSpan, *)
     #endif
     @Test func testInputAsyncSequenceCustomExecutionBody() async throws {
-        // Maeks ure we can read long text as AsyncSequence
+        // Make sure we can read long text as AsyncSequence
         let chunkSize = 4096
         let fd: FileDescriptor = try .open(theMysteriousIsland, .readOnly)
         let expected: Data = try Data(
@@ -458,7 +458,7 @@ extension SubprocessWindowsTests {
     #if SubprocessSpan
     @available(SubprocessSpan, *)
     #endif
-    @Test func testCollectedOutputFileDesriptor() async throws {
+    @Test func testCollectedOutputFileDescriptor() async throws {
         let outputFilePath = FilePath(
             FileManager.default.temporaryDirectory._fileSystemPath
         ).appending("Test.out")
@@ -493,7 +493,7 @@ extension SubprocessWindowsTests {
     @available(SubprocessSpan, *)
     #endif
     @Test func testRedirectedOutputRedirectToSequence() async throws {
-        // Maeks ure we can read long text redirected to AsyncSequence
+        // Make sure we can read long text redirected to AsyncSequence
         let expected: Data = try Data(
             contentsOf: URL(filePath: theMysteriousIsland.string)
         )
@@ -546,7 +546,7 @@ extension SubprocessWindowsTests {
             // whoami returns `computerName\userName`.
             let userInfo = result.split(separator: "\\")
             guard userInfo.count == 2 else {
-                Issue.record("Fail to parse the restult for whoami: \(result)")
+                Issue.record("Fail to parse the result for whoami: \(result)")
                 return
             }
             #expect(
@@ -576,7 +576,7 @@ extension SubprocessWindowsTests {
         #expect(
             "\(intptr_t(bitPattern: parentConsole))" == sameConsoleValue
         )
-        // Now launch a procss with new console
+        // Now launch a process with new console
         var platformOptions: Subprocess.PlatformOptions = .init()
         platformOptions.consoleBehavior = .createNew
         let differentConsoleResult = try await Subprocess.run(
@@ -603,7 +603,7 @@ extension SubprocessWindowsTests {
     #endif
     @Test func testPlatformOptionsDetachedProcess() async throws {
         var platformOptions: Subprocess.PlatformOptions = .init()
-        platformOptions.consoleBehavior = .detatch
+        platformOptions.consoleBehavior = .detach
         let detachConsoleResult = try await Subprocess.run(
             .path("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
             arguments: [
@@ -617,7 +617,7 @@ extension SubprocessWindowsTests {
         let detachConsoleValue = try #require(
             detachConsoleResult.standardOutput
         ).trimmingCharacters(in: .whitespacesAndNewlines)
-        // Detached process shoud NOT have a console
+        // Detached process should NOT have a console
         #expect(detachConsoleValue.isEmpty)
     }
 
@@ -714,8 +714,8 @@ extension SubprocessWindowsTests {
             error: .discarded
         ) { subprocess, standardOutput in
             try subprocess.suspend()
-            // Now check the to make sure the procss is actually suspended
-            // Why not spawn a nother process to do that?
+            // Now check the to make sure the process is actually suspended
+            // Why not spawn another process to do that?
             var checkResult = try await Subprocess.run(
                 .path("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
                 arguments: [
@@ -772,7 +772,7 @@ extension SubprocessWindowsTests {
             ],
             output: writeFd
         )
-        // Wait for procss to finish
+        // Wait for process to finish
         guard
             let processHandle = OpenProcess(
                 DWORD(PROCESS_QUERY_INFORMATION | SYNCHRONIZE),
@@ -898,7 +898,7 @@ extension SubprocessWindowsTests {
 
 extension FileDescriptor {
     internal func readUntilEOF(upToLength maxLength: Int) async throws -> Data {
-        // TODO: Figure out a better way to asynchornously read
+        // TODO: Figure out a better way to asynchronously read
         return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 var totalBytesRead: Int = 0
@@ -933,7 +933,7 @@ extension FileDescriptor {
                             }
                             break
                         } else {
-                            // We succesfully read the current round
+                            // We successfully read the current round
                             totalBytesRead += Int(bytesRead)
                         }
 

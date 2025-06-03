@@ -50,7 +50,7 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
             let data = try await self.diskIO.read(
                 upToLength: readBufferSize
             )
-            guard let data = data else {
+            guard let data else {
                 // We finished reading. Close the file descriptor now
                 #if os(Windows)
                 try self.diskIO.close()
@@ -61,7 +61,7 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
             }
             let createdBuffers = Buffer.createFrom(data)
             // Most (all?) cases there should be only one buffer
-            // because DispatchData are motsly contiguous
+            // because DispatchData are mostly contiguous
             if _fastPath(createdBuffers.count == 1) {
                 // No need to push to the stack
                 return createdBuffers[0]
@@ -139,7 +139,7 @@ extension AsyncBufferSequence {
                         )
                     }
                     #else
-                    // Unfortunitely here we _have to_ copy the bytes out because
+                    // Unfortunately here we _have to_ copy the bytes out because
                     // DisptachIO (rightfully) reuses buffer, which means `buffer.data`
                     // has the same address on all iterations, therefore we can't directly
                     // create the result array from buffer.data
@@ -238,7 +238,7 @@ extension AsyncBufferSequence {
                                 // For UTF8, look for the next 0x85 byte
                                 guard (targetIndex + 1) < self.buffer.count,
                                       self.buffer[targetIndex + 1] == Encoding.CodeUnit(0x85) else {
-                                    // Not a valid new ine. Keep looking
+                                    // Not a valid new line. Keep looking
                                     continue
                                 }
                                 // Swallow 0x85 byte
@@ -254,7 +254,7 @@ extension AsyncBufferSequence {
                                 // For UTF8, look for the next 0x80 byte
                                 guard (targetIndex + 1) < self.buffer.count,
                                       self.buffer[targetIndex + 1] == Encoding.CodeUnit(0x80) else {
-                                    // Not a valid new ine. Keep looking
+                                    // Not a valid new line. Keep looking
                                     continue
                                 }
                                 // Swallow 0x80 byte
@@ -263,7 +263,7 @@ extension AsyncBufferSequence {
                                 guard (targetIndex + 1) < self.buffer.count,
                                       (self.buffer[targetIndex + 1] == Encoding.CodeUnit(0xA8) ||
                                        self.buffer[targetIndex + 1] == Encoding.CodeUnit(0xA9)) else {
-                                    // Not a valid new ine. Keep looking
+                                    // Not a valid new line. Keep looking
                                     continue
                                 }
                                 // Swallow 0xA8 (or 0xA9) byte

@@ -73,9 +73,6 @@ public struct TeardownStep: Sendable, Hashable {
     }
 }
 
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 extension Execution {
     /// Performs a sequence of teardown steps on the Subprocess.
     /// Teardown sequence always ends with a `.kill` signal
@@ -88,7 +85,7 @@ extension Execution {
         using sequence: some Sequence<TeardownStep> & Sendable,
         on processIdentifier: ProcessIdentifier
     ) async {
-        await withUncancelledTask {
+        await withUncanceledTask {
             await Self.runTeardownSequence(sequence, on: processIdentifier)
         }
     }
@@ -100,9 +97,6 @@ internal enum TeardownStepCompletion {
     case killedTheProcess
 }
 
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 extension Execution {
     internal static func gracefulShutDown(
         _ processIdentifier: ProcessIdentifier,
@@ -177,7 +171,7 @@ extension Execution {
                             try await Task.sleep(for: allowedDuration)
                             return .processStillAlive
                         } catch {
-                            // teardown(using:) cancells this task
+                            // teardown(using:) cancels this task
                             // when process has exited
                             return .processHasExited
                         }
@@ -196,7 +190,7 @@ extension Execution {
                             try await Task.sleep(for: allowedDuration)
                             return .processStillAlive
                         } catch {
-                            // teardown(using:) cancells this task
+                            // teardown(using:) cancels this task
                             // when process has exited
                             return .processHasExited
                         }
@@ -228,14 +222,14 @@ extension Execution {
     }
 }
 
-func withUncancelledTask<Result: Sendable>(
+func withUncanceledTask<Result: Sendable>(
     returning: Result.Type = Result.self,
     _ body: @Sendable @escaping () async -> Result
 ) async -> Result {
     // This looks unstructured but it isn't, please note that we `await` `.value` of this task.
     // The reason we need this separate `Task` is that in general, we cannot assume that code performs to our
     // expectations if the task we run it on is already cancelled. However, in some cases we need the code to
-    // run regardless -- even if our task is already cancelled. Therefore, we create a new, uncancelled task here.
+    // run regardless -- even if our task is already cancelled. Therefore, we create a new, uncanceled task here.
     await Task {
         await body()
     }.value

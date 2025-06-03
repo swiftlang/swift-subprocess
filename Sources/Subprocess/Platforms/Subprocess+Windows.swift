@@ -102,7 +102,7 @@ extension Configuration {
                         )
                         guard created else {
                             let windowsError = GetLastError()
-                            try self.safelyCloseMultuple(
+                            try self.safelyCloseMultiple(
                                 inputRead: inputReadFileDescriptor.take(),
                                 inputWrite: inputWriteFileDescriptor.take(),
                                 outputRead: outputReadFileDescriptor.take(),
@@ -122,7 +122,7 @@ extension Configuration {
         // We don't need the handle objects, so close it right away
         guard CloseHandle(processInfo.hThread) else {
             let windowsError = GetLastError()
-            try self.safelyCloseMultuple(
+            try self.safelyCloseMultiple(
                 inputRead: inputReadFileDescriptor,
                 inputWrite: inputWriteFileDescriptor,
                 outputRead: outputReadFileDescriptor,
@@ -137,7 +137,7 @@ extension Configuration {
         }
         guard CloseHandle(processInfo.hProcess) else {
             let windowsError = GetLastError()
-            try self.safelyCloseMultuple(
+            try self.safelyCloseMultiple(
                 inputRead: inputReadFileDescriptor,
                 inputWrite: inputWriteFileDescriptor,
                 outputRead: outputReadFileDescriptor,
@@ -151,7 +151,7 @@ extension Configuration {
             )
         }
 
-        try self.safelyCloseMultuple(
+        try self.safelyCloseMultiple(
             inputRead: inputReadFileDescriptor,
             inputWrite: nil,
             outputRead: nil,
@@ -209,7 +209,7 @@ extension Configuration {
         if let configurator = self.platformOptions.preSpawnProcessConfigurator {
             try configurator(&createProcessFlags, &startupInfo)
         }
-        // Spawn (featuring pyamid!)
+        // Spawn (featuring pyramid!)
         try userCredentials.username.withCString(
             encodedAs: UTF16.self
         ) { usernameW in
@@ -242,7 +242,7 @@ extension Configuration {
                                     )
                                     guard created else {
                                         let windowsError = GetLastError()
-                                        try self.safelyCloseMultuple(
+                                        try self.safelyCloseMultiple(
                                             inputRead: inputReadFileDescriptor.take(),
                                             inputWrite: inputWriteFileDescriptor.take(),
                                             outputRead: outputReadFileDescriptor.take(),
@@ -265,7 +265,7 @@ extension Configuration {
         // We don't need the handle objects, so close it right away
         guard CloseHandle(processInfo.hThread) else {
             let windowsError = GetLastError()
-            try self.safelyCloseMultuple(
+            try self.safelyCloseMultiple(
                 inputRead: inputReadFileDescriptor,
                 inputWrite: inputWriteFileDescriptor,
                 outputRead: outputReadFileDescriptor,
@@ -280,7 +280,7 @@ extension Configuration {
         }
         guard CloseHandle(processInfo.hProcess) else {
             let windowsError = GetLastError()
-            try self.safelyCloseMultuple(
+            try self.safelyCloseMultiple(
                 inputRead: inputReadFileDescriptor,
                 inputWrite: inputWriteFileDescriptor,
                 outputRead: outputReadFileDescriptor,
@@ -295,7 +295,7 @@ extension Configuration {
         }
 
         // After spawn finishes, close all child side fds
-        try self.safelyCloseMultuple(
+        try self.safelyCloseMultiple(
             inputRead: inputReadFileDescriptor,
             inputWrite: nil,
             outputRead: nil,
@@ -343,7 +343,7 @@ public struct PlatformOptions: Sendable {
     public struct ConsoleBehavior: Sendable, Hashable {
         internal enum Storage: Sendable, Hashable {
             case createNew
-            case detatch
+            case detach
             case inherit
         }
 
@@ -360,7 +360,7 @@ public struct PlatformOptions: Sendable {
         /// inherit its parent's console (the default).
         /// The new process can call the `AllocConsole`
         /// function at a later time to create a console.
-        public static let detatch: Self = .init(.detatch)
+        public static let detach: Self = .init(.detach)
         /// The subprocess inherits its parent's console.
         public static let inherit: Self = .init(.inherit)
     }
@@ -415,7 +415,7 @@ public struct PlatformOptions: Sendable {
     public var createProcessGroup: Bool = false
     /// An ordered list of steps in order to tear down the child
     /// process in case the parent task is cancelled before
-    /// the child proces terminates.
+    /// the child process terminates.
     /// Always ends in forcefully terminate at the end.
     public var teardownSequence: [TeardownStep] = []
     /// A closure to configure platform-specific
@@ -669,7 +669,7 @@ extension Executable {
                 return try pathValue.withOptionalCString(
                     encodedAs: UTF16.self
                 ) { path -> String in
-                    let pathLenth = SearchPathW(
+                    let pathLength = SearchPathW(
                         path,
                         exeName,
                         nil,
@@ -677,7 +677,7 @@ extension Executable {
                         nil,
                         nil
                     )
-                    guard pathLenth > 0 else {
+                    guard pathLength > 0 else {
                         throw SubprocessError(
                             code: .init(.executableNotFound(executableName)),
                             underlyingError: .init(rawValue: GetLastError())
@@ -685,13 +685,13 @@ extension Executable {
                     }
                     return withUnsafeTemporaryAllocation(
                         of: WCHAR.self,
-                        capacity: Int(pathLenth) + 1
+                        capacity: Int(pathLength) + 1
                     ) {
                         _ = SearchPathW(
                             path,
                             exeName,
                             nil,
-                            pathLenth + 1,
+                            pathLength + 1,
                             $0.baseAddress,
                             nil
                         )
@@ -750,7 +750,7 @@ extension Environment {
 
 /// A platform independent identifier for a subprocess.
 public struct ProcessIdentifier: Sendable, Hashable, Codable {
-    /// Windows specifc process identifier value
+    /// Windows specific process identifier value
     public let value: DWORD
 
     internal init(value: DWORD) {
@@ -832,7 +832,7 @@ extension Configuration {
         switch self.platformOptions.consoleBehavior.storage {
         case .createNew:
             flags |= CREATE_NEW_CONSOLE
-        case .detatch:
+        case .detach:
             flags |= DETACHED_PROCESS
         case .inherit:
             break
@@ -865,7 +865,7 @@ extension Configuration {
             info.hStdInput = inputReadFileDescriptor!.platformDescriptor()
         }
         if inputWriteFileDescriptor != nil {
-            // Set parent side to be uninhertable
+            // Set parent side to be uninheritable
             SetHandleInformation(
                 inputWriteFileDescriptor!.platformDescriptor(),
                 DWORD(HANDLE_FLAG_INHERIT),
@@ -877,7 +877,7 @@ extension Configuration {
             info.hStdOutput = outputWriteFileDescriptor!.platformDescriptor()
         }
         if outputReadFileDescriptor != nil {
-            // Set parent side to be uninhertable
+            // Set parent side to be uninheritable
             SetHandleInformation(
                 outputReadFileDescriptor!.platformDescriptor(),
                 DWORD(HANDLE_FLAG_INHERIT),
@@ -889,7 +889,7 @@ extension Configuration {
             info.hStdError = errorWriteFileDescriptor!.platformDescriptor()
         }
         if errorReadFileDescriptor != nil {
-            // Set parent side to be uninhertable
+            // Set parent side to be uninheritable
             SetHandleInformation(
                 errorReadFileDescriptor!.platformDescriptor(),
                 DWORD(HANDLE_FLAG_INHERIT),
@@ -1123,7 +1123,7 @@ extension FileDescriptor {
                         }
                         break
                     } else {
-                        // We succesfully read the current round
+                        // We successfully read the current round
                         totalBytesRead += Int(bytesRead)
                     }
 
@@ -1192,7 +1192,7 @@ extension TrackedFileDescriptor {
         _ array: [UInt8]
     ) async throws -> Int {
         try await withCheckedThrowingContinuation { continuation in
-            // TODO: Figure out a better way to asynchornously write
+            // TODO: Figure out a better way to asynchronously write
             let fd = self.fileDescriptor
             DispatchQueue.global(qos: .userInitiated).async {
                 array.withUnsafeBytes {

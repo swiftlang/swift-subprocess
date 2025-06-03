@@ -53,7 +53,7 @@ public struct NoInput: InputProtocol {
             writeFileDescriptor: nil
         )
         #else
-        let devnull: FileDescriptor = try .openDevNull(withAcessMode: .readOnly)
+        let devnull: FileDescriptor = try .openDevNull(withAccessMode: .readOnly)
         return CreatedPipe(
             readFileDescriptor: .init(devnull, closeWhenDone: true),
             writeFileDescriptor: nil
@@ -147,7 +147,7 @@ internal struct CustomWriteInput: InputProtocol {
 }
 
 extension InputProtocol where Self == NoInput {
-    /// Create a Subprocess input that specfies there is no input
+    /// Create a Subprocess input that specifies there is no input
     public static var none: Self { .init() }
 }
 

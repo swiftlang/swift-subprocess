@@ -78,7 +78,7 @@ extension AsyncBufferSequence.Buffer {
     }
 
     #if SubprocessSpan
-    // Access the storge backing this Buffer
+    // Access the storage backing this Buffer
     #if SubprocessSpan
     @available(SubprocessSpan, *)
     #endif
@@ -113,7 +113,7 @@ extension AsyncBufferSequence.Buffer: Equatable, Hashable {
 // MARK: - DispatchData.Block
 #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl)
 extension DispatchData {
-    /// Unfortunitely `DispatchData.Region` is not available on Linux, hence our own wrapper
+    /// Unfortunately `DispatchData.Region` is not available on Linux, hence our own wrapper
     internal struct Slice: @unchecked Sendable, RandomAccessCollection {
         typealias Element = UInt8
 
