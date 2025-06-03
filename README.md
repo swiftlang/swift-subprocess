@@ -67,9 +67,9 @@ import Subprocess
 let result = try await run(
     .path("/bin/dd"),
     arguments: ["if=/path/to/document"]
-) { execution in
+) { execution, _, standardOutput, _ in
     var contents = ""
-    for try await chunk in execution.standardOutput {
+    for try await chunk in standardOutput {
         let string = chunk.withUnsafeBytes { String(decoding: $0, as: UTF8.self) }
         contents += string
         if string == "Done" {
