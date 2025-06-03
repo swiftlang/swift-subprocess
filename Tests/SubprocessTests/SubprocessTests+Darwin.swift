@@ -87,7 +87,7 @@ struct SubprocessDarwinTests {
             .path("/bin/cat"),
             error: .discarded
         ) { subprocess, standardOutput in
-            // First suspend the procss
+            // First suspend the process
             try subprocess.send(signal: .suspend)
             var suspendedStatus: Int32 = 0
             waitpid(subprocess.processIdentifier.value, &suspendedStatus, WNOHANG | WUNTRACED)
