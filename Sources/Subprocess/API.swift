@@ -17,7 +17,7 @@
 
 // MARK: - Collected Result
 
-/// Run a executable with given parameters asynchrously and returns
+/// Run an executable with given parameters asynchronously and returns
 /// a `CollectedResult` containing the output of the child process.
 /// - Parameters:
 ///   - executable: The executable to run.
@@ -62,7 +62,7 @@ public func run<
     )
 }
 
-/// Run a executable with given parameters asynchrously and returns
+/// Run an executable with given parameters asynchronously and returns
 /// a `CollectedResult` containing the output of the child process.
 /// - Parameters:
 ///   - executable: The executable to run.
@@ -142,7 +142,7 @@ public func run<
 
 // MARK: - Custom Execution Body
 
-/// Run a executable with given parameters and a custom closure
+/// Run an executable with given parameters and a custom closure
 /// to manage the running subprocess' lifetime and its IOs.
 /// - Parameters:
 ///   - executable: The executable to run.
