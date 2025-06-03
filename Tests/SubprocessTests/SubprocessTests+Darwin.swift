@@ -38,8 +38,8 @@ struct SubprocessDarwinTests {
             posix_spawnattr_getflags(&spawnAttr, &flags)
             posix_spawnattr_setflags(&spawnAttr, flags | Int16(POSIX_SPAWN_SETSID))
         }
-        // Check the proces ID (pid), pross group ID (pgid), and
-        // controling terminal's process group ID (tpgid)
+        // Check the process ID (pid), process group ID (pgid), and
+        // controlling terminal's process group ID (tpgid)
         let psResult = try await Subprocess.run(
             .path("/bin/bash"),
             arguments: ["-c", "ps -o pid,pgid,tpgid -p $$"],
