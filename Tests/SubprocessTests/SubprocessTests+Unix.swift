@@ -112,7 +112,7 @@ extension SubprocessUnixTests {
 
 // MARK: - Arguments Tests
 extension SubprocessUnixTests {
-    @Test func testArgunementsArrayLitereal() async throws {
+    @Test func testArgumentsArrayLiteral() async throws {
         guard #available(SubprocessSpan , *) else {
             return
         }
@@ -151,7 +151,7 @@ extension SubprocessUnixTests {
         )
     }
 
-    @Test func testArgumemtsFromArray() async throws {
+    @Test func testArgumentsFromArray() async throws {
         guard #available(SubprocessSpan , *) else {
             return
         }
