@@ -980,7 +980,7 @@ extension SubprocessUnixTests {
         // Generate test cases
         func generateString(size: TestCaseSize) -> [UInt8] {
             // Basic Latin has the range U+0020 ... U+007E
-            let range: ClosedRange<UInt8> = 0x20 ... 0x7E // 0x4E ... 0x5A
+            let range: ClosedRange<UInt8> = 0x20 ... 0x7E
 
             let length: Int
             switch size {
@@ -1044,7 +1044,7 @@ extension SubprocessUnixTests {
         }
 
         let testCaseCount = 60
-        let testFilePath = URL.temporaryDirectory.appending(path: "NewLines.txt")
+        let testFilePath = URL.temporaryDirectory.appending(path: "NewLines-\(UUID().uuidString).txt")
         if FileManager.default.fileExists(atPath: testFilePath.path()) {
             try FileManager.default.removeItem(at: testFilePath)
         }
@@ -1070,6 +1070,7 @@ extension SubprocessUnixTests {
                 index += 1
             }
         }
+        try FileManager.default.removeItem(at: testFilePath)
     }
 }
 

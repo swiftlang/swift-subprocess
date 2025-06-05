@@ -81,9 +81,10 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
         return Iterator(diskIO: self.diskIO)
     }
 
+    // [New API: 0.0.1]
     public func lines<Encoding: _UnicodeEncoding>(
         encoding: Encoding.Type = UTF8.self,
-        bufferingPolicy: LineSequence<Encoding>.BufferingPolicy = .unbounded
+        bufferingPolicy: LineSequence<Encoding>.BufferingPolicy = .maxLineLength(128 * 1024)
     ) -> LineSequence<Encoding> {
         return LineSequence(underlying: self, encoding: encoding, bufferingPolicy: bufferingPolicy)
     }
@@ -91,6 +92,7 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
 
 // MARK: - LineSequence
 extension AsyncBufferSequence {
+    // [New API: 0.0.1]
     public struct LineSequence<Encoding: _UnicodeEncoding>: AsyncSequence, Sendable {
         public typealias Element = String
 
@@ -140,25 +142,20 @@ extension AsyncBufferSequence {
                     }
                     #else
                     // Unfortunately here we _have to_ copy the bytes out because
-                    // DisptachIO (rightfully) reuses buffer, which means `buffer.data`
+                    // DispatchIO (rightfully) reuses buffer, which means `buffer.data`
                     // has the same address on all iterations, therefore we can't directly
                     // create the result array from buffer.data
-                    let temporary = UnsafeMutableBufferPointer<Encoding.CodeUnit>.allocate(
-                        capacity: buffer.data.count
-                    )
-                    defer { temporary.deallocate() }
-                    let actualBytesCopied = buffer.data.copyBytes(
-                        to: temporary,
-                        count: buffer.data.count
-                    )
 
                     // Calculate how many CodePoint elements we have
-                    let elementCount = actualBytesCopied / MemoryLayout<Encoding.CodeUnit>.stride
+                    let elementCount = buffer.data.count / MemoryLayout<Encoding.CodeUnit>.stride
 
                     // Create array by copying from the buffer reinterpreted as CodePoint
-                    let result: Array<Encoding.CodeUnit> = Array(
-                        UnsafeBufferPointer(start: temporary.baseAddress, count: elementCount)
-                    )
+                    let result: Array<Encoding.CodeUnit> = buffer.data.withUnsafeBytes { ptr -> Array<Encoding.CodeUnit> in
+                        return Array(
+                            UnsafeBufferPointer(start: ptr.baseAddress?.assumingMemoryBound(to: Encoding.CodeUnit.self), count: elementCount)
+                        )
+                    }
+
                     #endif
                     return result.isEmpty ? nil : result
                 }
@@ -180,18 +177,38 @@ extension AsyncBufferSequence {
                 /// let formFeed        = Encoding.CodeUnit(0x0C)
                 let carriageReturn      = Encoding.CodeUnit(0x0D)
                 // carriageReturn + lineFeed
-                let newLine: Encoding.CodeUnit
-                let lineSeparator: Encoding.CodeUnit
-                let paragraphSeparator: Encoding.CodeUnit
+                let newLine1: Encoding.CodeUnit
+                let newLine2: Encoding.CodeUnit
+                let lineSeparator1: Encoding.CodeUnit
+                let lineSeparator2: Encoding.CodeUnit
+                let lineSeparator3: Encoding.CodeUnit
+                let paragraphSeparator1: Encoding.CodeUnit
+                let paragraphSeparator2: Encoding.CodeUnit
+                let paragraphSeparator3: Encoding.CodeUnit
                 switch Encoding.CodeUnit.self {
                 case is UInt8.Type:
-                    newLine             = Encoding.CodeUnit(0xC2) // 0xC2 0x85
-                    lineSeparator       = Encoding.CodeUnit(0xE2) // 0xE2 0x80 0xA8
-                    paragraphSeparator  = Encoding.CodeUnit(0xE2) // 0xE2 0x80 0xA9
+                    newLine1            = Encoding.CodeUnit(0xC2)
+                    newLine2            = Encoding.CodeUnit(0x85)
+
+                    lineSeparator1      = Encoding.CodeUnit(0xE2)
+                    lineSeparator2      = Encoding.CodeUnit(0x80)
+                    lineSeparator3      = Encoding.CodeUnit(0xA8)
+
+                    paragraphSeparator1 = Encoding.CodeUnit(0xE2)
+                    paragraphSeparator2 = Encoding.CodeUnit(0x80)
+                    paragraphSeparator3 = Encoding.CodeUnit(0xA9)
                 case is UInt16.Type, is UInt32.Type:
-                    newLine             = Encoding.CodeUnit(0x0085)
-                    lineSeparator       = Encoding.CodeUnit(0x2028)
-                    paragraphSeparator  = Encoding.CodeUnit(0x2029)
+                    // UTF16 and UTF32 use one byte for all
+                    newLine1            = Encoding.CodeUnit(0x0085)
+                    newLine2            = Encoding.CodeUnit(0x0085)
+
+                    lineSeparator1      = Encoding.CodeUnit(0x2028)
+                    lineSeparator2      = Encoding.CodeUnit(0x2028)
+                    lineSeparator3      = Encoding.CodeUnit(0x2028)
+
+                    paragraphSeparator1 = Encoding.CodeUnit(0x2029)
+                    paragraphSeparator2 = Encoding.CodeUnit(0x2029)
+                    paragraphSeparator3 = Encoding.CodeUnit(0x2029)
                 default:
                     fatalError("Unknown encoding type \(Encoding.self)")
                 }
@@ -210,10 +227,13 @@ extension AsyncBufferSequence {
                     var currentIndex: Int = self.startIndex
                     for index in self.startIndex ..< self.buffer.count {
                         currentIndex = index
-                        // Early return if we exceed max line length
+                        // Throw if we exceed max line length
                         if case .maxLineLength(let maxLength) = self.bufferingPolicy,
                            currentIndex >= maxLength {
-                            return yield(at: currentIndex)
+                            throw SubprocessError(
+                                code: .init(.streamOutputExceedsLimit(maxLength)),
+                                underlyingError: nil
+                            )
                         }
                         let byte = self.buffer[currentIndex]
                         switch byte {
@@ -232,12 +252,12 @@ extension AsyncBufferSequence {
                                 continue
                             }
                             return result
-                        case newLine:
+                        case newLine1:
                             var targetIndex = currentIndex
                             if Encoding.CodeUnit.self is UInt8.Type {
                                 // For UTF8, look for the next 0x85 byte
                                 guard (targetIndex + 1) < self.buffer.count,
-                                      self.buffer[targetIndex + 1] == Encoding.CodeUnit(0x85) else {
+                                      self.buffer[targetIndex + 1] == newLine2 else {
                                     // Not a valid new line. Keep looking
                                     continue
                                 }
@@ -248,21 +268,22 @@ extension AsyncBufferSequence {
                                 continue
                             }
                             return result
-                        case lineSeparator, paragraphSeparator:
+                        case lineSeparator1, paragraphSeparator1:
                             var targetIndex = currentIndex
                             if Encoding.CodeUnit.self is UInt8.Type {
-                                // For UTF8, look for the next 0x80 byte
+                                // For UTF8, look for the next byte
                                 guard (targetIndex + 1) < self.buffer.count,
-                                      self.buffer[targetIndex + 1] == Encoding.CodeUnit(0x80) else {
+                                      self.buffer[targetIndex + 1] == lineSeparator2 ||
+                                      self.buffer[targetIndex + 1] == paragraphSeparator2 else {
                                     // Not a valid new line. Keep looking
                                     continue
                                 }
-                                // Swallow 0x80 byte
+                                // Swallow next byte
                                 targetIndex += 1
-                                // Look for the final 0xA8 (lineSeparator) or 0xA9 (paragraphSeparator)
+                                // Look for the final byte
                                 guard (targetIndex + 1) < self.buffer.count,
-                                      (self.buffer[targetIndex + 1] == Encoding.CodeUnit(0xA8) ||
-                                       self.buffer[targetIndex + 1] == Encoding.CodeUnit(0xA9)) else {
+                                      (self.buffer[targetIndex + 1] == lineSeparator3 ||
+                                       self.buffer[targetIndex + 1] == paragraphSeparator3) else {
                                     // Not a valid new line. Keep looking
                                     continue
                                 }
@@ -308,9 +329,8 @@ extension AsyncBufferSequence.LineSequence {
         /// on the number of buffered elements (line length).
         case unbounded
         /// Impose a max buffer size (line length) limit.
-        /// When using this policy, `LineSequence` will return a line if:
-        /// - A newline character is encountered (standard behavior)
-        /// - The current line in the buffer reaches or exceeds the specified maximum length
+        /// Subprocess **will throw an error** if the number of buffered
+        /// elements (line length) exceeds the limit
         case maxLineLength(Int)
     }
 }

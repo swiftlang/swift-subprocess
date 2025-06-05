@@ -28,17 +28,17 @@ extension AsyncBufferSequence {
             return [.init(data: data)]
         }
         #else
-        // We need to keep the backingData alive while Slice is alive
+        // We need to keep the backingData alive while _ContiguousBufferView is alive
         internal let backingData: DispatchData
-        internal let data: DispatchData.Slice
+        internal let data: DispatchData._ContiguousBufferView
 
-        internal init(data: DispatchData.Slice, backingData: DispatchData) {
+        internal init(data: DispatchData._ContiguousBufferView, backingData: DispatchData) {
             self.data = data
             self.backingData = backingData
         }
 
         internal static func createFrom(_ data: DispatchData) -> [Buffer] {
-            let slices = data.slices
+            let slices = data.contiguousBufferViews
             // In most (all?) cases data should only have one slice
             if _fastPath(slices.count == 1) {
                 return [.init(data: slices[0], backingData: data)]
@@ -114,7 +114,7 @@ extension AsyncBufferSequence.Buffer: Equatable, Hashable {
 #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl)
 extension DispatchData {
     /// Unfortunately `DispatchData.Region` is not available on Linux, hence our own wrapper
-    internal struct Slice: @unchecked Sendable, RandomAccessCollection {
+    internal struct _ContiguousBufferView: @unchecked Sendable, RandomAccessCollection {
         typealias Element = UInt8
 
         internal let bytes: UnsafeBufferPointer<UInt8>
@@ -130,13 +130,6 @@ extension DispatchData {
             return try body(UnsafeRawBufferPointer(self.bytes))
         }
 
-        @discardableResult
-        internal func copyBytes<DestinationType>(
-            to ptr: UnsafeMutableBufferPointer<DestinationType>, count: Int
-        ) -> Int {
-            self.bytes.copyBytes(to: ptr, count: count)
-        }
-
         subscript(position: Int) -> UInt8 {
             _read {
                 yield self.bytes[position]
@@ -144,10 +137,10 @@ extension DispatchData {
         }
     }
 
-    internal var slices: [Slice] {
-        var slices = [Slice]()
+    internal var contiguousBufferViews: [_ContiguousBufferView] {
+        var slices = [_ContiguousBufferView]()
         enumerateBytes { (bytes, index, stop) in
-            slices.append(Slice(bytes: bytes))
+            slices.append(_ContiguousBufferView(bytes: bytes))
         }
         return slices
     }
