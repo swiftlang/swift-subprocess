@@ -134,7 +134,9 @@ extension DispatchData {
         internal func copyBytes<DestinationType>(
             to ptr: UnsafeMutableBufferPointer<DestinationType>, count: Int
         ) -> Int {
-            self.bytes.copyBytes(to: ptr, count: count)
+            let target = UnsafeMutableRawBufferPointer(start: ptr.baseAddress, count: count)
+            target.copyMemory(from: UnsafeRawBufferPointer(self.bytes))
+            return self.bytes.count
         }
 
         subscript(position: Int) -> UInt8 {

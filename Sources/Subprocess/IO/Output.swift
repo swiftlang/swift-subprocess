@@ -144,14 +144,10 @@ public struct BytesOutput: OutputProtocol {
     internal func captureOutput(
         from diskIO: consuming TrackedPlatformDiskIO?
     ) async throws -> [UInt8] {
-        guard let diskIO = diskIO else {
-            // Show not happen due to type system constraints
-            fatalError("Trying to capture output without file descriptor")
-        }
         #if os(Windows)
-        return try await diskIO.fileDescriptor.read(upToLength: self.maxSize) ?? []
+        return try await diskIO?.fileDescriptor.read(upToLength: self.maxSize) ?? []
         #else
-        let result = try await diskIO.dispatchIO.read(upToLength: self.maxSize)
+        let result = try await diskIO!.dispatchIO.read(upToLength: self.maxSize)
         return result?.array() ?? []
         #endif
     }
@@ -270,16 +266,11 @@ extension OutputProtocol {
             return () as! OutputType
         }
 
-        guard let diskIO = diskIO else {
-            // Show not happen due to type system constraints
-            fatalError("Trying to capture output without file descriptor")
-        }
-
         #if os(Windows)
-        let result = try await diskIO.fileDescriptor.read(upToLength: self.maxSize)
+        let result = try await diskIO?.fileDescriptor.read(upToLength: self.maxSize)
         return try self.output(from: result ?? [])
         #else
-        let result = try await diskIO.dispatchIO.read(upToLength: self.maxSize)
+        let result = try await diskIO!.dispatchIO.read(upToLength: self.maxSize)
         return try self.output(from: result ?? .empty)
         #endif
     }

@@ -85,7 +85,7 @@ extension Execution {
         using sequence: some Sequence<TeardownStep> & Sendable,
         on processIdentifier: ProcessIdentifier
     ) async {
-        await withUncanceledTask {
+        await withUncancelledTask {
             await Self.runTeardownSequence(sequence, on: processIdentifier)
         }
     }
@@ -222,7 +222,7 @@ extension Execution {
     }
 }
 
-func withUncanceledTask<Result: Sendable>(
+func withUncancelledTask<Result: Sendable>(
     returning: Result.Type = Result.self,
     _ body: @Sendable @escaping () async -> Result
 ) async -> Result {
