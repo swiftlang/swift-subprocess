@@ -393,7 +393,7 @@ internal typealias PlatformFileDescriptor = CInt
 internal typealias TrackedPlatformDiskIO = TrackedDispatchIO
 
 extension TrackedFileDescriptor {
-    internal consuming func createPlatformDiskIO() -> TrackedPlatformDiskIO {
+    internal consuming func createPlatformDiskIO(with streamOptions: PlatformOptions.StreamOptions) -> TrackedPlatformDiskIO {
         let dispatchIO: DispatchIO = DispatchIO(
             type: .stream,
             fileDescriptor: self.platformDescriptor(),
@@ -405,6 +405,15 @@ extension TrackedFileDescriptor {
                 }
             }
         )
+
+        if let minimumBufferSize = streamOptions.minimumBufferSize {
+            dispatchIO.setLimit(lowWater: minimumBufferSize)
+        }
+
+        if let maximumBufferSize = streamOptions.maximumBufferSize {
+            dispatchIO.setLimit(highWater: maximumBufferSize)
+        }
+
         return .init(dispatchIO, closeWhenDone: self.closeWhenDone)
     }
 }
@@ -414,37 +423,32 @@ extension DispatchIO {
     #if SubprocessSpan
     @available(SubprocessSpan, *)
     #endif
-    internal func readChunk(upToLength maxLength: Int) async throws -> AsyncBufferSequence.Buffer? {
-        return try await withCheckedThrowingContinuation { continuation in
-            var buffer: DispatchData = .empty
-            self.read(
-                offset: 0,
-                length: maxLength,
-                queue: .global()
-            ) { done, data, error in
-                if error != 0 {
-                    continuation.resume(
-                        throwing: SubprocessError(
-                            code: .init(.failedToReadFromSubprocess),
-                            underlyingError: .init(rawValue: error)
-                        )
-                    )
-                    return
-                }
-                if let data = data {
-                    if buffer.isEmpty {
-                        buffer = data
-                    } else {
-                        buffer.append(data)
-                    }
-                }
-                if done {
-                    if !buffer.isEmpty {
-                        continuation.resume(returning: AsyncBufferSequence.Buffer(data: buffer))
-                    } else {
-                        continuation.resume(returning: nil)
-                    }
-                }
+    internal func stream(upToLength maxLength: Int, continuation: AsyncBufferSequence.Iterator.Stream.Continuation) {
+        self.read(
+            offset: 0,
+            length: maxLength,
+            queue: .global()
+        ) { done, data, error in
+            guard error == 0 else {
+                continuation.finish(throwing: SubprocessError(
+                    code: .init(.failedToReadFromSubprocess),
+                    underlyingError: .init(rawValue: error)
+                ))
+                return
+            }
+
+            guard let data else {
+                fatalError("Unexpectedly received nil data from DispatchIO with error == 0.")
+            }
+
+            if !data.isEmpty {
+                // We have non-empty data. Yield it to the continuation
+                continuation.yield(AsyncBufferSequence.Buffer(data: data))
+            } else if done {
+                // Receiving an empty data and done == true means we've reached the end of the file.
+                continuation.finish()
+            } else {
+                fatalError("Unexpectedly received no data from DispatchIO with it indicating it is not done.")
             }
         }
     }

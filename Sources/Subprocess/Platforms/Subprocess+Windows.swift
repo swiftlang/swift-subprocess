@@ -1071,18 +1071,57 @@ extension FileDescriptor {
 }
 
 extension FileDescriptor {
-    internal func readChunk(upToLength maxLength: Int) async throws -> AsyncBufferSequence.Buffer? {
-        return try await withCheckedThrowingContinuation { continuation in
-            self.readUntilEOF(
-                upToLength: maxLength
-            ) { result in
-                switch result {
-                case .failure(let error):
-                    continuation.resume(throwing: error)
-                case .success(let bytes):
-                    continuation.resume(returning: AsyncBufferSequence.Buffer(data: bytes))
+    internal func stream(upToLength maxLength: Int, continuation: AsyncBufferSequence.Iterator.Stream.Continuation) {
+        do {
+            var totalBytesRead: Int = 0
+
+            while totalBytesRead < maxLength {
+                let values = try [UInt8](
+                    unsafeUninitializedCapacity: maxLength - totalBytesRead
+                ) { buffer, initializedCount in
+                    guard let baseAddress = buffer.baseAddress else {
+                        initializedCount = 0
+                        return
+                    }
+
+                    var bytesRead: DWORD = 0
+                    let readSucceed = ReadFile(
+                        self.platformDescriptor,
+                        UnsafeMutableRawPointer(mutating: baseAddress),
+                        DWORD(maxLength - totalBytesRead),
+                        &bytesRead,
+                        nil
+                    )
+
+                    if !readSucceed {
+                        // Windows throws ERROR_BROKEN_PIPE when the pipe is closed
+                        let error = GetLastError()
+                        if error == ERROR_BROKEN_PIPE {
+                            // We are done reading
+                            initializedCount = 0
+                        } else {
+                            initializedCount = 0
+                            throw SubprocessError(
+                                code: .init(.failedToReadFromSubprocess),
+                                underlyingError: .init(rawValue: error)
+                            )
+                        }
+                    } else {
+                        // We successfully read the current round
+                        initializedCount += Int(bytesRead)
+                    }
+                }
+
+                if values.count > 0 {
+                    totalBytesRead += values.count
+                    continuation.yield(AsyncBufferSequence.Buffer(data: values))
+                } else {
+                    continuation.finish()
+                    return
                 }
             }
+        } catch {
+            continuation.finish(throwing: error)
         }
     }
 
