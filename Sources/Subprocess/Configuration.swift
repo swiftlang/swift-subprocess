@@ -40,7 +40,7 @@ public struct Configuration: Sendable {
     public var environment: Environment
     /// The working directory to use when running the executable.
     public var workingDirectory: FilePath
-    /// The platform specifc options to use when
+    /// The platform specific options to use when
     /// running the subprocess.
     public var platformOptions: PlatformOptions
 
@@ -58,9 +58,6 @@ public struct Configuration: Sendable {
         self.platformOptions = platformOptions
     }
 
-    #if SubprocessSpan
-    @available(SubprocessSpan, *)
-    #endif
     internal func run<Result>(
         input: consuming CreatedPipe,
         output: consuming CreatedPipe,
@@ -134,7 +131,7 @@ extension Configuration: CustomStringConvertible, CustomDebugStringConvertible {
 extension Configuration {
     /// Close each input individually, and throw the first error if there's multiple errors thrown
     @Sendable
-    internal func safelyCloseMultuple(
+    internal func safelyCloseMultiple(
         inputRead: consuming TrackedFileDescriptor?,
         inputWrite: consuming TrackedFileDescriptor?,
         outputRead: consuming TrackedFileDescriptor?,
@@ -393,7 +390,7 @@ extension Environment: CustomStringConvertible, CustomDebugStringConvertible {
                 """
         case .inherit(let updateValue):
             return """
-                Inherting current environment with updates:
+                Inheriting current environment with updates:
                 \(updateValue)
                 """
         #if !os(Windows)
@@ -454,7 +451,7 @@ public enum TerminationStatus: Sendable, Hashable, Codable {
 
     /// The subprocess was existed with the given code
     case exited(Code)
-    /// The subprocess was signalled with given exception value
+    /// The subprocess was signaled with given exception value
     case unhandledException(Code)
     /// Whether the current TerminationStatus is successful.
     public var isSuccess: Bool {
@@ -485,9 +482,6 @@ extension TerminationStatus: CustomStringConvertible, CustomDebugStringConvertib
 // MARK: - Internal
 
 extension Configuration {
-    #if SubprocessSpan
-    @available(SubprocessSpan, *)
-    #endif
     /// After Spawn finishes, child side file descriptors
     /// (input read, output write, error write) will be closed
     /// by `spawn()`. It returns the parent side file descriptors
@@ -581,7 +575,7 @@ internal enum StringOrRawBytes: Sendable, Hashable {
 }
 
 /// A wrapped `FileDescriptor` and whether it should be closed
-/// automactially when done.
+/// automatically when done.
 internal struct TrackedFileDescriptor: ~Copyable {
     internal var closeWhenDone: Bool
     internal let fileDescriptor: FileDescriptor
@@ -667,7 +661,7 @@ internal struct TrackedFileDescriptor: ~Copyable {
 
 #if !os(Windows)
 /// A wrapped `DispatchIO` and whether it should be closed
-/// automactially when done.
+/// automatically when done.
 internal struct TrackedDispatchIO: ~Copyable {
     internal var closeWhenDone: Bool
     internal var dispatchIO: DispatchIO

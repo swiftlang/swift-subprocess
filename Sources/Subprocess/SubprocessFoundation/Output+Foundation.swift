@@ -61,6 +61,17 @@ extension OutputProtocol where Self == DataOutput {
     }
 }
 
+#if SubprocessSpan
+@available(SubprocessSpan, *)
+#endif
+extension Data {
+    /// Create a `Data` from `Buffer`
+    /// - Parameter buffer: buffer to copy from
+    public init(buffer: AsyncBufferSequence.Buffer) {
+        self = Data(buffer.data)
+    }
+}
+
 // MARK: - Workarounds
 #if SubprocessSpan
 @available(SubprocessSpan, *)

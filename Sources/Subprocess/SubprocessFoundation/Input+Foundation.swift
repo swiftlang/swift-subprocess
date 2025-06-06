@@ -115,7 +115,7 @@ extension StandardInputWriter {
     }
 
     /// Write a AsyncSequence of Data to the standard input of the subprocess.
-    /// - Parameter sequence: The sequence of bytes to write.
+    /// - Parameter asyncSequence: The sequence of bytes to write.
     /// - Returns number of bytes written.
     public func write<AsyncSendableSequence: AsyncSequence & Sendable>(
         _ asyncSequence: AsyncSendableSequence
@@ -135,7 +135,7 @@ extension TrackedFileDescriptor {
     ) async throws -> Int {
         let fileDescriptor = self.fileDescriptor
         return try await withCheckedThrowingContinuation { continuation in
-            // TODO: Figure out a better way to asynchornously write
+            // TODO: Figure out a better way to asynchronously write
             DispatchQueue.global(qos: .userInitiated).async {
                 data.withUnsafeBytes {
                     Self.write(

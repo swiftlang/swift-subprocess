@@ -59,7 +59,7 @@ public struct PlatformOptions: Sendable {
     public var createSession: Bool = false
     /// An ordered list of steps in order to tear down the child
     /// process in case the parent task is cancelled before
-    /// the child proces terminates.
+    /// the child process terminates.
     /// Always ends in sending a `.kill` signal at the end.
     public var teardownSequence: [TeardownStep] = []
     /// A closure to configure platform-specific
@@ -153,9 +153,6 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
 
 // MARK: - Spawn
 extension Configuration {
-    #if SubprocessSpan
-    @available(SubprocessSpan, *)
-    #endif
     internal func spawn(
         withInput inputPipe: consuming CreatedPipe,
         outputPipe: consuming CreatedPipe,
@@ -209,7 +206,7 @@ extension Configuration {
                     result = posix_spawn_file_actions_adddup2(
                         &fileActions, inputReadFileDescriptor!.platformDescriptor(), 0)
                     guard result == 0 else {
-                        try self.safelyCloseMultuple(
+                        try self.safelyCloseMultiple(
                             inputRead: inputReadFileDescriptor,
                             inputWrite: inputWriteFileDescriptor,
                             outputRead: outputReadFileDescriptor,
@@ -229,7 +226,7 @@ extension Configuration {
                         &fileActions, inputWriteFileDescriptor!.platformDescriptor()
                     )
                     guard result == 0 else {
-                        try self.safelyCloseMultuple(
+                        try self.safelyCloseMultiple(
                             inputRead: inputReadFileDescriptor,
                             inputWrite: inputWriteFileDescriptor,
                             outputRead: outputReadFileDescriptor,
@@ -249,7 +246,7 @@ extension Configuration {
                         &fileActions, outputWriteFileDescriptor!.platformDescriptor(), 1
                     )
                     guard result == 0 else {
-                        try self.safelyCloseMultuple(
+                        try self.safelyCloseMultiple(
                             inputRead: inputReadFileDescriptor,
                             inputWrite: inputWriteFileDescriptor,
                             outputRead: outputReadFileDescriptor,
@@ -269,7 +266,7 @@ extension Configuration {
                         &fileActions, outputReadFileDescriptor!.platformDescriptor()
                     )
                     guard result == 0 else {
-                        try self.safelyCloseMultuple(
+                        try self.safelyCloseMultiple(
                             inputRead: inputReadFileDescriptor,
                             inputWrite: inputWriteFileDescriptor,
                             outputRead: outputReadFileDescriptor,
@@ -289,7 +286,7 @@ extension Configuration {
                         &fileActions, errorWriteFileDescriptor!.platformDescriptor(), 2
                     )
                     guard result == 0 else {
-                        try self.safelyCloseMultuple(
+                        try self.safelyCloseMultiple(
                             inputRead: inputReadFileDescriptor,
                             inputWrite: inputWriteFileDescriptor,
                             outputRead: outputReadFileDescriptor,
@@ -309,7 +306,7 @@ extension Configuration {
                         &fileActions, errorReadFileDescriptor!.platformDescriptor()
                     )
                     guard result == 0 else {
-                        try self.safelyCloseMultuple(
+                        try self.safelyCloseMultiple(
                             inputRead: inputReadFileDescriptor,
                             inputWrite: inputWriteFileDescriptor,
                             outputRead: outputReadFileDescriptor,
@@ -359,7 +356,7 @@ extension Configuration {
 
                 // Error handling
                 if chdirError != 0 || spawnAttributeError != 0 {
-                    try self.safelyCloseMultuple(
+                    try self.safelyCloseMultiple(
                         inputRead: inputReadFileDescriptor,
                         inputWrite: inputWriteFileDescriptor,
                         outputRead: outputReadFileDescriptor,
@@ -412,7 +409,7 @@ extension Configuration {
                         continue
                     }
                     // Throw all other errors
-                    try self.safelyCloseMultuple(
+                    try self.safelyCloseMultiple(
                         inputRead: inputReadFileDescriptor,
                         inputWrite: inputWriteFileDescriptor,
                         outputRead: outputReadFileDescriptor,
@@ -427,7 +424,7 @@ extension Configuration {
                 }
 
                 // After spawn finishes, close all child side fds
-                try self.safelyCloseMultuple(
+                try self.safelyCloseMultiple(
                     inputRead: inputReadFileDescriptor,
                     inputWrite: nil,
                     outputRead: nil,
@@ -452,7 +449,7 @@ extension Configuration {
             // provide which one is not valid, here we make a best effort guess
             // by checking whether the working directory is valid. This technically
             // still causes TOUTOC issue, but it's the best we can do for error recovery.
-            try self.safelyCloseMultuple(
+            try self.safelyCloseMultiple(
                 inputRead: inputReadFileDescriptor,
                 inputWrite: inputWriteFileDescriptor,
                 outputRead: outputReadFileDescriptor,

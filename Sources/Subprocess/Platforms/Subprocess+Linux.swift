@@ -121,7 +121,7 @@ extension Configuration {
                         continue
                     }
                     // Throw all other errors
-                    try self.safelyCloseMultuple(
+                    try self.safelyCloseMultiple(
                         inputRead: inputReadFileDescriptor,
                         inputWrite: inputWriteFileDescriptor,
                         outputRead: outputReadFileDescriptor,
@@ -143,7 +143,7 @@ extension Configuration {
                     }
                 }
                 // After spawn finishes, close all child side fds
-                try self.safelyCloseMultuple(
+                try self.safelyCloseMultiple(
                     inputRead: inputReadFileDescriptor,
                     inputWrite: nil,
                     outputRead: nil,
@@ -168,7 +168,7 @@ extension Configuration {
             // provide which one is not valid, here we make a best effort guess
             // by checking whether the working directory is valid. This technically
             // still causes TOUTOC issue, but it's the best we can do for error recovery.
-            try self.safelyCloseMultuple(
+            try self.safelyCloseMultiple(
                 inputRead: inputReadFileDescriptor,
                 inputWrite: inputWriteFileDescriptor,
                 outputRead: outputReadFileDescriptor,
@@ -357,7 +357,7 @@ private let setup: () = {
 }()
 
 /// Unchecked Sendable here since this class is only explicitly
-/// initialzied once during the lifetime of the process
+/// initialized once during the lifetime of the process
 final class SendableSourceSignal: @unchecked Sendable {
     private let signalSource: DispatchSourceSignal
 

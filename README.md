@@ -64,27 +64,17 @@ To have more precise control over input and output, you can provide a custom clo
 ```swift
 import Subprocess
 
-let result = try await run(
-    .path("/bin/dd"),
-    arguments: ["if=/path/to/document"]
-) { execution in
-    var contents = ""
-    for try await chunk in execution.standardOutput {
-        let string = chunk.withUnsafeBytes { String(decoding: $0, as: UTF8.self) }
-        contents += string
-        if string == "Done" {
-            // Stop execution
-            await execution.teardown(
-                using: [
-                    .gracefulShutDown(
-                        allowedDurationToNextStep: .seconds(0.5)
-                    )
-                ]
-            )
-            return contents
+// Monitor Nginx log via `tail -f`
+async let monitorResult = run(
+    .path("/usr/bin/tail"),
+    arguments: ["-f", "/path/to/nginx.log"]
+) { execution, standardOutput in
+    for try await line in standardOutput.lines(encoding: UTF8.self) {
+        // Parse the log text
+        if line.contains("500") {
+            // Oh no, 500 error
         }
     }
-    return contents
 }
 ```
 
@@ -239,10 +229,6 @@ Use it by setting `.string` or `.string(limit:encoding:)` for `input` or `error`
 This option collects output as `[UInt8]`.
 
 Use it by setting `.bytes` or `.bytes(limit:)` for `input` or `error`.
-
-#### `SequenceOutput`:
-
-This option redirects the child output to the `.standardOutput` or `.standardError` property of `Execution`. It’s only for the `run()` family that takes a custom closure.
 
 
 ### Cross-platform support
