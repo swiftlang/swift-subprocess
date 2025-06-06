@@ -161,6 +161,74 @@ public func run<
 #if SubprocessSpan
 @available(SubprocessSpan, *)
 #endif
+public func run<Result, Input: InputProtocol, Output: OutputProtocol, Error: OutputProtocol>(
+    _ executable: Executable,
+    arguments: Arguments = [],
+    environment: Environment = .inherit,
+    workingDirectory: FilePath? = nil,
+    platformOptions: PlatformOptions = PlatformOptions(),
+    input: Input = .none,
+    output: Output,
+    error: Error,
+    isolation: isolated (any Actor)? = #isolation,
+    body: ((Execution, AsyncBufferSequence, AsyncBufferSequence) async throws -> Result)
+) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
+    return try await Configuration(
+        executable: executable,
+        arguments: arguments,
+        environment: environment,
+        workingDirectory: workingDirectory,
+        platformOptions: platformOptions
+    ).run(
+        input: try input.createPipe(),
+        output: try output.createPipe(),
+        error: try error.createPipe()
+    ) { execution, inputIO, outputIO, errorIO in
+        var inputIOBox: TrackedPlatformDiskIO? = consume inputIO
+        var outputIOBox: TrackedPlatformDiskIO? = consume outputIO
+        var errorIOBox: TrackedPlatformDiskIO? = consume errorIO
+        return try await withThrowingTaskGroup(
+            of: Void.self,
+            returning: Result.self
+        ) { group in
+            var inputIOContainer: TrackedPlatformDiskIO? = inputIOBox.take()
+            group.addTask {
+                if let inputIO = inputIOContainer.take() {
+                    let writer = StandardInputWriter(diskIO: inputIO)
+                    try await input.write(with: writer)
+                    try await writer.finish()
+                }
+            }
+
+            // Body runs in the same isolation
+            let outputSequence = AsyncBufferSequence(diskIO: outputIOBox.take()!.consumeDiskIO())
+            let errorSequence = AsyncBufferSequence(diskIO: errorIOBox.take()!.consumeDiskIO())
+            let result = try await body(execution, outputSequence, errorSequence)
+            try await group.waitForAll()
+            return result
+        }
+    }
+}
+
+/// Run an executable with given parameters and a custom closure
+/// to manage the running subprocess' lifetime and its IOs.
+/// - Parameters:
+///   - executable: The executable to run.
+///   - arguments: The arguments to pass to the executable.
+///   - environment: The environment in which to run the executable.
+///   - workingDirectory: The working directory in which to run the executable.
+///   - platformOptions: The platform specific options to use
+///     when running the executable.
+///   - input: The input to send to the executable.
+///   - output: How to manage the executable standard ouput.
+///   - error: How to manager executable standard error.
+///   - isolation: the isolation context to run the body closure.
+///   - body: The custom execution body to manually control the running process
+/// - Returns a ExecutableResult type containing the return value
+///     of the closure.
+#if SubprocessSpan
+@available(SubprocessSpan, *)
+#endif
 public func run<Result, Input: InputProtocol, Error: OutputProtocol>(
     _ executable: Executable,
     arguments: Arguments = [],
