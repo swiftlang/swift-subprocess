@@ -17,18 +17,8 @@
 extension AsyncBufferSequence {
     /// A immutable collection of bytes
     public struct Buffer: Sendable {
-        #if os(Windows)
-        internal let data: [UInt8]
-
-        internal init(data: [UInt8]) {
-            self.data = data
-        }
-
-        internal static func createFrom(_ data: [UInt8]) -> [Buffer] {
-            return [.init(data: data)]
-        }
-        #else
-        // We need to keep the backingData alive while _ContiguousBufferView is alive
+        #if canImport(Darwin)
+        // We need to keep the backingData alive while Slice is alive
         internal let backingData: DispatchData
         internal let data: DispatchData._ContiguousBufferView
 
@@ -45,7 +35,17 @@ extension AsyncBufferSequence {
             }
             return slices.map{ .init(data: $0, backingData: data) }
         }
-        #endif
+        #else
+        internal let data: [UInt8]
+
+        internal init(data: [UInt8]) {
+            self.data = data
+        }
+
+        internal static func createFrom(_ data: [UInt8]) -> [Buffer] {
+            return [.init(data: data)]
+        }
+        #endif // canImport(Darwin)
     }
 }
 
@@ -95,9 +95,7 @@ extension AsyncBufferSequence.Buffer {
 
 // MARK: - Hashable, Equatable
 extension AsyncBufferSequence.Buffer: Equatable, Hashable {
-    #if os(Windows)
-    // Compiler generated conformances
-    #else
+    #if canImport(Darwin)
     public static func == (lhs: AsyncBufferSequence.Buffer, rhs: AsyncBufferSequence.Buffer) -> Bool {
         return lhs.data.elementsEqual(rhs.data)
     }
@@ -108,6 +106,7 @@ extension AsyncBufferSequence.Buffer: Equatable, Hashable {
         }
     }
     #endif
+    // else Compiler generated conformances
 }
 
 // MARK: - DispatchData.Block

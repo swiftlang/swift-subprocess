@@ -519,4 +519,30 @@ internal func monitorProcessTermination(
     }
 }
 
+internal typealias TrackedPlatformDiskIO = TrackedDispatchIO
+
+extension TrackedFileDescriptor {
+    internal consuming func createPlatformDiskIO() -> TrackedPlatformDiskIO {
+        // Transferring out the ownership of fileDescriptor means we don't have go close here
+        let shouldClose = self.closeWhenDone
+        let closeFd = self.fileDescriptor
+        let dispatchIO: DispatchIO = DispatchIO(
+            type: .stream,
+            fileDescriptor: self.platformDescriptor(),
+            queue: .global(),
+            cleanupHandler: { error in
+                // Close the file descriptor
+                if shouldClose {
+                    try? closeFd.close()
+                }
+            }
+        )
+        let result: TrackedPlatformDiskIO = .init(
+            dispatchIO, closeWhenDone: self.closeWhenDone
+        )
+        self.closeWhenDone = false
+        return result
+    }
+}
+
 #endif  // canImport(Darwin)

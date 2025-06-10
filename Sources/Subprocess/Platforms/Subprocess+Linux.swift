@@ -382,4 +382,18 @@ private func _setupMonitorSignalHandler() {
     setup
 }
 
+internal typealias TrackedPlatformDiskIO = TrackedFileDescriptor
+
+extension TrackedFileDescriptor {
+    internal consuming func createPlatformDiskIO() -> TrackedPlatformDiskIO {
+        // Transferring out the ownership of fileDescriptor means we don't have go close here
+        let result: TrackedPlatformDiskIO =  .init(
+            self.fileDescriptor,
+            closeWhenDone: self.closeWhenDone
+        )
+        self.closeWhenDone = false
+        return result
+    }
+}
+
 #endif  // canImport(Glibc) || canImport(Android) || canImport(Musl)
