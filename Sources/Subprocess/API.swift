@@ -152,6 +152,67 @@ public func run<
 ///   - platformOptions: The platform specific options to use
 ///     when running the executable.
 ///   - input: The input to send to the executable.
+///   - output: How to manager executable standard output.
+///   - error: How to manager executable standard error.
+///   - isolation: the isolation context to run the body closure.
+///   - body: The custom execution body to manually control the running process
+/// - Returns an executableResult type containing the return value
+///     of the closure.
+public func run<Result, Input: InputProtocol, Output: OutputProtocol, Error: OutputProtocol>(
+    _ executable: Executable,
+    arguments: Arguments = [],
+    environment: Environment = .inherit,
+    workingDirectory: FilePath? = nil,
+    platformOptions: PlatformOptions = PlatformOptions(),
+    input: Input = .none,
+    output: Output = .discarded,
+    error: Error = .discarded,
+    isolation: isolated (any Actor)? = #isolation,
+    body: ((Execution) async throws -> Result)
+) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
+    return try await Configuration(
+        executable: executable,
+        arguments: arguments,
+        environment: environment,
+        workingDirectory: workingDirectory,
+        platformOptions: platformOptions
+    ).run(
+        input: try input.createPipe(),
+        output: try output.createPipe(),
+        error: try error.createPipe()
+    ) { execution, inputIO, outputIO, errorIO in
+        var inputIOBox: TrackedPlatformDiskIO? = consume inputIO
+        return try await withThrowingTaskGroup(
+            of: Void.self,
+            returning: Result.self
+        ) { group in
+            var inputIOContainer: TrackedPlatformDiskIO? = inputIOBox.take()
+            group.addTask {
+                if let inputIO = inputIOContainer.take() {
+                    let writer = StandardInputWriter(diskIO: inputIO)
+                    try await input.write(with: writer)
+                    try await writer.finish()
+                }
+            }
+
+            // Body runs in the same isolation
+            let result = try await body(execution)
+            try await group.waitForAll()
+            return result
+        }
+    }
+}
+
+/// Run an executable with given parameters and a custom closure
+/// to manage the running subprocess' lifetime and stream its standard output.
+/// - Parameters:
+///   - executable: The executable to run.
+///   - arguments: The arguments to pass to the executable.
+///   - environment: The environment in which to run the executable.
+///   - workingDirectory: The working directory in which to run the executable.
+///   - platformOptions: The platform specific options to use
+///     when running the executable.
+///   - input: The input to send to the executable.
 ///   - error: How to manager executable standard error.
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom execution body to manually control the running process
