@@ -29,7 +29,7 @@ import Glibc
 import Musl
 #endif
 
-internal import Dispatch
+@preconcurrency internal import Dispatch
 
 // MARK: - Signals
 
@@ -108,9 +108,6 @@ extension ProcessIdentifier: CustomStringConvertible, CustomDebugStringConvertib
     public var debugDescription: String { "\(self.value)" }
 }
 
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 extension Execution {
     /// Send the given signal to the child process.
     /// - Parameters:
@@ -378,7 +375,7 @@ extension FileDescriptor {
     }
 
     internal static func openDevNull(
-        withAcessMode mode: FileDescriptor.AccessMode
+        withAccessMode mode: FileDescriptor.AccessMode
     ) throws -> FileDescriptor {
         let devnull: FileDescriptor = try .open("/dev/null", mode)
         return devnull
@@ -411,10 +408,7 @@ extension TrackedFileDescriptor {
 
 // MARK: - TrackedDispatchIO extensions
 extension DispatchIO {
-    #if SubprocessSpan
-    @available(SubprocessSpan, *)
-    #endif
-    internal func readChunk(upToLength maxLength: Int) async throws -> AsyncBufferSequence.Buffer? {
+    internal func read(upToLength maxLength: Int) async throws -> DispatchData? {
         return try await withCheckedThrowingContinuation { continuation in
             var buffer: DispatchData = .empty
             self.read(
@@ -440,7 +434,7 @@ extension DispatchIO {
                 }
                 if done {
                     if !buffer.isEmpty {
-                        continuation.resume(returning: AsyncBufferSequence.Buffer(data: buffer))
+                        continuation.resume(returning: buffer)
                     } else {
                         continuation.resume(returning: nil)
                     }
@@ -452,56 +446,6 @@ extension DispatchIO {
 
 extension TrackedDispatchIO {
     #if SubprocessSpan
-    @available(SubprocessSpan, *)
-    #endif
-    internal consuming func readUntilEOF(
-        upToLength maxLength: Int,
-        resultHandler: sending @escaping (Swift.Result<DispatchData, any Error>) -> Void
-    ) {
-        var buffer: DispatchData?
-        self.dispatchIO.read(
-            offset: 0,
-            length: maxLength,
-            queue: .global()
-        ) { done, data, error in
-            guard error == 0, let chunkData = data else {
-                self.dispatchIO.close()
-                resultHandler(
-                    .failure(
-                        SubprocessError(
-                            code: .init(.failedToReadFromSubprocess),
-                            underlyingError: .init(rawValue: error)
-                        )
-                    )
-                )
-                return
-            }
-            // Close dispatchIO if we are done
-            if done {
-                self.dispatchIO.close()
-            }
-            // Easy case: if we are done and buffer is nil, this means
-            // there is only one chunk of data
-            if done && buffer == nil {
-                buffer = chunkData
-                resultHandler(.success(chunkData))
-                return
-            }
-
-            if buffer == nil {
-                buffer = chunkData
-            } else {
-                buffer?.append(chunkData)
-            }
-
-            if done {
-                resultHandler(.success(buffer!))
-                return
-            }
-        }
-    }
-
-#if SubprocessSpan
     @available(SubprocessSpan, *)
     internal func write(
         _ span: borrowing RawSpan
@@ -527,7 +471,7 @@ extension TrackedDispatchIO {
             }
         }
     }
-#endif  // SubprocessSpan
+    #endif  // SubprocessSpan
 
     internal func write(
         _ array: [UInt8]

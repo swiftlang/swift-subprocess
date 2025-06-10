@@ -23,14 +23,12 @@ internal import Dispatch
 /// Instead of developing custom implementations of `OutputProtocol`,
 /// it is recommended to utilize the default implementations provided
 /// by the `Subprocess` library to specify the output handling requirements.
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 public protocol OutputProtocol: Sendable, ~Copyable {
     associatedtype OutputType: Sendable
 
     #if SubprocessSpan
     /// Convert the output from span to expected output type
+    @available(SubprocessSpan, *)
     func output(from span: RawSpan) throws -> OutputType
     #endif
 
@@ -41,9 +39,6 @@ public protocol OutputProtocol: Sendable, ~Copyable {
     var maxSize: Int { get }
 }
 
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 extension OutputProtocol {
     /// The max amount of data to collect for this output.
     public var maxSize: Int { 128 * 1024 }
@@ -55,9 +50,6 @@ extension OutputProtocol {
 /// redirects the standard output of the subprocess to `/dev/null`,
 /// while on Windows, it does not bind any file handle to the
 /// subprocess standard output handle.
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 public struct DiscardedOutput: OutputProtocol {
     public typealias OutputType = Void
 
@@ -71,7 +63,7 @@ public struct DiscardedOutput: OutputProtocol {
             writeFileDescriptor: nil
         )
         #else
-        let devnull: FileDescriptor = try .openDevNull(withAcessMode: .readOnly)
+        let devnull: FileDescriptor = try .openDevNull(withAccessMode: .readOnly)
         return CreatedPipe(
             readFileDescriptor: nil,
             writeFileDescriptor: .init(devnull, closeWhenDone: true)
@@ -87,9 +79,6 @@ public struct DiscardedOutput: OutputProtocol {
 /// Developers have the option to instruct the `Subprocess` to
 /// automatically close the provided `FileDescriptor`
 /// after the subprocess is spawned.
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 public struct FileDescriptorOutput: OutputProtocol {
     public typealias OutputType = Void
 
@@ -119,14 +108,12 @@ public struct FileDescriptorOutput: OutputProtocol {
 /// from the subprocess as `String` with the given encoding.
 /// This option must be used with he `run()` method that
 /// returns a `CollectedResult`.
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol {
     public typealias OutputType = String?
     public let maxSize: Int
 
     #if SubprocessSpan
+    @available(SubprocessSpan, *)
     public func output(from span: RawSpan) throws -> String? {
         // FIXME: Span to String
         var array: [UInt8] = []
@@ -135,13 +122,12 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol {
         }
         return String(decodingBytes: array, as: Encoding.self)
     }
-    #else
+    #endif
     public func output(from buffer: some Sequence<UInt8>) throws -> String? {
         // FIXME: Span to String
         let array = Array(buffer)
         return String(decodingBytes: array, as: Encoding.self)
     }
-    #endif
 
     internal init(limit: Int, encoding: Encoding.Type) {
         self.maxSize = limit
@@ -151,9 +137,6 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol {
 /// A concrete `Output` type for subprocesses that collects output
 /// from the subprocess as `[UInt8]`. This option must be used with
 /// the `run()` method that returns a `CollectedResult`
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 public struct BytesOutput: OutputProtocol {
     public typealias OutputType = [UInt8]
     public let maxSize: Int
@@ -161,40 +144,23 @@ public struct BytesOutput: OutputProtocol {
     internal func captureOutput(
         from diskIO: consuming TrackedPlatformDiskIO?
     ) async throws -> [UInt8] {
-        var diskIOBox: TrackedPlatformDiskIO? = consume diskIO
-        return try await withCheckedThrowingContinuation { continuation in
-            let _diskIO = diskIOBox.take()
-            guard let _diskIO = _diskIO else {
-                // Show not happen due to type system constraints
-                fatalError("Trying to capture output without file descriptor")
-            }
-            _diskIO.readUntilEOF(upToLength: self.maxSize) { result in
-                switch result {
-                case .success(let data):
-                    // FIXME: remove workaround for
-                    // rdar://143992296
-                    // https://github.com/swiftlang/swift-subprocess/issues/3
-                    #if os(Windows)
-                    continuation.resume(returning: data)
-                    #else
-                    continuation.resume(returning: data.array())
-                    #endif
-                case .failure(let error):
-                    continuation.resume(throwing: error)
-                }
-            }
-        }
+        #if os(Windows)
+        return try await diskIO?.fileDescriptor.read(upToLength: self.maxSize) ?? []
+        #else
+        let result = try await diskIO!.dispatchIO.read(upToLength: self.maxSize)
+        return result?.array() ?? []
+        #endif
     }
 
     #if SubprocessSpan
+    @available(SubprocessSpan, *)
     public func output(from span: RawSpan) throws -> [UInt8] {
         fatalError("Not implemented")
     }
-    #else
+    #endif
     public func output(from buffer: some Sequence<UInt8>) throws -> [UInt8] {
         fatalError("Not implemented")
     }
-    #endif
 
     internal init(limit: Int) {
         self.maxSize = limit
@@ -205,26 +171,17 @@ public struct BytesOutput: OutputProtocol {
 /// the child output to the `.standardOutput` (a sequence) or `.standardError`
 /// property of `Execution`. This output type is
 /// only applicable to the `run()` family that takes a custom closure.
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 internal struct SequenceOutput: OutputProtocol {
     public typealias OutputType = Void
 
     internal init() {}
 }
 
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 extension OutputProtocol where Self == DiscardedOutput {
     /// Create a Subprocess output that discards the output
     public static var discarded: Self { .init() }
 }
 
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 extension OutputProtocol where Self == FileDescriptorOutput {
     /// Create a Subprocess output that writes output to a `FileDescriptor`
     /// and optionally close the `FileDescriptor` once process spawned.
@@ -236,9 +193,6 @@ extension OutputProtocol where Self == FileDescriptorOutput {
     }
 }
 
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 extension OutputProtocol where Self == StringOutput<UTF8> {
     /// Create a `Subprocess` output that collects output as
     /// UTF8 String with 128kb limit.
@@ -247,9 +201,6 @@ extension OutputProtocol where Self == StringOutput<UTF8> {
     }
 }
 
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 extension OutputProtocol {
     /// Create a `Subprocess` output that collects output as
     /// `String` using the given encoding up to limit it bytes.
@@ -261,9 +212,7 @@ extension OutputProtocol {
     }
 }
 
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
+
 extension OutputProtocol where Self == BytesOutput {
     /// Create a `Subprocess` output that collects output as
     /// `Buffer` with 128kb limit.
@@ -292,9 +241,6 @@ extension OutputProtocol {
 
 
 // MARK: - Default Implementations
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 extension OutputProtocol {
     @_disfavoredOverload
     internal func createPipe() throws -> CreatedPipe {
@@ -315,53 +261,35 @@ extension OutputProtocol {
         if let bytesOutput = self as? BytesOutput {
             return try await bytesOutput.captureOutput(from: diskIO) as! Self.OutputType
         }
-        var diskIOBox: TrackedPlatformDiskIO? = consume diskIO
-        return try await withCheckedThrowingContinuation { continuation in
-            if OutputType.self == Void.self {
-                continuation.resume(returning: () as! OutputType)
-                return
-            }
-            guard let _diskIO = diskIOBox.take() else {
-                // Show not happen due to type system constraints
-                fatalError("Trying to capture output without file descriptor")
-            }
 
-            _diskIO.readUntilEOF(upToLength: self.maxSize) { result in
-                do {
-                    switch result {
-                    case .success(let data):
-                        // FIXME: remove workaround for
-                        // rdar://143992296
-                        // https://github.com/swiftlang/swift-subprocess/issues/3
-                        let output = try self.output(from: data)
-                        continuation.resume(returning: output)
-                    case .failure(let error):
-                        continuation.resume(throwing: error)
-                    }
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
+        if OutputType.self == Void.self {
+            return () as! OutputType
         }
+
+        #if os(Windows)
+        let result = try await diskIO?.fileDescriptor.read(upToLength: self.maxSize)
+        return try self.output(from: result ?? [])
+        #else
+        let result = try await diskIO!.dispatchIO.read(upToLength: self.maxSize)
+        return try self.output(from: result ?? .empty)
+        #endif
     }
 }
 
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 extension OutputProtocol where OutputType == Void {
     internal func captureOutput(from fileDescriptor: consuming TrackedPlatformDiskIO?) async throws {}
 
     #if SubprocessSpan
     /// Convert the output from Data to expected output type
+    @available(SubprocessSpan, *)
     public func output(from span: RawSpan) throws {
         // noop
     }
-    #else
+    #endif
+
     public func output(from buffer: some Sequence<UInt8>) throws {
         // noop
     }
-    #endif  // SubprocessSpan
 }
 
 #if SubprocessSpan

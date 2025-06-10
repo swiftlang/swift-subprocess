@@ -391,7 +391,7 @@ extension SubprocessUnixTests {
         guard #available(SubprocessSpan , *) else {
             return
         }
-        // Maeks ure we can read long text as AsyncSequence
+        // Make sure we can read long text as AsyncSequence
         let fd: FileDescriptor = try .open(theMysteriousIsland, .readOnly)
         let expected: Data = try Data(
             contentsOf: URL(filePath: theMysteriousIsland.string)
@@ -420,9 +420,6 @@ extension SubprocessUnixTests {
     }
 
     @Test func testInputSequenceCustomExecutionBody() async throws {
-        guard #available(SubprocessSpan , *) else {
-            return
-        }
         let expected: Data = try Data(
             contentsOf: URL(filePath: theMysteriousIsland.string)
         )
@@ -433,7 +430,7 @@ extension SubprocessUnixTests {
         ) { execution, standardOutput in
             var buffer = Data()
             for try await chunk in standardOutput {
-                let currentChunk = chunk._withUnsafeBytes { Data($0) }
+                let currentChunk = chunk.withUnsafeBytes { Data($0) }
                 buffer += currentChunk
             }
             return buffer
@@ -443,10 +440,7 @@ extension SubprocessUnixTests {
     }
 
     @Test func testInputAsyncSequenceCustomExecutionBody() async throws {
-        guard #available(SubprocessSpan , *) else {
-            return
-        }
-        // Maeks ure we can read long text as AsyncSequence
+        // Make sure we can read long text as AsyncSequence
         let fd: FileDescriptor = try .open(theMysteriousIsland, .readOnly)
         let expected: Data = try Data(
             contentsOf: URL(filePath: theMysteriousIsland.string)
@@ -472,7 +466,7 @@ extension SubprocessUnixTests {
         ) { execution, standardOutput in
             var buffer = Data()
             for try await chunk in standardOutput {
-                let currentChunk = chunk._withUnsafeBytes { Data($0) }
+                let currentChunk = chunk.withUnsafeBytes { Data($0) }
                 buffer += currentChunk
             }
             return buffer
@@ -492,7 +486,7 @@ extension SubprocessUnixTests {
             output: .discard
         )
         #expect(echoResult.terminationStatus.isSuccess)
-        _ = echoResult.standardOutput  // this line shold fatalError
+        _ = echoResult.standardOutput  // this line should fatalError
     }
     #endif
 
@@ -532,7 +526,7 @@ extension SubprocessUnixTests {
         #expect(String(expected[targetRange]) == output)
     }
 
-    @Test func testCollectedOutputFileDesriptor() async throws {
+    @Test func testCollectedOutputFileDescriptor() async throws {
         guard #available(SubprocessSpan , *) else {
             return
         }
@@ -605,11 +599,8 @@ extension SubprocessUnixTests {
         }
     }
 
-    @Test func testRedirectedOutputRedirectToSequence() async throws {
-        guard #available(SubprocessSpan , *) else {
-            return
-        }
-        // Make ure we can read long text redirected to AsyncSequence
+    @Test func testRedirectedOutputWithUnsafeBytes() async throws {
+        // Make sure we can read long text redirected to AsyncSequence
         let expected: Data = try Data(
             contentsOf: URL(filePath: theMysteriousIsland.string)
         )
@@ -620,7 +611,7 @@ extension SubprocessUnixTests {
         ) { execution, standardOutput in
             var buffer = Data()
             for try await chunk in standardOutput {
-                let currentChunk = chunk._withUnsafeBytes { Data($0) }
+                let currentChunk = chunk.withUnsafeBytes { Data($0) }
                 buffer += currentChunk
             }
             return buffer
@@ -628,6 +619,27 @@ extension SubprocessUnixTests {
         #expect(catResult.terminationStatus.isSuccess)
         #expect(catResult.value == expected)
     }
+
+    #if SubprocessSpan
+    @Test func testRedirectedOutputBytes() async throws {
+        // Make sure we can read long text redirected to AsyncSequence
+        let expected: Data = try Data(
+            contentsOf: URL(filePath: theMysteriousIsland.string)
+        )
+        let catResult = try await Subprocess.run(
+            .path("/bin/cat"),
+            arguments: [theMysteriousIsland.string]
+        ) { (execution: Execution, standardOutput: AsyncBufferSequence) -> Data in
+            var buffer: Data = Data()
+            for try await chunk in standardOutput {
+                buffer += chunk.withUnsafeBytes { Data(bytes: $0.baseAddress!, count: chunk.count) }
+            }
+            return buffer
+        }
+        #expect(catResult.terminationStatus.isSuccess)
+        #expect(catResult.value == expected)
+    }
+    #endif
 
     @Test func testBufferOutput() async throws {
         guard #available(SubprocessSpan , *) else {
@@ -650,7 +662,7 @@ extension SubprocessUnixTests {
         guard #available(SubprocessSpan , *) else {
             return
         }
-        // Make ure we can capture long text on standard error
+        // Make sure we can capture long text on standard error
         let expected: Data = try Data(
             contentsOf: URL(filePath: theMysteriousIsland.string)
         )
@@ -663,6 +675,18 @@ extension SubprocessUnixTests {
         #expect(catResult.standardError == expected)
     }
 }
+
+#if SubprocessSpan
+@available(SubprocessSpan, *)
+extension Data {
+    init(bytes: borrowing RawSpan) {
+        let data = bytes.withUnsafeBytes {
+            return Data(bytes: $0.baseAddress!, count: $0.count)
+        }
+        self = data
+    }
+}
+#endif
 
 // MARK: - PlatformOption Tests
 extension SubprocessUnixTests {
@@ -715,7 +739,7 @@ extension SubprocessUnixTests {
             "This test requires root privileges"
         )
     )
-    func testSubprocssPlatformOptionsSuplimentaryGroups() async throws {
+    func testSubprocessPlatformOptionsSupplementaryGroups() async throws {
         guard #available(SubprocessSpan , *) else {
             return
         }
@@ -784,8 +808,8 @@ extension SubprocessUnixTests {
         // platformOptions.createSession implies calls to setsid
         var platformOptions = PlatformOptions()
         platformOptions.createSession = true
-        // Check the proces ID (pid), pross group ID (pgid), and
-        // controling terminal's process group ID (tpgid)
+        // Check the process ID (pid), process group ID (pgid), and
+        // controlling terminal's process group ID (tpgid)
         let psResult = try await Subprocess.run(
             .path("/bin/bash"),
             arguments: ["-c", "ps -o pid,pgid,tpgid -p $$"],
@@ -828,7 +852,7 @@ extension SubprocessUnixTests {
                 group.addTask {
                     var outputs: [String] = []
                     for try await bit in standardOutput {
-                        let bitString = bit._withUnsafeBytes { ptr in
+                        let bitString = bit.withUnsafeBytes { ptr in
                             return String(decoding: ptr, as: UTF8.self)
                         }.trimmingCharacters(in: .whitespacesAndNewlines)
                         if bitString.contains("\n") {
@@ -884,7 +908,7 @@ extension SubprocessUnixTests {
             for try await _ in standardOutput {}
         }
         guard case .unhandledException(let exception) = stuckResult.terminationStatus else {
-            Issue.record("Wrong termination status repored: \(stuckResult.terminationStatus)")
+            Issue.record("Wrong termination status reported: \(stuckResult.terminationStatus)")
             return
         }
         #expect(exception == Signal.terminate.rawValue)
@@ -929,9 +953,124 @@ extension SubprocessUnixTests {
                     return result
                 }
             }
-            preconditionFailure("Task shold have returned a result")
+            preconditionFailure("Task should have returned a result")
         }
         #expect(result == .unhandledException(SIGKILL))
+    }
+
+    @Test func testLineSequence() async throws {
+        typealias TestCase = (value: String, count: Int, newLine: String)
+        enum TestCaseSize: CaseIterable {
+            case large      // (1.0 ~ 2.0) * buffer size
+            case medium     // (0.2 ~ 1.0) * buffer size
+            case small      // Less than 16 characters
+        }
+
+        let newLineCharacters: [[UInt8]] = [
+            [0x0A],             // Line feed
+            [0x0B],             // Vertical tab
+            [0x0C],             // Form feed
+            [0x0D],             // Carriage return
+            [0x0D, 0x0A],       // Carriage return + Line feed
+            [0xC2, 0x85],       // New line
+            [0xE2, 0x80, 0xA8], // Line Separator
+            [0xE2, 0x80, 0xA9]  // Paragraph separator
+        ]
+
+        // Generate test cases
+        func generateString(size: TestCaseSize) -> [UInt8] {
+            // Basic Latin has the range U+0020 ... U+007E
+            let range: ClosedRange<UInt8> = 0x20 ... 0x7E
+
+            let length: Int
+            switch size {
+            case .large:
+                length = Int(Double.random(in: 1.0 ..< 2.0) * Double(readBufferSize))
+            case .medium:
+                length = Int(Double.random(in: 0.2 ..< 1.0) * Double(readBufferSize))
+            case .small:
+                length = Int.random(in: 0 ..< 16)
+            }
+
+            var buffer: [UInt8] = Array(repeating: 0, count: length)
+            for index in 0 ..< length {
+                buffer[index] = UInt8.random(in: range)
+            }
+            return buffer
+        }
+
+        // Generate at least 2 long lines that is longer than buffer size
+        func generateTestCases(count: Int) -> [TestCase] {
+            var targetSizes: [TestCaseSize] = TestCaseSize.allCases.flatMap {
+                Array(repeating: $0, count: count / 3)
+            }
+            // Fill the remainder
+            let remaining = count - targetSizes.count
+            let rest = TestCaseSize.allCases.shuffled().prefix(remaining)
+            targetSizes.append(contentsOf: rest)
+            // Do a final shuffle to achieve random order
+            targetSizes.shuffle()
+            // Now generate test cases based on sizes
+            var testCases: [TestCase] = []
+            for size in targetSizes {
+                let components = generateString(size: size)
+                // Choose a random new line
+                let newLine = newLineCharacters.randomElement()!
+                let string = String(decoding: components + newLine, as: UTF8.self)
+                testCases.append((
+                    value: string,
+                    count: components.count + newLine.count,
+                    newLine: String(decoding: newLine, as: UTF8.self)
+                ))
+            }
+            return testCases
+        }
+
+        func writeTestCasesToFile(_ testCases: [TestCase], at url: URL) throws {
+            #if canImport(Darwin)
+            FileManager.default.createFile(atPath: url.path(), contents: nil, attributes: nil)
+            let fileHadle = try FileHandle(forWritingTo: url)
+            for testCase in testCases {
+                fileHadle.write(testCase.value.data(using: .utf8)!)
+            }
+            try fileHadle.close()
+            #else
+            var result = ""
+            for testCase in testCases {
+                result += testCase.value
+            }
+            try result.write(to: url, atomically: true, encoding: .utf8)
+            #endif
+        }
+
+        let testCaseCount = 60
+        let testFilePath = URL.temporaryDirectory.appending(path: "NewLines-\(UUID().uuidString).txt")
+        if FileManager.default.fileExists(atPath: testFilePath.path()) {
+            try FileManager.default.removeItem(at: testFilePath)
+        }
+        let testCases = generateTestCases(count: testCaseCount)
+        try writeTestCasesToFile(testCases, at: testFilePath)
+
+        _ = try await Subprocess.run(
+            .path("/bin/cat"),
+            arguments: [testFilePath.path()],
+            error: .discarded
+        ) { execution, standardOutput in
+            var index = 0
+            for try await line in standardOutput.lines(encoding: UTF8.self) {
+                #expect(
+                    line == testCases[index].value,
+                    """
+                    Found mismatching line at index \(index)
+                    Expected: [\(testCases[index].value)]
+                      Actual: [\(line)]
+                    Line Ending \(Array(testCases[index].newLine.utf8))
+                    """
+                )
+                index += 1
+            }
+        }
+        try FileManager.default.removeItem(at: testFilePath)
     }
 }
 
@@ -973,7 +1112,7 @@ internal func assertNewSessionCreated<Output: OutputProtocol>(
         result.standardOutput
     )
     let match = try #require(try #/\s*PID\s*PGID\s*TPGID\s*(?<pid>[\-]?[0-9]+)\s*(?<pgid>[\-]?[0-9]+)\s*(?<tpgid>[\-]?[0-9]+)\s*/#.wholeMatch(in: psValue), "ps output was in an unexpected format:\n\n\(psValue)")
-    // If setsid() has been called successfully, we shold observe:
+    // If setsid() has been called successfully, we should observe:
     // - pid == pgid
     // - tpgid <= 0
     let pid = try #require(Int(match.output.pid))
