@@ -27,9 +27,6 @@ import Testing
 @Suite(.serialized)
 struct SubprocessDarwinTests {
     @Test func testSubprocessPlatformOptionsProcessConfiguratorUpdateSpawnAttr() async throws {
-        guard #available(SubprocessSpan , *) else {
-            return
-        }
         var platformOptions = PlatformOptions()
         platformOptions.preSpawnProcessConfigurator = { spawnAttr, _ in
             // Set POSIX_SPAWN_SETSID flag, which implies calls
@@ -50,9 +47,6 @@ struct SubprocessDarwinTests {
     }
 
     @Test func testSubprocessPlatformOptionsProcessConfiguratorUpdateFileAction() async throws {
-        guard #available(SubprocessSpan , *) else {
-            return
-        }
         let intendedWorkingDir = FileManager.default.temporaryDirectory.path()
         var platformOptions = PlatformOptions()
         platformOptions.preSpawnProcessConfigurator = { _, fileAttr in
@@ -79,9 +73,6 @@ struct SubprocessDarwinTests {
     }
 
     @Test func testSuspendResumeProcess() async throws {
-        guard #available(SubprocessSpan , *) else {
-            return
-        }
         _ = try await Subprocess.run(
             // This will intentionally hang
             .path("/bin/cat"),

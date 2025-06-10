@@ -231,7 +231,6 @@ public final actor StandardInputWriter: Sendable {
     /// - Parameter span: The span to write
     /// - Returns number of bytes written
     #if SubprocessSpan
-    @available(SubprocessSpan, *)
     public func write(_ span: borrowing RawSpan) async throws -> Int {
         return try await self.diskIO.write(span)
     }

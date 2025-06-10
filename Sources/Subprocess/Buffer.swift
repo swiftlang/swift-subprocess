@@ -79,9 +79,6 @@ extension AsyncBufferSequence.Buffer {
 
     #if SubprocessSpan
     // Access the storage backing this Buffer
-    #if SubprocessSpan
-    @available(SubprocessSpan, *)
-    #endif
     public var bytes: RawSpan {
         @lifetime(borrow self)
         borrowing get {

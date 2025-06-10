@@ -45,9 +45,6 @@ struct SubprocessLintingTest {
         )
     )
     func runLinter() async throws {
-        guard #available(SubprocessSpan , *) else {
-            return
-        }
         // META: Use Subprocess to run `swift-format` on self
         // to make sure it's properly linted
         guard

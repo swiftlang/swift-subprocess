@@ -30,9 +30,6 @@
 ///   - output: The method to use for redirecting the standard output.
 ///   - error: The method to use for redirecting the standard error.
 /// - Returns a CollectedResult containing the result of the run.
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 public func run<
     Input: InputProtocol,
     Output: OutputProtocol,
@@ -76,7 +73,6 @@ public func run<
 ///   - error: The method to use for redirecting the standard error.
 /// - Returns a CollectedResult containing the result of the run.
 #if SubprocessSpan
-@available(SubprocessSpan, *)
 public func run<
     InputElement: BitwiseCopyable,
     Output: OutputProtocol,
@@ -480,9 +476,6 @@ public func run<Result>(
 ///   - output: The method to use for redirecting the standard output.
 ///   - error: The method to use for redirecting the standard error.
 /// - Returns a CollectedResult containing the result of the run.
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
 public func run<
     Input: InputProtocol,
     Output: OutputProtocol,

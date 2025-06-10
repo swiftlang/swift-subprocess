@@ -21,9 +21,6 @@ internal import Dispatch
 
 // Windows specific implementation
 extension Configuration {
-    #if SubprocessSpan
-    @available(SubprocessSpan, *)
-    #endif
     internal func spawn(
         withInput inputPipe: consuming CreatedPipe,
         outputPipe: consuming CreatedPipe,
@@ -534,9 +531,7 @@ internal func monitorProcessTermination(
 }
 
 // MARK: - Subprocess Control
-#if SubprocessSpan
-@available(SubprocessSpan, *)
-#endif
+
 extension Execution {
     /// Terminate the current subprocess with the given exit code
     /// - Parameter exitCode: The exit code to use for the subprocess.
@@ -1165,7 +1160,6 @@ extension TrackedFileDescriptor {
     }
 
 #if SubprocessSpan
-    @available(SubprocessSpan, *)
     internal func write(
         _ span: borrowing RawSpan
     ) async throws -> Int {
