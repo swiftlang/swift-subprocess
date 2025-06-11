@@ -641,8 +641,8 @@ int _subprocess_fork_exec(
         if (file_descriptors[3] >= 0) {
             rc = close(file_descriptors[3]);
         }
-        if (file_descriptors[4] >= 0) {
-            rc = close(file_descriptors[4]);
+        if (file_descriptors[5] >= 0) {
+            rc = close(file_descriptors[5]);
         }
         if (rc != 0) {
             int error = errno;
