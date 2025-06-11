@@ -39,7 +39,6 @@ public func _overrideLifetime<
     dependent
 }
 
-@available(SubprocessSpan, *)
 extension Span where Element: BitwiseCopyable {
 
     internal var _bytes: RawSpan {
@@ -55,7 +54,6 @@ extension Span where Element: BitwiseCopyable {
 #if canImport(Glibc) || canImport(Bionic) || canImport(Musl)
 internal import Dispatch
 
-@available(SubprocessSpan, *)
 extension DispatchData {
     var bytes: RawSpan {
         _read {

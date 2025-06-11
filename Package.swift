@@ -3,10 +3,6 @@
 
 import PackageDescription
 
-let availabilityMacro: SwiftSetting = .enableExperimentalFeature(
-    "AvailabilityMacro=SubprocessSpan: macOS 9999, iOS 9999, tvOS 9999, watchOS 9999, visionOS 9999",
-)
-
 var dep: [Package.Dependency] = [
     .package(
         url: "https://github.com/apple/swift-system",
@@ -59,7 +55,6 @@ let package = Package(
                 .enableExperimentalFeature("NonescapableTypes"),
                 .enableExperimentalFeature("LifetimeDependence"),
                 .enableExperimentalFeature("Span"),
-                availabilityMacro,
             ]
         ),
         .testTarget(
@@ -72,7 +67,6 @@ let package = Package(
             ],
             swiftSettings: [
                 .enableExperimentalFeature("Span"),
-                availabilityMacro,
             ]
         ),
 

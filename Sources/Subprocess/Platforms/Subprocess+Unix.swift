@@ -446,7 +446,6 @@ extension DispatchIO {
 
 extension TrackedDispatchIO {
     #if SubprocessSpan
-    @available(SubprocessSpan, *)
     internal func write(
         _ span: borrowing RawSpan
     ) async throws -> Int {

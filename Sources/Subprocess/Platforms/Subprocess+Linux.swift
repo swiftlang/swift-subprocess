@@ -32,9 +32,6 @@ import _SubprocessCShims
 
 // Linux specific implementations
 extension Configuration {
-    #if SubprocessSpan
-    @available(SubprocessSpan, *)
-    #endif
     internal func spawn(
         withInput inputPipe: consuming CreatedPipe,
         outputPipe: consuming CreatedPipe,

@@ -28,7 +28,6 @@ public protocol OutputProtocol: Sendable, ~Copyable {
 
     #if SubprocessSpan
     /// Convert the output from span to expected output type
-    @available(SubprocessSpan, *)
     func output(from span: RawSpan) throws -> OutputType
     #endif
 
@@ -113,7 +112,6 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol {
     public let maxSize: Int
 
     #if SubprocessSpan
-    @available(SubprocessSpan, *)
     public func output(from span: RawSpan) throws -> String? {
         // FIXME: Span to String
         var array: [UInt8] = []
@@ -153,7 +151,6 @@ public struct BytesOutput: OutputProtocol {
     }
 
     #if SubprocessSpan
-    @available(SubprocessSpan, *)
     public func output(from span: RawSpan) throws -> [UInt8] {
         fatalError("Not implemented")
     }
@@ -227,7 +224,6 @@ extension OutputProtocol where Self == BytesOutput {
 
 // MARK: - Span Default Implementations
 #if SubprocessSpan
-@available(SubprocessSpan, *)
 extension OutputProtocol {
     public func output(from buffer: some Sequence<UInt8>) throws -> OutputType {
         guard let rawBytes: UnsafeRawBufferPointer = buffer as? UnsafeRawBufferPointer else {
@@ -281,7 +277,6 @@ extension OutputProtocol where OutputType == Void {
 
     #if SubprocessSpan
     /// Convert the output from Data to expected output type
-    @available(SubprocessSpan, *)
     public func output(from span: RawSpan) throws {
         // noop
     }
@@ -293,7 +288,6 @@ extension OutputProtocol where OutputType == Void {
 }
 
 #if SubprocessSpan
-@available(SubprocessSpan, *)
 extension OutputProtocol {
     #if os(Windows)
     internal func output(from data: [UInt8]) throws -> OutputType {

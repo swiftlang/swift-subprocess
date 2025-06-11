@@ -21,7 +21,6 @@ import FoundationEssentials
 
 internal import Dispatch
 
-@available(SubprocessSpan, *)
 extension Data {
     init(_ s: borrowing RawSpan) {
         self = s.withUnsafeBytes { Data($0) }
@@ -37,7 +36,6 @@ extension Data {
     }
 }
 
-@available(SubprocessSpan, *)
 extension DataProtocol {
     var bytes: RawSpan {
         _read {
