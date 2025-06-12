@@ -85,11 +85,10 @@ extension Configuration {
                     errorReadFileDescriptor?.platformDescriptor() ?? -1,
                 ]
 
-                let workingDirectory: String = self.workingDirectory.string
                 // Spawn
                 var pid: pid_t = 0
                 let spawnError: CInt = possibleExecutablePath.withCString { exePath in
-                    return workingDirectory.withCString { workingDir in
+                    return (self.workingDirectory?.string).withOptionalCString { workingDir in
                         return supplementaryGroups.withOptionalUnsafeBufferPointer { sgroups in
                             return fileDescriptors.withUnsafeBufferPointer { fds in
                                 return _subprocess_fork_exec(
@@ -173,12 +172,13 @@ extension Configuration {
                 errorRead: errorReadFileDescriptor,
                 errorWrite: errorWriteFileDescriptor
             )
-            let workingDirectory = self.workingDirectory.string
-            guard Configuration.pathAccessible(workingDirectory, mode: F_OK) else {
-                throw SubprocessError(
-                    code: .init(.failedToChangeWorkingDirectory(workingDirectory)),
-                    underlyingError: .init(rawValue: ENOENT)
-                )
+            if let workingDirectory = self.workingDirectory?.string {
+                guard Configuration.pathAccessible(workingDirectory, mode: F_OK) else {
+                    throw SubprocessError(
+                        code: .init(.failedToChangeWorkingDirectory(workingDirectory)),
+                        underlyingError: .init(rawValue: ENOENT)
+                    )
+                }
             }
             throw SubprocessError(
                 code: .init(.executableNotFound(self.executable.description)),

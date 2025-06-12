@@ -39,7 +39,8 @@ public struct Configuration: Sendable {
     /// The environment to use when running the executable.
     public var environment: Environment
     /// The working directory to use when running the executable.
-    public var workingDirectory: FilePath
+    /// If this property is `nil`, the subprocess will inherit the working directory from the parent process.
+    public var workingDirectory: FilePath?
     /// The platform specific options to use when
     /// running the subprocess.
     public var platformOptions: PlatformOptions
@@ -54,7 +55,7 @@ public struct Configuration: Sendable {
         self.executable = executable
         self.arguments = arguments
         self.environment = environment
-        self.workingDirectory = workingDirectory ?? .currentWorkingDirectory
+        self.workingDirectory = workingDirectory
         self.platformOptions = platformOptions
     }
 
@@ -107,7 +108,7 @@ extension Configuration: CustomStringConvertible, CustomDebugStringConvertible {
                 executable: \(self.executable.description),
                 arguments: \(self.arguments.description),
                 environment: \(self.environment.description),
-                workingDirectory: \(self.workingDirectory),
+                workingDirectory: \(self.workingDirectory?.string ?? ""),
                 platformOptions: \(self.platformOptions.description(withIndent: 1))
             )
             """
@@ -119,7 +120,7 @@ extension Configuration: CustomStringConvertible, CustomDebugStringConvertible {
                 executable: \(self.executable.debugDescription),
                 arguments: \(self.arguments.debugDescription),
                 environment: \(self.environment.debugDescription),
-                workingDirectory: \(self.workingDirectory),
+                workingDirectory: \(self.workingDirectory?.string ?? ""),
                 platformOptions: \(self.platformOptions.description(withIndent: 1))
             )
             """
@@ -711,14 +712,6 @@ internal struct CreatedPipe: ~Copyable {
             pipe.writeEnd,
             closeWhenDone: closeWhenDone
         )
-    }
-}
-
-extension FilePath {
-    static var currentWorkingDirectory: Self {
-        let path = getcwd(nil, 0)!
-        defer { free(path) }
-        return .init(String(cString: path))
     }
 }
 
