@@ -50,6 +50,7 @@ let package = Package(
                 .product(name: "SystemPackage", package: "swift-system"),
             ],
             path: "Sources/Subprocess",
+            exclude: [ "CMakeLists.txt" ],
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
                 .enableExperimentalFeature("NonescapableTypes"),
@@ -83,7 +84,8 @@ let package = Package(
 
         .target(
             name: "_SubprocessCShims",
-            path: "Sources/_SubprocessCShims"
+            path: "Sources/_SubprocessCShims",
+            exclude: [ "CMakeLists.txt" ]
         ),
     ]
 )

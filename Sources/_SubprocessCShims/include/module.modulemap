@@ -1,0 +1,4 @@
+module _SubprocessCShims {
+  header "process_shims.h"
+  header "target_conditionals.h"
+}
