@@ -43,6 +43,10 @@
 extern char **environ;
 #endif
 
+#if __has_include(<mach/vm_page_size.h>)
+#include <mach/vm_page_size.h>
+#endif
+
 int _was_process_exited(int status) {
     return WIFEXITED(status);
 }
