@@ -632,26 +632,7 @@ internal struct TrackedFileDescriptor: ~Copyable {
             return
         }
 
-        do {
-            try fileDescriptor.close()
-        } catch {
-            guard let errno: Errno = error as? Errno else {
-                return
-            }
-            // Getting `.badFileDescriptor` suggests that the file descriptor
-            // might have been closed unexpectedly. This can pose security risks
-            // if another part of the code inadvertently reuses the same file descriptor
-            // number. This problem is especially concerning on Unix systems due to POSIX’s
-            // guarantee of using the lowest available file descriptor number, making reuse
-            // more probable. We use `fatalError` upon receiving `.badFileDescriptor`
-            // to prevent accidentally closing a different file descriptor.
-            guard errno != .badFileDescriptor else {
-                fatalError(
-                    "FileDescriptor \(fileDescriptor.rawValue) is already closed"
-                )
-            }
-            // Otherwise ignore the error
-        }
+        fatalError("FileDescriptor \(self.fileDescriptor.rawValue) was not closed")
     }
 
     internal func platformDescriptor() -> PlatformFileDescriptor {
@@ -695,7 +676,7 @@ internal struct TrackedDispatchIO: ~Copyable {
             return
         }
 
-        dispatchIO.close()
+        fatalError("DispatchIO \(self.dispatchIO) was not closed")
     }
 }
 #endif
