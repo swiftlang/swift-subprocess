@@ -143,9 +143,12 @@ public struct BytesOutput: OutputProtocol {
         from diskIO: consuming TrackedPlatformDiskIO?
     ) async throws -> [UInt8] {
         #if os(Windows)
-        return try await diskIO?.fileDescriptor.read(upToLength: self.maxSize) ?? []
+        let result = try await diskIO?.fileDescriptor.read(upToLength: self.maxSize) ?? []
+        try diskIO?.safelyClose()
+        return result
         #else
         let result = try await diskIO!.dispatchIO.read(upToLength: self.maxSize)
+        try diskIO?.safelyClose()
         return result?.array() ?? []
         #endif
     }
@@ -261,12 +264,13 @@ extension OutputProtocol {
         if OutputType.self == Void.self {
             return () as! OutputType
         }
-
         #if os(Windows)
         let result = try await diskIO?.fileDescriptor.read(upToLength: self.maxSize)
+        try diskIO?.safelyClose()
         return try self.output(from: result ?? [])
         #else
         let result = try await diskIO!.dispatchIO.read(upToLength: self.maxSize)
+        try diskIO?.safelyClose()
         return try self.output(from: result ?? .empty)
         #endif
     }
