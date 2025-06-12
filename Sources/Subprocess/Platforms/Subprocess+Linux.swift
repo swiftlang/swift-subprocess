@@ -82,7 +82,7 @@ extension Configuration {
                     outputWriteFileDescriptor?.platformDescriptor() ?? -1,
                     outputReadFileDescriptor?.platformDescriptor() ?? -1,
                     errorWriteFileDescriptor?.platformDescriptor() ?? -1,
-                    errorWriteFileDescriptor?.platformDescriptor() ?? -1,
+                    errorReadFileDescriptor?.platformDescriptor() ?? -1,
                 ]
 
                 let workingDirectory: String = self.workingDirectory.string
