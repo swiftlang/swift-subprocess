@@ -87,7 +87,6 @@ vm_size_t _subprocess_vm_size(void) {
 // MARK: - Private Helpers
 static pthread_mutex_t _subprocess_fork_lock = PTHREAD_MUTEX_INITIALIZER;
 
-// Used after fork, before exec
 static int _subprocess_block_everything_but_something_went_seriously_wrong_signals(sigset_t *old_mask) {
     sigset_t mask;
     int r = 0;
