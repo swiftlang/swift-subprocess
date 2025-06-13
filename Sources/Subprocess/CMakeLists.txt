@@ -13,6 +13,7 @@ target_sources(Subprocess PRIVATE
   Execution.swift
   Buffer.swift
   Error.swift
+  Locked.swift
   Teardown.swift
   Result.swift
   IO/Output.swift
