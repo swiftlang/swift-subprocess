@@ -34,8 +34,12 @@
 #include <string.h>
 #include <fcntl.h>
 #include <pthread.h>
-
+#include <dirent.h>
 #include <stdio.h>
+
+#if __has_include(<linux/close_range.h>)
+#include <linux/close_range.h>
+#endif
 
 #if __has_include(<crt_externs.h>)
 #include <crt_externs.h>
@@ -50,6 +54,7 @@ extern char **environ;
 #include <mach/vm_page_size.h>
 #endif
 
+#if !TARGET_OS_WINDOWS
 int _was_process_exited(int status) {
     return WIFEXITED(status);
 }
@@ -70,8 +75,7 @@ int _was_process_suspended(int status) {
     return WIFSTOPPED(status);
 }
 
-#if TARGET_OS_LINUX
-#include <stdio.h>
+#endif // !TARGET_OS_WINDOWS
 
 #ifndef SYS_pidfd_send_signal
 #define SYS_pidfd_send_signal 424
@@ -98,40 +102,6 @@ vm_size_t _subprocess_vm_size(void) {
     // This shim exists because vm_page_size is not marked const, and therefore looks like global mutable state to Swift.
     return vm_page_size;
 }
-#endif
-
-// MARK: - Private Helpers
-static pthread_mutex_t _subprocess_fork_lock = PTHREAD_MUTEX_INITIALIZER;
-
-static int _subprocess_block_everything_but_something_went_seriously_wrong_signals(sigset_t *old_mask) {
-    sigset_t mask;
-    int r = 0;
-    r |= sigfillset(&mask);
-    r |= sigdelset(&mask, SIGABRT);
-    r |= sigdelset(&mask, SIGBUS);
-    r |= sigdelset(&mask, SIGFPE);
-    r |= sigdelset(&mask, SIGILL);
-    r |= sigdelset(&mask, SIGKILL);
-    r |= sigdelset(&mask, SIGSEGV);
-    r |= sigdelset(&mask, SIGSTOP);
-    r |= sigdelset(&mask, SIGSYS);
-    r |= sigdelset(&mask, SIGTRAP);
-
-    r |= pthread_sigmask(SIG_BLOCK, &mask, old_mask);
-    return r;
-}
-
-#define _subprocess_precondition(__cond) do { \
-    int eval = (__cond); \
-    if (!eval) { \
-        __builtin_trap(); \
-    } \
-} while(0)
-
-#if __DARWIN_NSIG
-#  define _SUBPROCESS_SIG_MAX __DARWIN_NSIG
-#else
-#  define _SUBPROCESS_SIG_MAX 32
 #endif
 
 
@@ -374,6 +344,100 @@ static int _clone3(int *pidfd) {
     return syscall(SYS_clone3, &args, sizeof(args));
 }
 
+static pthread_mutex_t _subprocess_fork_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static int _subprocess_make_critical_mask(sigset_t *old_mask) {
+    sigset_t mask;
+    int r = 0;
+    r |= sigfillset(&mask);
+    r |= sigdelset(&mask, SIGABRT);
+    r |= sigdelset(&mask, SIGBUS);
+    r |= sigdelset(&mask, SIGFPE);
+    r |= sigdelset(&mask, SIGILL);
+    r |= sigdelset(&mask, SIGKILL);
+    r |= sigdelset(&mask, SIGSEGV);
+    r |= sigdelset(&mask, SIGSTOP);
+    r |= sigdelset(&mask, SIGSYS);
+    r |= sigdelset(&mask, SIGTRAP);
+
+    r |= pthread_sigmask(SIG_BLOCK, &mask, old_mask);
+    return r;
+}
+
+#define _subprocess_precondition(__cond) do { \
+    int eval = (__cond); \
+    if (!eval) { \
+        __builtin_trap(); \
+    } \
+} while(0)
+
+#if __DARWIN_NSIG
+#  define _SUBPROCESS_SIG_MAX __DARWIN_NSIG
+#else
+#  define _SUBPROCESS_SIG_MAX 32
+#endif
+
+int _shims_snprintf(
+    char * _Nonnull str,
+    int len,
+    const char * _Nonnull format,
+    char * _Nonnull str1,
+    char * _Nonnull str2
+) {
+    return snprintf(str, len, format, str1, str2);
+}
+
+static int _positive_int_parse(const char *str) {
+    char *end;
+    long value = strtol(str, &end, 10);
+    if (end == str) {
+        // No digits found
+        return -1;
+    }
+    if (errno == ERANGE || val <= 0 || val > INT_MAX) {
+        // Out of range
+        return -1;
+    }
+    return (int)value;
+}
+
+static int _highest_possibly_open_fd_dir(const char *fd_dir) {
+    int highest_fd_so_far = 0;
+    DIR *dir_ptr = opendir(fd_dir);
+    if (dir_ptr == NULL) {
+        return -1;
+    }
+
+    struct dirent *dir_entry = NULL;
+    while ((dir_entry = readdir(dir_ptr)) != NULL) {
+        char *entry_name = dir_entry->d_name;
+        int number = _positive_int_parse(entry_name);
+        if (number > (long)highest_fd_so_far) {
+            highest_fd_so_far = number;
+        }
+    }
+
+    closedir(dir_ptr);
+    return highest_fd_so_far;
+}
+
+static int _highest_possibly_open_fd(void) {
+#if defined(__APPLE__)
+    int hi = _highest_possibly_open_fd_dir("/dev/fd");
+    if (hi < 0) {
+        hi = getdtablesize();
+    }
+#elif defined(__linux__)
+    int hi = _highest_possibly_open_fd_dir("/proc/self/fd");
+    if (hi < 0) {
+        hi = getdtablesize();
+    }
+#else
+    int hi = getdtablesize();
+#endif
+    return hi;
+}
+
 int _subprocess_fork_exec(
     pid_t * _Nonnull pid,
     int * _Nonnull pidfd,
@@ -433,7 +497,7 @@ int _subprocess_fork_exec(
     _subprocess_precondition(rc == 0);
     // Block all signals on this thread
     sigset_t old_sigmask;
-    rc = _subprocess_block_everything_but_something_went_seriously_wrong_signals(&old_sigmask);
+    rc = _subprocess_make_critical_mask(&old_sigmask);
     if (rc != 0) {
         close(pipefd[0]);
         close(pipefd[1]);
@@ -556,20 +620,22 @@ int _subprocess_fork_exec(
         if (rc < 0) {
             write_error_and_exit;
         }
-
-        // Close parent side
-        if (file_descriptors[1] >= 0) {
-            rc = close(file_descriptors[1]);
-        }
-        if (file_descriptors[3] >= 0) {
-            rc = close(file_descriptors[3]);
-        }
-        if (file_descriptors[5] >= 0) {
-            rc = close(file_descriptors[5]);
-        }
-
-        if (rc < 0) {
-            write_error_and_exit;
+        // Close all other file descriptors
+        rc = -1;
+        errno = ENOSYS;
+#if __has_include(<linux/close_range.h>) || defined(__FreeBSD__)
+        // We must NOT close pipefd[1] for writing errors
+        rc = close_range(STDERR_FILENO + 1, pipefd[1] - 1, 0);
+        rc |= close_range(pipefd[1] + 1, ~0U, 0);
+#endif
+        if (rc != 0) {
+            // close_range failed (or doesn't exist), fall back to close()
+            for (int fd = STDERR_FILENO + 1; fd < _highest_possibly_open_fd(); fd++) {
+                // We must NOT close pipefd[1] for writing errors
+                if (fd != pipefd[1]) {
+                    close(fd);
+                }
+            }
         }
 
         // Run custom configuratior
@@ -646,8 +712,6 @@ int _subprocess_fork_exec(
 }
 
 #endif // TARGET_OS_LINUX
-
-#endif // !TARGET_OS_WINDOWS
 
 #pragma mark - Environment Locking
 
