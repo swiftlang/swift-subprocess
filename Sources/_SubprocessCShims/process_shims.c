@@ -31,8 +31,14 @@
 #include <string.h>
 #include <fcntl.h>
 #include <pthread.h>
-
+#include <dirent.h>
 #include <stdio.h>
+
+#if __has_include(<linux/close_range.h>)
+#include <linux/close_range.h>
+#endif
+
+#endif // TARGET_OS_WINDOWS
 
 #if __has_include(<crt_externs.h>)
 #include <crt_externs.h>
@@ -364,93 +370,57 @@ static int _subprocess_addchdir_np(
 #endif
 }
 
-static int _subprocess_posix_spawn_fallback(
-    pid_t * _Nonnull pid,
-    const char * _Nonnull exec_path,
-    const char * _Nullable working_directory,
-    const int file_descriptors[_Nonnull],
-    char * _Nullable const args[_Nonnull],
-    char * _Nullable const env[_Nullable],
-    gid_t * _Nullable process_group_id
-) {
-    // Setup stdin, stdout, and stderr
-    posix_spawn_file_actions_t file_actions;
+static int _positive_int_parse(const char *str) {
+    int out = 0;
+    char c = 0;
 
-    int rc = posix_spawn_file_actions_init(&file_actions);
-    if (rc != 0) { return rc; }
-    if (file_descriptors[0] >= 0) {
-        rc = posix_spawn_file_actions_adddup2(
-            &file_actions, file_descriptors[0], STDIN_FILENO
-        );
-        if (rc != 0) { return rc; }
+    while ((c = *str++) != 0) {
+        out *= 10;
+        if (c >= '0' && c <= '9') {
+            out += c - '0';
+        } else {
+            return -1;
+        }
     }
-    if (file_descriptors[2] >= 0) {
-        rc = posix_spawn_file_actions_adddup2(
-            &file_actions, file_descriptors[2], STDOUT_FILENO
-        );
-        if (rc != 0) { return rc; }
+    return out;
+}
+
+static int _highest_possibly_open_fd_dir(const char *fd_dir) {
+    int highest_fd_so_far = 0;
+    DIR *dir_ptr = opendir(fd_dir);
+    if (dir_ptr == NULL) {
+        return -1;
     }
-    if (file_descriptors[4] >= 0) {
-        rc = posix_spawn_file_actions_adddup2(
-            &file_actions, file_descriptors[4], STDERR_FILENO
-        );
-        if (rc != 0) { return rc; }
-    }
-    // Setup working directory
-    if (working_directory != NULL) {
-        rc = _subprocess_addchdir_np(&file_actions, working_directory);
-        if (rc != 0) {
-            return rc;
+
+    struct dirent *dir_entry = NULL;
+    while ((dir_entry = readdir(dir_ptr)) != NULL) {
+        char *entry_name = dir_entry->d_name;
+        int number = _positive_int_parse(entry_name);
+        if (number > (long)highest_fd_so_far) {
+            highest_fd_so_far = number;
         }
     }
 
-    // Close parent side
-    if (file_descriptors[1] >= 0) {
-        rc = posix_spawn_file_actions_addclose(&file_actions, file_descriptors[1]);
-        if (rc != 0) { return rc; }
-    }
-    if (file_descriptors[3] >= 0) {
-        rc = posix_spawn_file_actions_addclose(&file_actions, file_descriptors[3]);
-        if (rc != 0) { return rc; }
-    }
-    if (file_descriptors[5] >= 0) {
-        rc = posix_spawn_file_actions_addclose(&file_actions, file_descriptors[5]);
-        if (rc != 0) { return rc; }
-    }
-
-    // Setup spawnattr
-    posix_spawnattr_t spawn_attr;
-    rc = posix_spawnattr_init(&spawn_attr);
-    if (rc != 0) { return rc; }
-    // Masks
-    sigset_t no_signals;
-    sigset_t all_signals;
-    sigemptyset(&no_signals);
-    sigfillset(&all_signals);
-    rc = posix_spawnattr_setsigmask(&spawn_attr, &no_signals);
-    if (rc != 0) { return rc; }
-    rc = posix_spawnattr_setsigdefault(&spawn_attr, &all_signals);
-    if (rc != 0) { return rc; }
-    // Flags
-    short flags = POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF;
-    if (process_group_id != NULL) {
-        flags |= POSIX_SPAWN_SETPGROUP;
-        rc = posix_spawnattr_setpgroup(&spawn_attr, *process_group_id);
-        if (rc != 0) { return rc; }
-    }
-    rc = posix_spawnattr_setflags(&spawn_attr, flags);
-
-    // Spawn!
-    rc = posix_spawn(
-        pid, exec_path,
-        &file_actions, &spawn_attr,
-        args, env
-    );
-    posix_spawn_file_actions_destroy(&file_actions);
-    posix_spawnattr_destroy(&spawn_attr);
-    return rc;
+    closedir(dir_ptr);
+    return highest_fd_so_far;
 }
-#endif // _POSIX_SPAWN
+
+static int _highest_possibly_open_fd(void) {
+#if defined(__APPLE__)
+    int hi = _highest_possibly_open_fd_dir("/dev/fd");
+    if (hi < 0) {
+        hi = getdtablesize();
+    }
+#elif defined(__linux__)
+    int hi = _highest_possibly_open_fd_dir("/proc/self/fd");
+    if (hi < 0) {
+        hi = getdtablesize();
+    }
+#else
+    int hi = 1024;
+#endif
+    return hi;
+}
 
 int _subprocess_fork_exec(
     pid_t * _Nonnull pid,
@@ -470,32 +440,6 @@ int _subprocess_fork_exec(
     write(pipefd[1], &error, sizeof(error));\
     close(pipefd[1]); \
     _exit(EXIT_FAILURE)
-
-    int require_pre_fork = _subprocess_is_addchdir_np_available() == 0 ||
-        uid != NULL ||
-        gid != NULL ||
-        process_group_id != NULL ||
-        (number_of_sgroups > 0 && sgroups != NULL) ||
-        create_session ||
-        configurator != NULL;
-
-#if _POSIX_SPAWN
-    // If posix_spawn is available on this platform and
-    // we do not require prefork, use posix_spawn if possible.
-    //
-    // (Glibc's posix_spawn does not support
-    // `POSIX_SPAWN_SETEXEC` therefore we have to keep
-    // using fork/exec if `require_pre_fork` is true.
-    if (require_pre_fork == 0) {
-        return _subprocess_posix_spawn_fallback(
-            pid, exec_path,
-            working_directory,
-            file_descriptors,
-            args, env,
-            process_group_id
-        );
-    }
-#endif
 
     // Setup pipe to catch exec failures from child
     int pipefd[2];
@@ -557,8 +501,6 @@ int _subprocess_fork_exec(
 
     if (childPid == 0) {
         // Child process
-        close(pipefd[0]);  // Close unused read end
-
         // Reset signal handlers
         for (int signo = 1; signo < _SUBPROCESS_SIG_MAX; signo++) {
             if (signo == SIGKILL || signo == SIGSTOP) {
@@ -620,40 +562,46 @@ int _subprocess_fork_exec(
         // Bind stdin, stdout, and stderr
         if (file_descriptors[0] >= 0) {
             rc = dup2(file_descriptors[0], STDIN_FILENO);
-            if (rc < 0) {
-                write_error_and_exit;
-            }
+        } else {
+            rc = close(STDIN_FILENO);
         }
+        if (rc < 0) {
+            write_error_and_exit;
+        }
+
         if (file_descriptors[2] >= 0) {
             rc = dup2(file_descriptors[2], STDOUT_FILENO);
-            if (rc < 0) {
-                write_error_and_exit;
-            }
+        } else {
+            rc = close(STDOUT_FILENO);
         }
+        if (rc < 0) {
+            write_error_and_exit;
+        }
+
         if (file_descriptors[4] >= 0) {
             rc = dup2(file_descriptors[4], STDERR_FILENO);
-            if (rc < 0) {
-                int error = errno;
-                write(pipefd[1], &error, sizeof(error));
-                close(pipefd[1]);
-                _exit(EXIT_FAILURE);
-            }
+        } else {
+            rc = close(STDERR_FILENO);
         }
-        // Close parent side
-        if (file_descriptors[1] >= 0) {
-            rc = close(file_descriptors[1]);
+        if (rc < 0) {
+            write_error_and_exit;
         }
-        if (file_descriptors[3] >= 0) {
-            rc = close(file_descriptors[3]);
-        }
-        if (file_descriptors[5] >= 0) {
-            rc = close(file_descriptors[5]);
-        }
+        // Close all other file descriptors
+        rc = -1;
+        errno = ENOSYS;
+#if __has_include(<linux/close_range.h>)
+        // We must NOT close pipefd[1] for writing errors
+        rc = close_range(STDERR_FILENO + 1, pipefd[1] - 1, 0);
+        rc |= close_range(pipefd[1] + 1, ~0U, 0);
+#endif
         if (rc != 0) {
-            int error = errno;
-            write(pipefd[1], &error, sizeof(error));
-            close(pipefd[1]);
-            _exit(EXIT_FAILURE);
+            // close_range failed (or doesn't exist), fall back to close()
+            for (int fd = STDERR_FILENO + 1; fd < _highest_possibly_open_fd(); fd++) {
+                // We must NOT close pipefd[1] for writing errors
+                if (fd != pipefd[1]) {
+                    close(fd);
+                }
+            }
         }
         // Run custom configuratior
         if (configurator != NULL) {
