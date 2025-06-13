@@ -27,17 +27,34 @@ import Testing
 // MARK: PlatformOption Tests
 @Suite(.serialized)
 struct SubprocessLinuxTests {
-    @Test func testSubprocessPlatformOptionsPreSpawnProcessConfigurator() async throws {
+    @Test(
+        .enabled(
+            if: getgid() == 0,
+            "This test requires root privileges"
+        )
+    )
+    func testSubprocessPlatformOptionsPreSpawnProcessConfigurator() async throws {
         var platformOptions = PlatformOptions()
         platformOptions.preSpawnProcessConfigurator = {
-            setgid(4321)
+            guard setgid(4321) == 0 else {
+                // Returns EPERM when:
+                //   The calling process is not privileged (does not have the
+                //   CAP_SETGID capability in its user namespace), and gid does
+                //   not match the real group ID or saved set-group-ID of the
+                //   calling process.
+                perror("setgid")
+                abort()
+            }
         }
         let idResult = try await Subprocess.run(
             .path("/usr/bin/id"),
             arguments: ["-g"],
             platformOptions: platformOptions,
-            output: .string
+            output: .string,
+            error: .string
         )
+        let error = try #require(idResult.standardError)
+        try #require(error == "")
         #expect(idResult.terminationStatus.isSuccess)
         let id = try #require(idResult.standardOutput)
         #expect(
