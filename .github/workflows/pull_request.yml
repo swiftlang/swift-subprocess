@@ -11,7 +11,18 @@ jobs:
     with:
       linux_os_versions: '["noble", "jammy", "focal", "rhel-ubi9"]'
       linux_swift_versions: '["6.1", "nightly-main"]'
-      linux_build_command: 'swift build'
+      linux_pre_build_command: |
+        if command -v apt-get >/dev/null 2>&1 ; then # noble, jammy, focal
+          apt-get update -y
+
+          # Test dependencies
+          apt-get install -y procps
+        elif command -v dnf >/dev/null 2>&1 ; then # rhel-ubi9
+          dnf update -y
+
+          # Test dependencies
+          dnf install -y procps
+        fi
       windows_swift_versions: '["6.1", "nightly-main"]'
       windows_build_command: 'swift build'
       enable_macos_checks: true
