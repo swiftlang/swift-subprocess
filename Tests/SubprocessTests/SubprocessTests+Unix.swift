@@ -968,6 +968,35 @@ extension SubprocessUnixTests {
         }
         try FileManager.default.removeItem(at: testFilePath)
     }
+
+    @Test func testDoesNotInheritRandomFileDescriptorsByDefault() async throws {
+        // This tests makes sure POSIX_SPAWN_CLOEXEC_DEFAULT works on all platforms
+        let pipe = try FileDescriptor.ssp_pipe()
+        defer {
+            close(pipe.readEnd.rawValue)
+            close(pipe.writeEnd.rawValue)
+        }
+        let writeFd = pipe.writeEnd.rawValue
+        let result = try await Subprocess.run(
+            .path("/bin/bash"),
+            arguments: ["-c", "echo hello from child >&\(writeFd); echo wrote into \(writeFd), echo exit code $?"],
+            output: .string,
+            error: .string
+        )
+        close(pipe.writeEnd.rawValue)
+
+        #expect(result.terminationStatus.isSuccess)
+        #expect(
+            result.standardOutput?.trimmingCharacters(in: .whitespacesAndNewlines) ==
+            "wrote into \(writeFd), echo exit code 1"
+        )
+        // Depending on the platform, standard error should be something like
+        // `/bin/bash: 7: Bad file descriptor
+        #expect(!result.standardError!.isEmpty)
+        let nonInherited = try await pipe.readEnd.readUntilEOF(upToLength: .max)
+        // We should have read nothing because the pipe is not inherited
+        #expect(nonInherited.isEmpty)
+    }
 }
 
 // MARK: - Utils
