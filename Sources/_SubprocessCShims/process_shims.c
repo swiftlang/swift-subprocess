@@ -397,9 +397,11 @@ static int _subprocess_posix_spawn_fallback(
         if (rc != 0) { return rc; }
     }
     // Setup working directory
-    rc = _subprocess_addchdir_np(&file_actions, working_directory);
-    if (rc != 0) {
-        return rc;
+    if (working_directory != NULL) {
+        rc = _subprocess_addchdir_np(&file_actions, working_directory);
+        if (rc != 0) {
+            return rc;
+        }
     }
 
     // Close parent side

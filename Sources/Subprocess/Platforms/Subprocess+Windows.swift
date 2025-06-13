@@ -84,7 +84,7 @@ extension Configuration {
                 try environment.withCString(
                     encodedAs: UTF16.self
                 ) { environmentW in
-                    try intendedWorkingDir.withNTPathRepresentation { intendedWorkingDirW in
+                    try intendedWorkingDir.withOptionalNTPathRepresentation { intendedWorkingDirW in
                         let created = CreateProcessW(
                             applicationNameW,
                             UnsafeMutablePointer<WCHAR>(mutating: commandAndArgsW),
@@ -223,7 +223,7 @@ extension Configuration {
                             try environment.withCString(
                                 encodedAs: UTF16.self
                             ) { environmentW in
-                                try intendedWorkingDir.withNTPathRepresentation { intendedWorkingDirW in
+                                try intendedWorkingDir.withOptionalNTPathRepresentation { intendedWorkingDirW in
                                     let created = CreateProcessWithLogonW(
                                         usernameW,
                                         domainW,
@@ -769,7 +769,7 @@ extension Configuration {
         applicationName: String?,
         commandAndArgs: String,
         environment: String,
-        intendedWorkingDir: String
+        intendedWorkingDir: String?
     ) {
         // Prepare environment
         var env: [String: String] = [:]
@@ -806,19 +806,21 @@ extension Configuration {
             commandAndArgs
         ) = try self.generateWindowsCommandAndAgruments()
         // Validate workingDir
-        guard Self.pathAccessible(self.workingDirectory.string) else {
-            throw SubprocessError(
-                code: .init(
-                    .failedToChangeWorkingDirectory(self.workingDirectory.string)
-                ),
-                underlyingError: nil
-            )
+        if let workingDirectory = self.workingDirectory?.string {
+            guard Self.pathAccessible(workingDirectory) else {
+                throw SubprocessError(
+                    code: .init(
+                        .failedToChangeWorkingDirectory(workingDirectory)
+                    ),
+                    underlyingError: nil
+                )
+            }
         }
         return (
             applicationName: applicationName,
             commandAndArgs: commandAndArgs,
             environment: environmentString,
-            intendedWorkingDir: self.workingDirectory.string
+            intendedWorkingDir: self.workingDirectory?.string
         )
     }
 

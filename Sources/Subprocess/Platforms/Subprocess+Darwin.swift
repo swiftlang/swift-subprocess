@@ -349,9 +349,13 @@ extension Configuration {
                 }
 
                 // Setup cwd
-                let intendedWorkingDir = self.workingDirectory.string
-                let chdirError: Int32 = intendedWorkingDir.withPlatformString { workDir in
-                    return posix_spawn_file_actions_addchdir_np(&fileActions, workDir)
+                let chdirError: Int32
+                if let intendedWorkingDir = self.workingDirectory?.string {
+                    chdirError = intendedWorkingDir.withPlatformString { workDir in
+                        return posix_spawn_file_actions_addchdir_np(&fileActions, workDir)
+                    }
+                } else {
+                    chdirError = 0
                 }
 
                 // Error handling
@@ -457,12 +461,13 @@ extension Configuration {
                 errorRead: errorReadFileDescriptor,
                 errorWrite: errorWriteFileDescriptor
             )
-            let workingDirectory = self.workingDirectory.string
-            guard Configuration.pathAccessible(workingDirectory, mode: F_OK) else {
-                throw SubprocessError(
-                    code: .init(.failedToChangeWorkingDirectory(workingDirectory)),
-                    underlyingError: .init(rawValue: ENOENT)
-                )
+            if let workingDirectory = self.workingDirectory?.string {
+                guard Configuration.pathAccessible(workingDirectory, mode: F_OK) else {
+                    throw SubprocessError(
+                        code: .init(.failedToChangeWorkingDirectory(workingDirectory)),
+                        underlyingError: .init(rawValue: ENOENT)
+                    )
+                }
             }
             throw SubprocessError(
                 code: .init(.executableNotFound(self.executable.description)),
