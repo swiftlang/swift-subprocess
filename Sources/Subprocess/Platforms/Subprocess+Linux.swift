@@ -266,32 +266,29 @@ extension String {
 internal func monitorProcessTermination(
     forProcessWithIdentifier pid: ProcessIdentifier
 ) async throws -> TerminationStatus {
+    _ = setup
     return try await withCheckedThrowingContinuation { continuation in
         _childProcessContinuations.withLock { continuations in
-            if let existing = continuations.removeValue(forKey: pid.value),
-                case .status(let existingStatus) = existing
-            {
-                // We already have existing status to report
-                continuation.resume(returning: existingStatus)
-            } else {
-                // Save the continuation for handler
-                continuations[pid.value] = .continuation(continuation)
-            }
+            // Save the continuation for handler
+            let oldContinuation = continuations.updateValue(continuation, forKey: pid.value)
+            precondition(oldContinuation == nil)
+
+            _ = pthread_cond_signal(_waitThreadNoChildrenCondition)
         }
     }
 }
 
-private enum ContinuationOrStatus {
-    case continuation(CheckedContinuation<TerminationStatus, any Error>)
-    case status(TerminationStatus)
-}
+private let _childProcessContinuations =
+    LockedWith<
+        pthread_mutex_t,
+        [pid_t: CheckedContinuation<TerminationStatus, any Error>]
+    >()
 
-private let _childProcessContinuations:
-    Mutex<
-        [pid_t: ContinuationOrStatus]
-    > = Mutex([:])
-
-private let signalSource: SendableSourceSignal = SendableSourceSignal()
+private nonisolated(unsafe) let _waitThreadNoChildrenCondition = {
+    let result = UnsafeMutablePointer<pthread_cond_t>.allocate(capacity: 1)
+    _ = pthread_cond_init(result, nil)
+    return result
+}()
 
 private extension siginfo_t {
     var si_status: Int32 {
@@ -316,67 +313,71 @@ private extension siginfo_t {
 }
 
 private let setup: () = {
-    signalSource.setEventHandler {
-        while true {
-            var siginfo = siginfo_t()
-            guard waitid(P_ALL, id_t(0), &siginfo, WEXITED) == 0 || errno == EINTR else {
-                return
-            }
-            var status: TerminationStatus? = nil
-            switch siginfo.si_code {
-            case .init(CLD_EXITED):
-                status = .exited(siginfo.si_status)
-            case .init(CLD_KILLED), .init(CLD_DUMPED):
-                status = .unhandledException(siginfo.si_status)
-            case .init(CLD_TRAPPED), .init(CLD_STOPPED), .init(CLD_CONTINUED):
-                // Ignore these signals because they are not related to
-                // process exiting
-                break
-            default:
-                fatalError("Unexpected exit status: \(siginfo.si_code)")
-            }
-            if let status = status {
-                _childProcessContinuations.withLock { continuations in
+    var thread = pthread_t()
+    _ = pthread_create(
+        &thread,
+        nil,
+        { _ -> UnsafeMutableRawPointer? in
+            while true {
+                var siginfo = siginfo_t()
+                if waitid(P_ALL, id_t(0), &siginfo, WEXITED | WNOWAIT) == 0 {
                     let pid = siginfo.si_pid
-                    if let existing = continuations.removeValue(forKey: pid),
-                        case .continuation(let c) = existing
-                    {
-                        c.resume(returning: status)
-                    } else {
-                        // We don't have continuation yet, just state status
-                        continuations[pid] = .status(status)
+                    guard pid != 0, let c = _childProcessContinuations.withLock({ $0.removeValue(forKey: pid) }) else {
+                        continue
+                    }
+
+                    c.resume(with: Result {
+                        while true {
+                            var siginfo = siginfo_t()
+                            if waitid(P_PID, numericCast(pid), &siginfo, WEXITED) == 0 {
+                                var status: TerminationStatus? = nil
+                                switch siginfo.si_code {
+                                case .init(CLD_EXITED):
+                                    return .exited(siginfo.si_status)
+                                case .init(CLD_KILLED), .init(CLD_DUMPED):
+                                    return .unhandledException(siginfo.si_status)
+                                default:
+                                    fatalError("Unexpected exit status: \(siginfo.si_code)")
+                                }
+                            } else if errno != EINTR {
+                                throw SubprocessError.UnderlyingError(rawValue: errno)
+                            }
+                        }
+                    })
+                } else if errno == SIGCHLD {
+                    _childProcessContinuations.withUnsafeUnderlyingLock { lock, childProcessContinuations in
+                        if childProcessContinuations.isEmpty {
+                            _ = pthread_cond_wait(_waitThreadNoChildrenCondition, lock)
+                        }
                     }
                 }
             }
-        }
-    }
-    signalSource.resume()
+        },
+        nil
+    )
 }()
-
-/// Unchecked Sendable here since this class is only explicitly
-/// initialized once during the lifetime of the process
-final class SendableSourceSignal: @unchecked Sendable {
-    private let signalSource: DispatchSourceSignal
-
-    func setEventHandler(handler: @escaping DispatchSourceHandler) {
-        self.signalSource.setEventHandler(handler: handler)
-    }
-
-    func resume() {
-        self.signalSource.resume()
-    }
-
-    init() {
-        self.signalSource = DispatchSource.makeSignalSource(
-            signal: SIGCHLD,
-            queue: .global()
-        )
-    }
-}
 
 private func _setupMonitorSignalHandler() {
     // Only executed once
     setup
+}
+
+extension pthread_mutex_t: Lockable {
+    static func initializeLock(at lock: UnsafeMutablePointer<Self>) {
+        _ = pthread_mutex_init(lock, nil)
+    }
+
+    static func deinitializeLock(at lock: UnsafeMutablePointer<Self>) {
+        _ = pthread_mutex_destroy(lock)
+    }
+
+    static func unsafelyAcquireLock(at lock: UnsafeMutablePointer<Self>) {
+        _ = pthread_mutex_lock(lock)
+    }
+
+    static func unsafelyRelinquishLock(at lock: UnsafeMutablePointer<Self>) {
+        _ = pthread_mutex_unlock(lock)
+    }
 }
 
 #endif  // canImport(Glibc) || canImport(Android) || canImport(Musl)
