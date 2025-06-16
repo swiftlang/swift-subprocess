@@ -589,7 +589,6 @@ internal struct TrackedFileDescriptor: ~Copyable {
         self.closeWhenDone = closeWhenDone
     }
 
-    #if os(Windows)
     consuming func consumeDiskIO() -> FileDescriptor {
         let result = self.fileDescriptor
         // Transfer the ownership out and therefor
@@ -597,7 +596,6 @@ internal struct TrackedFileDescriptor: ~Copyable {
         self.closeWhenDone = false
         return result
     }
-    #endif
 
     internal mutating func safelyClose() throws {
         guard self.closeWhenDone else {
