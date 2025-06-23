@@ -48,37 +48,32 @@ extension Configuration {
         outputPipe: consuming CreatedPipe,
         errorPipe: consuming CreatedPipe
     ) throws -> SpawnResult {
-        var inputPipeBox: CreatedPipe? = consume inputPipe
-        var outputPipeBox: CreatedPipe? = consume outputPipe
-        var errorPipeBox: CreatedPipe? = consume errorPipe
+        var inputReadFileDescriptor: TrackedFileDescriptor? = inputPipe.readFileDescriptor()
+        var inputWriteFileDescriptor: TrackedFileDescriptor? = inputPipe.writeFileDescriptor()
+        var outputReadFileDescriptor: TrackedFileDescriptor? = outputPipe.readFileDescriptor()
+        var outputWriteFileDescriptor: TrackedFileDescriptor? = outputPipe.writeFileDescriptor()
+        var errorReadFileDescriptor: TrackedFileDescriptor? = errorPipe.readFileDescriptor()
+        var errorWriteFileDescriptor: TrackedFileDescriptor? = errorPipe.writeFileDescriptor()
 
-        var _inputPipe = inputPipeBox.take()!
-        var _outputPipe = outputPipeBox.take()!
-        var _errorPipe = errorPipeBox.take()!
-
-        let inputReadFileDescriptor: TrackedFileDescriptor? = _inputPipe.readFileDescriptor()
-        let inputWriteFileDescriptor: TrackedFileDescriptor? = _inputPipe.writeFileDescriptor()
-        let outputReadFileDescriptor: TrackedFileDescriptor? = _outputPipe.readFileDescriptor()
-        let outputWriteFileDescriptor: TrackedFileDescriptor? = _outputPipe.writeFileDescriptor()
-        let errorReadFileDescriptor: TrackedFileDescriptor? = _errorPipe.readFileDescriptor()
-        let errorWriteFileDescriptor: TrackedFileDescriptor? = _errorPipe.writeFileDescriptor()
-
-        let (
-            applicationName,
-            commandAndArgs,
-            environment,
-            intendedWorkingDir
-        ): (String?, String, String, String?)
+        let applicationName: String?
+        let commandAndArgs: String
+        let environment: String
+        let intendedWorkingDir: String?
         do {
-            (applicationName, commandAndArgs, environment, intendedWorkingDir) = try self.preSpawn()
+            (
+                applicationName,
+                commandAndArgs,
+                environment,
+                intendedWorkingDir
+            ) = try self.preSpawn()
         } catch {
             try self.safelyCloseMultiple(
-                inputRead: inputReadFileDescriptor,
-                inputWrite: inputWriteFileDescriptor,
-                outputRead: outputReadFileDescriptor,
-                outputWrite: outputWriteFileDescriptor,
-                errorRead: errorReadFileDescriptor,
-                errorWrite: errorWriteFileDescriptor
+                inputRead: inputReadFileDescriptor.take(),
+                inputWrite: inputWriteFileDescriptor.take(),
+                outputRead: outputReadFileDescriptor.take(),
+                outputWrite: outputWriteFileDescriptor.take(),
+                errorRead: errorReadFileDescriptor.take(),
+                errorWrite: errorWriteFileDescriptor.take()
             )
             throw error
         }
