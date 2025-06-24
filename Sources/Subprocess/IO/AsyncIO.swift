@@ -330,8 +330,8 @@ extension AsyncIO {
         var count: Int { get }
 
         func withUnsafeBytes<ResultType>(
-            _ body: (UnsafeRawBufferPointer
-        ) throws -> ResultType) rethrows -> ResultType
+            _ body: (UnsafeRawBufferPointer) throws -> ResultType
+        ) rethrows -> ResultType
     }
 
     func read(
@@ -739,7 +739,12 @@ final class AsyncIO: Sendable {
                     )
                     continuation.resume(throwing: windowsError)
                 } else {
-                    continuation.resume(returning: values)
+                    // If we didn't read anything, return nil
+                    if values.isEmpty {
+                        continuation.resume(returning: nil)
+                    } else {
+                        continuation.resume(returning: values)
+                    }
                 }
             }
         }
