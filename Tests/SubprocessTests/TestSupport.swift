@@ -17,6 +17,9 @@ import Foundation
 import FoundationEssentials
 #endif
 
+import Testing
+import Subprocess
+
 internal func randomString(length: Int, lettersOnly: Bool = false) -> String {
     let letters: String
     if lettersOnly {
@@ -41,4 +44,13 @@ internal func directory(_ lhs: String, isSameAs rhs: String) -> Bool {
     }
 
     return canonicalLhs == canonicalRhs
+}
+
+extension Trait where Self == ConditionTrait {
+    public static var requiresBash: Self {
+        enabled(
+            if: (try? Executable.name("bash").resolveExecutablePath(in: .inherit)) != nil,
+            "This test requires bash (install `bash` package on Linux/BSD)"
+        )
+    }
 }
