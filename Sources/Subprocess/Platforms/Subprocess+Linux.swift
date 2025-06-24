@@ -285,8 +285,14 @@ internal func monitorProcessTermination(
 
 // Small helper to provide thread-safe access to the child process to continuations map as well as a condition variable to suspend the calling thread when there are no subprocesses to wait for. Note that Mutex cannot be used here because we need the semantics of pthread_cond_wait, which requires passing the pthread_mutex_t instance as a parameter, something the Mutex API does not provide access to.
 private final class ChildProcessContinuations: Sendable {
+    #if os(FreeBSD) || os(OpenBSD)
+    typealias MutexType = pthread_mutex_t?
+    #else
+    typealias MutexType = pthread_mutex_t
+    #endif
+
     private nonisolated(unsafe) var continuations = [pid_t: CheckedContinuation<TerminationStatus, any Error>]()
-    private nonisolated(unsafe) let mutex = UnsafeMutablePointer<pthread_mutex_t>.allocate(capacity: 1)
+    private nonisolated(unsafe) let mutex = UnsafeMutablePointer<MutexType>.allocate(capacity: 1)
 
     init() {
         pthread_mutex_init(mutex, nil)
@@ -298,7 +304,7 @@ private final class ChildProcessContinuations: Sendable {
         }
     }
 
-    func withUnsafeUnderlyingLock<R>(_ body: (UnsafeMutablePointer<pthread_mutex_t>, inout [pid_t: CheckedContinuation<TerminationStatus, any Error>]) throws -> R) rethrows -> R {
+    func withUnsafeUnderlyingLock<R>(_ body: (UnsafeMutablePointer<MutexType>, inout [pid_t: CheckedContinuation<TerminationStatus, any Error>]) throws -> R) rethrows -> R {
         pthread_mutex_lock(mutex)
         defer {
             pthread_mutex_unlock(mutex)
@@ -310,11 +316,16 @@ private final class ChildProcessContinuations: Sendable {
 private let _childProcessContinuations = ChildProcessContinuations()
 
 private nonisolated(unsafe) let _waitThreadNoChildrenCondition = {
+    #if os(FreeBSD) || os(OpenBSD)
+    let result = UnsafeMutablePointer<pthread_cond_t?>.allocate(capacity: 1)
+    #else
     let result = UnsafeMutablePointer<pthread_cond_t>.allocate(capacity: 1)
+    #endif
     _ = pthread_cond_init(result, nil)
     return result
 }()
 
+#if !os(FreeBSD) && !os(OpenBSD)
 private extension siginfo_t {
     var si_status: Int32 {
         #if canImport(Glibc)
@@ -336,11 +347,16 @@ private extension siginfo_t {
         #endif
     }
 }
+#endif
 
 private let setup: () = {
     // Create the thread. It will run immediately; because it runs in an infinite
     // loop, we aren't worried about detaching or joining it.
+    #if os(FreeBSD) || os(OpenBSD)
+    var thread: pthread_t?
+    #else
     var thread = pthread_t()
+    #endif
     _ = pthread_create(
         &thread,
         nil,
