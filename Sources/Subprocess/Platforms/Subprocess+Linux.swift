@@ -56,12 +56,12 @@ extension Configuration {
             var _outputPipe = outputPipeBox.take()!
             var _errorPipe = errorPipeBox.take()!
 
-            let inputReadFileDescriptor: TrackedFileDescriptor? = _inputPipe.readFileDescriptor()
-            let inputWriteFileDescriptor: TrackedFileDescriptor? = _inputPipe.writeFileDescriptor()
-            let outputReadFileDescriptor: TrackedFileDescriptor? = _outputPipe.readFileDescriptor()
-            let outputWriteFileDescriptor: TrackedFileDescriptor? = _outputPipe.writeFileDescriptor()
-            let errorReadFileDescriptor: TrackedFileDescriptor? = _errorPipe.readFileDescriptor()
-            let errorWriteFileDescriptor: TrackedFileDescriptor? = _errorPipe.writeFileDescriptor()
+            let inputReadFileDescriptor: IODescriptor? = _inputPipe.readFileDescriptor()
+            let inputWriteFileDescriptor: IODescriptor? = _inputPipe.writeFileDescriptor()
+            let outputReadFileDescriptor: IODescriptor? = _outputPipe.readFileDescriptor()
+            let outputWriteFileDescriptor: IODescriptor? = _outputPipe.writeFileDescriptor()
+            let errorReadFileDescriptor: IODescriptor? = _errorPipe.readFileDescriptor()
+            let errorWriteFileDescriptor: IODescriptor? = _errorPipe.writeFileDescriptor()
 
             for possibleExecutablePath in possiblePaths {
                 var processGroupIDPtr: UnsafeMutablePointer<gid_t>? = nil
@@ -154,9 +154,9 @@ extension Configuration {
                 )
                 return SpawnResult(
                     execution: execution,
-                    inputWriteEnd: inputWriteFileDescriptor?.createPlatformDiskIO(),
-                    outputReadEnd: outputReadFileDescriptor?.createPlatformDiskIO(),
-                    errorReadEnd: errorReadFileDescriptor?.createPlatformDiskIO()
+                    inputWriteEnd: inputWriteFileDescriptor?.createIOChannel(),
+                    outputReadEnd: outputReadFileDescriptor?.createIOChannel(),
+                    errorReadEnd: errorReadFileDescriptor?.createIOChannel()
                 )
             }
 
@@ -421,20 +421,6 @@ private let setup: () = {
 private func _setupMonitorSignalHandler() {
     // Only executed once
     setup
-}
-
-internal typealias TrackedPlatformDiskIO = TrackedFileDescriptor
-
-extension TrackedFileDescriptor {
-    internal consuming func createPlatformDiskIO() -> TrackedPlatformDiskIO {
-        // Transferring out the ownership of fileDescriptor means we don't have go close here
-        let result: TrackedPlatformDiskIO =  .init(
-            self.fileDescriptor,
-            closeWhenDone: self.closeWhenDone
-        )
-        self.closeWhenDone = false
-        return result
-    }
 }
 
 #endif  // canImport(Glibc) || canImport(Android) || canImport(Musl)

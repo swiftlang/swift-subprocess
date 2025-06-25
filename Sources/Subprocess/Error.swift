@@ -18,7 +18,7 @@ import Glibc
 #elseif canImport(Musl)
 import Musl
 #elseif canImport(WinSDK)
-import WinSDK
+@preconcurrency import WinSDK
 #endif
 
 /// Error thrown from Subprocess
