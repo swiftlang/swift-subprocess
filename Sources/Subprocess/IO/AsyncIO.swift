@@ -54,8 +54,6 @@ final class AsyncIO: Sendable {
         }
     }
 
-    static let shared: AsyncIO = AsyncIO()
-
     private enum Event {
         case read
         case write
@@ -335,10 +333,10 @@ extension AsyncIO {
     }
 
     func read(
-        from diskIO: borrowing TrackedPlatformDiskIO,
+        from diskIO: borrowing IOChannel,
         upTo maxLength: Int
     ) async throws -> [UInt8]? {
-        return try await self.read(from: diskIO.fileDescriptor, upTo: maxLength)
+        return try await self.read(from: diskIO.channel, upTo: maxLength)
     }
 
     func read(
@@ -413,16 +411,16 @@ extension AsyncIO {
 
     func write(
         _ array: [UInt8],
-        to diskIO: borrowing TrackedPlatformDiskIO
+        to diskIO: borrowing IOChannel
     ) async throws -> Int {
         return try await self._write(array, to: diskIO)
     }
 
     func _write<Bytes: _ContiguousBytes>(
         _ bytes: Bytes,
-        to diskIO: borrowing TrackedPlatformDiskIO
+        to diskIO: borrowing IOChannel
     ) async throws -> Int {
-        let fileDescriptor = diskIO.fileDescriptor
+        let fileDescriptor = diskIO.channel
         let signalStream = self.registerFileDescriptor(fileDescriptor, for: .write)
         var writtenLength: Int = 0
         /// Outer loop: every iteration signals we are ready to read more data
@@ -463,9 +461,9 @@ extension AsyncIO {
     #if SubprocessSpan
     func write(
         _ span: borrowing RawSpan,
-        to diskIO: borrowing TrackedPlatformDiskIO
+        to diskIO: borrowing IOChannel
     ) async throws -> Int {
-        let fileDescriptor = diskIO.fileDescriptor
+        let fileDescriptor = diskIO.channel
         let signalStream = self.registerFileDescriptor(fileDescriptor, for: .write)
         var writtenLength: Int = 0
         /// Outer loop: every iteration signals we are ready to read more data
@@ -521,11 +519,11 @@ final class AsyncIO: Sendable {
     private init() {}
 
     internal func read(
-        from diskIO: borrowing TrackedPlatformDiskIO,
+        from diskIO: borrowing IOChannel,
         upTo maxLength: Int
     ) async throws -> DispatchData? {
         return try await self.read(
-            from: diskIO.dispatchIO,
+            from: diskIO.channel,
             upTo: maxLength,
         )
     }
@@ -571,7 +569,7 @@ final class AsyncIO: Sendable {
     #if SubprocessSpan
     internal func write(
         _ span: borrowing RawSpan,
-        to diskIO: borrowing TrackedPlatformDiskIO
+        to diskIO: borrowing IOChannel
     ) async throws -> Int {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int, any Error>) in
             let dispatchData = span.withUnsafeBytes {
@@ -598,7 +596,7 @@ final class AsyncIO: Sendable {
 
     internal func write(
         _ array: [UInt8],
-        to diskIO: borrowing TrackedPlatformDiskIO
+        to diskIO: borrowing IOChannel
     ) async throws -> Int {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int, any Error>) in
             let dispatchData = array.withUnsafeBytes {
@@ -624,11 +622,11 @@ final class AsyncIO: Sendable {
 
     internal func write(
         _ dispatchData: DispatchData,
-        to diskIO: borrowing TrackedPlatformDiskIO,
+        to diskIO: borrowing IOChannel,
         queue: DispatchQueue = .global(),
         completion: @escaping (Int, Error?) -> Void
     ) {
-        diskIO.dispatchIO.write(
+        diskIO.channel.write(
             offset: 0,
             data: dispatchData,
             queue: queue
@@ -657,13 +655,20 @@ final class AsyncIO: Sendable {
 
 #endif
 
-// MARK: - Windows (I/O Completion Ports) TODO
+// MARK: - Windows (I/O Completion Ports)
 #if os(Windows)
 
+import Synchronization
 internal import Dispatch
-import WinSDK
+@preconcurrency import WinSDK
 
-final class AsyncIO: Sendable {
+private typealias SignalStream = AsyncThrowingStream<DWORD, any Error>
+private let shutdownPort: UInt64 = .max
+private let _registration: Mutex<
+    [UInt64 : SignalStream.Continuation]
+> = Mutex([:])
+
+final class AsyncIO: @unchecked Sendable {
 
     protocol _ContiguousBytes: Sendable {
         var count: Int { get }
@@ -673,78 +678,279 @@ final class AsyncIO: Sendable {
             ) throws -> ResultType) rethrows -> ResultType
     }
 
+    private final class MonitorThreadContext {
+        let ioCompletionPort: HANDLE
+
+        init(ioCompletionPort: HANDLE) {
+            self.ioCompletionPort = ioCompletionPort
+        }
+    }
+
     static let shared = AsyncIO()
 
-    private init() {}
+    private let ioCompletionPort: Result<HANDLE, SubprocessError>
 
-    func read(
-        from diskIO: borrowing TrackedPlatformDiskIO,
-        upTo maxLength: Int
-    ) async throws -> [UInt8]? {
-        return try await self.read(from: diskIO.fileDescriptor, upTo: maxLength)
+    private let monitorThread: Result<HANDLE, SubprocessError>
+
+    private init() {
+        var maybeSetupError: SubprocessError? = nil
+        // Create the the completion port
+        guard let port = CreateIoCompletionPort(
+            INVALID_HANDLE_VALUE, nil, 0, 0
+        ), port != INVALID_HANDLE_VALUE else {
+            let error = SubprocessError(
+                code: .init(.asyncIOFailed("CreateIoCompletionPort failed")),
+                underlyingError: .init(rawValue: GetLastError())
+            )
+            self.ioCompletionPort = .failure(error)
+            self.monitorThread = .failure(error)
+            return
+        }
+        self.ioCompletionPort = .success(port)
+        // Create monitor thread
+        let threadContext = MonitorThreadContext(ioCompletionPort: port)
+        let threadContextPtr = Unmanaged.passRetained(threadContext)
+        let threadHandle = CreateThread(nil, 0, { args in
+            func reportError(_ error: SubprocessError) {
+                _registration.withLock { store in
+                    for continuation in store.values {
+                        continuation.finish(throwing: error)
+                    }
+                }
+            }
+
+            let unmanaged = Unmanaged<MonitorThreadContext>.fromOpaque(args!)
+            let context = unmanaged.takeRetainedValue()
+
+            // Monitor loop
+            while true {
+                var bytesTransferred: DWORD = 0
+                var targetFileDescriptor: UInt64 = 0
+                var overlapped: LPOVERLAPPED? = nil
+
+                let monitorResult = GetQueuedCompletionStatus(
+                    context.ioCompletionPort,
+                    &bytesTransferred,
+                    &targetFileDescriptor,
+                    &overlapped,
+                    INFINITE
+                )
+                if !monitorResult {
+                    let lastError = GetLastError()
+                    if lastError == ERROR_BROKEN_PIPE {
+                        // We finished reading the handle. Signal EOF by
+                        // finishing the stream.
+                        // NOTE: here we deliberately leave now unused continuation
+                        // in the store. Windows does not offer an API to remove a
+                        // HANDLE from an IOCP port, therefore we leave the registration
+                        // to signify the HANDLE has already been resisted.
+                        _registration.withLock { store in
+                            if let continuation = store[targetFileDescriptor] {
+                                continuation.finish()
+                            }
+                        }
+                        continue
+                    } else {
+                        let error = SubprocessError(
+                            code: .init(.asyncIOFailed("GetQueuedCompletionStatus failed")),
+                            underlyingError: .init(rawValue: lastError)
+                        )
+                        reportError(error)
+                        break
+                    }
+                }
+
+                // Breakout the monitor loop if we received shutdown from the shutdownFD
+                if targetFileDescriptor == shutdownPort {
+                    break
+                }
+                // Notify the continuations
+                _registration.withLock { store in
+                    if let continuation = store[targetFileDescriptor] {
+                        continuation.yield(bytesTransferred)
+                    }
+                }
+            }
+            return 0
+        }, threadContextPtr.toOpaque(), 0, nil)
+        guard let threadHandle = threadHandle else {
+            let error = SubprocessError(
+                code: .init(.asyncIOFailed("CreateThread failed")),
+                underlyingError: .init(rawValue: GetLastError())
+            )
+            self.monitorThread = .failure(error)
+            return
+        }
+        self.monitorThread = .success(threadHandle)
+
+        atexit {
+            AsyncIO.shared.shutdown()
+        }
+    }
+
+    private func shutdown() {
+        // Post status to shutdown HANDLE
+        guard case .success(let ioPort) = ioCompletionPort,
+              case .success(let monitorThreadHandle) = monitorThread else {
+            return
+        }
+        PostQueuedCompletionStatus(
+            ioPort,
+            0,
+            shutdownPort,
+            nil
+        )
+        // Wait for monitor thread to exit
+        WaitForSingleObject(monitorThreadHandle, INFINITE)
+        CloseHandle(ioPort)
+        CloseHandle(monitorThreadHandle)
+    }
+
+    private func registerHandle(_ handle: HANDLE) -> SignalStream {
+        return SignalStream { continuation in
+            switch self.ioCompletionPort {
+            case .success(let ioPort):
+                // Make sure thread setup also succeed
+                if case .failure(let error) = monitorThread {
+                    continuation.finish(throwing: error)
+                    return
+                }
+                let completionKey = UInt64(UInt(bitPattern: handle))
+                // Windows does not offer an API to remove a handle
+                // from given ioCompletionPort. If this handle has already
+                // been registered we simply need to update the continuation
+                let registrationFound = _registration.withLock { storage in
+                    if storage[completionKey] != nil {
+                        // Old registration found. This means this handle has
+                        // already been registered. We simply need to update
+                        // the continuation saved
+                        storage[completionKey] = continuation
+                        return true
+                    } else {
+                        return false
+                    }
+                }
+                if registrationFound {
+                    return
+                }
+
+                // Windows Documentation: The function returns the handle
+                // of the existing I/O completion port if successful
+                guard CreateIoCompletionPort(
+                    handle, ioPort, completionKey, 0
+                ) == ioPort else {
+                    let error = SubprocessError(
+                        code: .init(.asyncIOFailed("CreateIoCompletionPort failed")),
+                        underlyingError: .init(rawValue: GetLastError())
+                    )
+                    continuation.finish(throwing: error)
+                    return
+                }
+                // Now save the continuation
+                _registration.withLock { storage in
+                    storage[completionKey] = continuation
+                }
+            case .failure(let error):
+                continuation.finish(throwing: error)
+            }
+        }
+    }
+
+    internal func removeRegistration(for handle: HANDLE) {
+        let completionKey = UInt64(UInt(bitPattern: handle))
+        _registration.withLock { storage in
+            storage.removeValue(forKey: completionKey)
+        }
     }
 
     func read(
-        from fileDescriptor: FileDescriptor,
+        from diskIO: borrowing IOChannel,
         upTo maxLength: Int
     ) async throws -> [UInt8]? {
-        return try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                var totalBytesRead: Int = 0
-                var lastError: DWORD? = nil
-                let values = [UInt8](
-                    unsafeUninitializedCapacity: maxLength
-                ) { buffer, initializedCount in
-                    while true {
-                        guard let baseAddress = buffer.baseAddress else {
-                            initializedCount = 0
-                            break
-                        }
-                        let bufferPtr = baseAddress.advanced(by: totalBytesRead)
-                        var bytesRead: DWORD = 0
-                        let readSucceed = ReadFile(
-                            fileDescriptor.platformDescriptor,
-                            UnsafeMutableRawPointer(mutating: bufferPtr),
-                            DWORD(maxLength - totalBytesRead),
-                            &bytesRead,
-                            nil
-                        )
-                        if !readSucceed {
-                            // Windows throws ERROR_BROKEN_PIPE when the pipe is closed
-                            let error = GetLastError()
-                            if error == ERROR_BROKEN_PIPE {
-                                // We are done reading
-                                initializedCount = totalBytesRead
-                            } else {
-                                // We got some error
-                                lastError = error
-                                initializedCount = 0
-                            }
-                            break
-                        } else {
-                            // We successfully read the current round
-                            totalBytesRead += Int(bytesRead)
-                        }
+        return try await self.read(from: diskIO.channel, upTo: maxLength)
+    }
 
-                        if totalBytesRead >= maxLength {
-                            initializedCount = min(maxLength, totalBytesRead)
-                            break
-                        }
-                    }
+    func read(
+        from handle: HANDLE,
+        upTo maxLength: Int
+    ) async throws -> [UInt8]? {
+        // If we are reading until EOF, start with readBufferSize
+        // and gradually increase buffer size
+        let bufferLength = maxLength == .max ? readBufferSize : maxLength
+
+        var resultBuffer: [UInt8] = Array(
+            repeating: 0, count: bufferLength
+        )
+        var readLength: Int = 0
+        var signalStream = self.registerHandle(handle).makeAsyncIterator()
+
+        while true {
+            var overlapped = _OVERLAPPED()
+            let succeed = try resultBuffer.withUnsafeMutableBufferPointer { bufferPointer in
+                // Get a pointer to the memory at the specified offset
+                // Windows ReadFile uses DWORD for target count, which means we can only
+                // read up to DWORD (aka UInt32) max.
+                let targetCount: DWORD
+                if MemoryLayout<Int>.size == MemoryLayout<Int32>.size {
+                    // On 32 bit systems we don't have to worry about overflowing
+                    targetCount = DWORD(truncatingIfNeeded: bufferPointer.count - readLength)
+                } else {
+                    // On 64 bit systems we need to cap the count at DWORD max
+                    targetCount = DWORD(truncatingIfNeeded: min(bufferPointer.count - readLength, Int(UInt32.max)))
                 }
-                if let lastError = lastError {
-                    let windowsError = SubprocessError(
+
+                let offsetAddress = bufferPointer.baseAddress!.advanced(by: readLength)
+                // Read directly into the buffer at the offset
+                return ReadFile(
+                    handle,
+                    offsetAddress,
+                    DWORD(truncatingIfNeeded: targetCount),
+                    nil,
+                    &overlapped
+                )
+            }
+
+            if !succeed {
+                // It is expected `ReadFile` to return `false` in async mode.
+                // Make sure we only get `ERROR_IO_PENDING` or `ERROR_BROKEN_PIPE`
+                let lastError = GetLastError()
+                if lastError == ERROR_BROKEN_PIPE {
+                    // We reached EOF
+                    return nil
+                }
+                guard lastError == ERROR_IO_PENDING else {
+                    let error = SubprocessError(
                         code: .init(.failedToReadFromSubprocess),
                         underlyingError: .init(rawValue: lastError)
                     )
-                    continuation.resume(throwing: windowsError)
-                } else {
-                    // If we didn't read anything, return nil
-                    if values.isEmpty {
-                        continuation.resume(returning: nil)
-                    } else {
-                        continuation.resume(returning: values)
+                    throw error
+                }
+
+            }
+            // Now wait for read to finish
+            let bytesRead = try await signalStream.next() ?? 0
+
+            if bytesRead == 0 {
+                // We reached EOF. Return whatever's left
+                guard readLength > 0 else {
+                    return nil
+                }
+                resultBuffer.removeLast(resultBuffer.count - readLength)
+                return resultBuffer
+            } else {
+                // Read some data
+                readLength += Int(bytesRead)
+                if maxLength == .max {
+                    // Grow resultBuffer if needed
+                    guard Double(readLength) > 0.8 * Double(resultBuffer.count) else {
+                        continue
                     }
+                    resultBuffer.append(
+                        contentsOf: Array(repeating: 0, count: resultBuffer.count)
+                    )
+                } else if readLength >= maxLength {
+                    // When we reached maxLength, return!
+                    return resultBuffer
                 }
             }
         }
@@ -752,7 +958,7 @@ final class AsyncIO: Sendable {
 
     func write(
         _ array: [UInt8],
-        to diskIO: borrowing TrackedPlatformDiskIO
+        to diskIO: borrowing IOChannel
     ) async throws -> Int {
         return try await self._write(array, to: diskIO)
     }
@@ -760,36 +966,53 @@ final class AsyncIO: Sendable {
     #if SubprocessSpan
     func write(
         _ span: borrowing RawSpan,
-        to diskIO: borrowing TrackedPlatformDiskIO
+        to diskIO: borrowing IOChannel
     ) async throws -> Int {
-        // TODO: Remove this hack with I/O Completion Ports rewrite
-        struct _Box: @unchecked Sendable {
-            let ptr: UnsafeRawBufferPointer
-        }
-        let fileDescriptor = diskIO.fileDescriptor
-        return try await withCheckedThrowingContinuation { continuation in
-            span.withUnsafeBytes { ptr in
-                let box = _Box(ptr: ptr)
-                DispatchQueue.global().async {
-                    let handle = HANDLE(bitPattern: _get_osfhandle(fileDescriptor.rawValue))!
-                    var writtenBytes: DWORD = 0
-                    let writeSucceed = WriteFile(
-                        handle,
-                        box.ptr.baseAddress,
-                        DWORD(box.ptr.count),
-                        &writtenBytes,
-                        nil
-                    )
-                    if !writeSucceed {
-                        let error = SubprocessError(
-                            code: .init(.failedToWriteToSubprocess),
-                            underlyingError: .init(rawValue: GetLastError())
-                        )
-                        continuation.resume(throwing: error)
-                    } else {
-                        continuation.resume(returning: Int(writtenBytes))
-                    }
+        let handle = diskIO.channel
+        var signalStream = self.registerHandle(diskIO.channel).makeAsyncIterator()
+        var writtenLength: Int = 0
+        while true {
+            var overlapped = _OVERLAPPED()
+            let succeed = try span.withUnsafeBytes { ptr in
+                // Windows WriteFile uses DWORD for target count
+                // which means we can only write up to DWORD max
+                let remainingLength: DWORD
+                if MemoryLayout<Int>.size == MemoryLayout<Int32>.size {
+                    // On 32 bit systems we don't have to worry about overflowing
+                    remainingLength = DWORD(truncatingIfNeeded: ptr.count - writtenLength)
+                } else {
+                    // On 64 bit systems we need to cap the count at DWORD max
+                    remainingLength = DWORD(truncatingIfNeeded: min(ptr.count - writtenLength, Int(DWORD.max)))
                 }
+
+                let startPtr = ptr.baseAddress!.advanced(by: writtenLength)
+                return WriteFile(
+                    handle,
+                    startPtr,
+                    DWORD(truncatingIfNeeded: remainingLength),
+                    nil,
+                    &overlapped
+                )
+            }
+            if !succeed {
+                // It is expected `WriteFile` to return `false` in async mode.
+                // Make sure we only get `ERROR_IO_PENDING`
+                let lastError = GetLastError()
+                guard lastError == ERROR_IO_PENDING else {
+                    let error = SubprocessError(
+                        code: .init(.failedToWriteToSubprocess),
+                        underlyingError: .init(rawValue: lastError)
+                    )
+                    throw error
+                }
+
+            }
+            // Now wait for read to finish
+            let bytesWritten: DWORD = try await signalStream.next() ?? 0
+
+            writtenLength += Int(bytesWritten)
+            if writtenLength >= span.byteCount {
+                return writtenLength
             }
         }
     }
@@ -797,31 +1020,51 @@ final class AsyncIO: Sendable {
 
     func _write<Bytes: _ContiguousBytes>(
         _ bytes: Bytes,
-        to diskIO: borrowing TrackedPlatformDiskIO
+        to diskIO: borrowing IOChannel
     ) async throws -> Int {
-        let fileDescriptor = diskIO.fileDescriptor
-        return try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global().async {
-                let handle = HANDLE(bitPattern: _get_osfhandle(fileDescriptor.rawValue))!
-                var writtenBytes: DWORD = 0
-                let writeSucceed = bytes.withUnsafeBytes { ptr in
-                    return WriteFile(
-                        handle,
-                        ptr.baseAddress,
-                        DWORD(ptr.count),
-                        &writtenBytes,
-                        nil
-                    )
+        let handle = diskIO.channel
+        var signalStream = self.registerHandle(diskIO.channel).makeAsyncIterator()
+        var writtenLength: Int = 0
+        while true {
+            var overlapped = _OVERLAPPED()
+            let succeed = try bytes.withUnsafeBytes { ptr in
+                // Windows WriteFile uses DWORD for target count
+                // which means we can only write up to DWORD max
+                let remainingLength: DWORD
+                if MemoryLayout<Int>.size == MemoryLayout<Int32>.size {
+                    // On 32 bit systems we don't have to worry about overflowing
+                    remainingLength = DWORD(truncatingIfNeeded: ptr.count - writtenLength)
+                } else {
+                    // On 64 bit systems we need to cap the count at DWORD max
+                    remainingLength = DWORD(truncatingIfNeeded: min(ptr.count - writtenLength, Int(DWORD.max)))
                 }
-                if !writeSucceed {
+                let startPtr = ptr.baseAddress!.advanced(by: writtenLength)
+                return WriteFile(
+                    handle,
+                    startPtr,
+                    DWORD(truncatingIfNeeded: remainingLength),
+                    nil,
+                    &overlapped
+                )
+            }
+
+            if !succeed {
+                // It is expected `WriteFile` to return `false` in async mode.
+                // Make sure we only get `ERROR_IO_PENDING`
+                let lastError = GetLastError()
+                guard lastError == ERROR_IO_PENDING else {
                     let error = SubprocessError(
                         code: .init(.failedToWriteToSubprocess),
-                        underlyingError: .init(rawValue: GetLastError())
+                        underlyingError: .init(rawValue: lastError)
                     )
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume(returning: Int(writtenBytes))
+                    throw error
                 }
+            }
+            // Now wait for read to finish
+            let bytesWritten: DWORD = try await signalStream.next() ?? 0
+            writtenLength += Int(bytesWritten)
+            if writtenLength >= bytes.count {
+                return writtenLength
             }
         }
     }

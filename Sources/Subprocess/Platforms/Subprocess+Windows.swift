@@ -11,7 +11,7 @@
 
 #if canImport(WinSDK)
 
-import WinSDK
+@preconcurrency import WinSDK
 internal import Dispatch
 #if canImport(System)
 @preconcurrency import System
@@ -48,12 +48,12 @@ extension Configuration {
         outputPipe: consuming CreatedPipe,
         errorPipe: consuming CreatedPipe
     ) throws -> SpawnResult {
-        var inputReadFileDescriptor: TrackedFileDescriptor? = inputPipe.readFileDescriptor()
-        var inputWriteFileDescriptor: TrackedFileDescriptor? = inputPipe.writeFileDescriptor()
-        var outputReadFileDescriptor: TrackedFileDescriptor? = outputPipe.readFileDescriptor()
-        var outputWriteFileDescriptor: TrackedFileDescriptor? = outputPipe.writeFileDescriptor()
-        var errorReadFileDescriptor: TrackedFileDescriptor? = errorPipe.readFileDescriptor()
-        var errorWriteFileDescriptor: TrackedFileDescriptor? = errorPipe.writeFileDescriptor()
+        var inputReadFileDescriptor: IODescriptor? = inputPipe.readFileDescriptor()
+        var inputWriteFileDescriptor: IODescriptor? = inputPipe.writeFileDescriptor()
+        var outputReadFileDescriptor: IODescriptor? = outputPipe.readFileDescriptor()
+        var outputWriteFileDescriptor: IODescriptor? = outputPipe.writeFileDescriptor()
+        var errorReadFileDescriptor: IODescriptor? = errorPipe.readFileDescriptor()
+        var errorWriteFileDescriptor: IODescriptor? = errorPipe.writeFileDescriptor()
 
         let applicationName: String?
         let commandAndArgs: String
@@ -162,9 +162,9 @@ extension Configuration {
 
         return SpawnResult(
             execution: execution,
-            inputWriteEnd: inputWriteFileDescriptor?.createPlatformDiskIO(),
-            outputReadEnd: outputReadFileDescriptor?.createPlatformDiskIO(),
-            errorReadEnd: errorReadFileDescriptor?.createPlatformDiskIO()
+            inputWriteEnd: inputWriteFileDescriptor?.createIOChannel(),
+            outputReadEnd: outputReadFileDescriptor?.createIOChannel(),
+            errorReadEnd: errorReadFileDescriptor?.createIOChannel()
         )
     }
 
@@ -182,12 +182,12 @@ extension Configuration {
         var _outputPipe = outputPipeBox.take()!
         var _errorPipe = errorPipeBox.take()!
 
-        let inputReadFileDescriptor: TrackedFileDescriptor? = _inputPipe.readFileDescriptor()
-        let inputWriteFileDescriptor: TrackedFileDescriptor? = _inputPipe.writeFileDescriptor()
-        let outputReadFileDescriptor: TrackedFileDescriptor? = _outputPipe.readFileDescriptor()
-        let outputWriteFileDescriptor: TrackedFileDescriptor? = _outputPipe.writeFileDescriptor()
-        let errorReadFileDescriptor: TrackedFileDescriptor? = _errorPipe.readFileDescriptor()
-        let errorWriteFileDescriptor: TrackedFileDescriptor? = _errorPipe.writeFileDescriptor()
+        let inputReadFileDescriptor: IODescriptor? = _inputPipe.readFileDescriptor()
+        let inputWriteFileDescriptor: IODescriptor? = _inputPipe.writeFileDescriptor()
+        let outputReadFileDescriptor: IODescriptor? = _outputPipe.readFileDescriptor()
+        let outputWriteFileDescriptor: IODescriptor? = _outputPipe.writeFileDescriptor()
+        let errorReadFileDescriptor: IODescriptor? = _errorPipe.readFileDescriptor()
+        let errorWriteFileDescriptor: IODescriptor? = _errorPipe.writeFileDescriptor()
 
         let (
             applicationName,
@@ -306,9 +306,9 @@ extension Configuration {
 
         return SpawnResult(
             execution: execution,
-            inputWriteEnd: inputWriteFileDescriptor?.createPlatformDiskIO(),
-            outputReadEnd: outputReadFileDescriptor?.createPlatformDiskIO(),
-            errorReadEnd: errorReadFileDescriptor?.createPlatformDiskIO()
+            inputWriteEnd: inputWriteFileDescriptor?.createIOChannel(),
+            outputReadEnd: outputReadFileDescriptor?.createIOChannel(),
+            errorReadEnd: errorReadFileDescriptor?.createIOChannel()
         )
     }
 }
@@ -773,12 +773,12 @@ extension Configuration {
     }
 
     private func generateStartupInfo(
-        withInputRead inputReadFileDescriptor: borrowing TrackedFileDescriptor?,
-        inputWrite inputWriteFileDescriptor: borrowing TrackedFileDescriptor?,
-        outputRead outputReadFileDescriptor: borrowing TrackedFileDescriptor?,
-        outputWrite outputWriteFileDescriptor: borrowing TrackedFileDescriptor?,
-        errorRead errorReadFileDescriptor: borrowing TrackedFileDescriptor?,
-        errorWrite errorWriteFileDescriptor: borrowing TrackedFileDescriptor?,
+        withInputRead inputReadFileDescriptor: borrowing IODescriptor?,
+        inputWrite inputWriteFileDescriptor: borrowing IODescriptor?,
+        outputRead outputReadFileDescriptor: borrowing IODescriptor?,
+        outputWrite outputWriteFileDescriptor: borrowing IODescriptor?,
+        errorRead errorReadFileDescriptor: borrowing IODescriptor?,
+        errorWrite errorWriteFileDescriptor: borrowing IODescriptor?,
     ) throws -> STARTUPINFOW {
         var info: STARTUPINFOW = STARTUPINFOW()
         info.cb = DWORD(MemoryLayout<STARTUPINFOW>.size)
@@ -950,8 +950,6 @@ extension Configuration {
 // MARK: - Type alias
 internal typealias PlatformFileDescriptor = HANDLE
 
-internal typealias TrackedPlatformDiskIO = TrackedFileDescriptor
-
 // MARK: - Pipe Support
 extension FileDescriptor {
     // NOTE: Not the same as SwiftSystem's FileDescriptor.pipe, which has different behavior,
@@ -996,18 +994,6 @@ extension FileDescriptor {
 
     var platformDescriptor: PlatformFileDescriptor {
         return HANDLE(bitPattern: _get_osfhandle(self.rawValue))!
-    }
-}
-
-extension TrackedFileDescriptor {
-    internal consuming func createPlatformDiskIO() -> TrackedPlatformDiskIO {
-        // Transferring out the ownership of fileDescriptor means we don't have go close here
-        let result: TrackedPlatformDiskIO =  .init(
-            self.fileDescriptor,
-            closeWhenDone: self.closeWhenDone
-        )
-        self.closeWhenDone = false
-        return result
     }
 }
 

@@ -173,12 +173,12 @@ extension Configuration {
             var _outputPipe = outputPipeBox.take()!
             var _errorPipe = errorPipeBox.take()!
 
-            let inputReadFileDescriptor: TrackedFileDescriptor? = _inputPipe.readFileDescriptor()
-            let inputWriteFileDescriptor: TrackedFileDescriptor? = _inputPipe.writeFileDescriptor()
-            let outputReadFileDescriptor: TrackedFileDescriptor? = _outputPipe.readFileDescriptor()
-            let outputWriteFileDescriptor: TrackedFileDescriptor? = _outputPipe.writeFileDescriptor()
-            let errorReadFileDescriptor: TrackedFileDescriptor? = _errorPipe.readFileDescriptor()
-            let errorWriteFileDescriptor: TrackedFileDescriptor? = _errorPipe.writeFileDescriptor()
+            let inputReadFileDescriptor: IODescriptor? = _inputPipe.readFileDescriptor()
+            let inputWriteFileDescriptor: IODescriptor? = _inputPipe.writeFileDescriptor()
+            let outputReadFileDescriptor: IODescriptor? = _outputPipe.readFileDescriptor()
+            let outputWriteFileDescriptor: IODescriptor? = _outputPipe.writeFileDescriptor()
+            let errorReadFileDescriptor: IODescriptor? = _errorPipe.readFileDescriptor()
+            let errorWriteFileDescriptor: IODescriptor? = _errorPipe.writeFileDescriptor()
 
             for possibleExecutablePath in possiblePaths {
                 var pid: pid_t = 0
@@ -442,9 +442,9 @@ extension Configuration {
                 )
                 return SpawnResult(
                     execution: execution,
-                    inputWriteEnd: inputWriteFileDescriptor?.createPlatformDiskIO(),
-                    outputReadEnd: outputReadFileDescriptor?.createPlatformDiskIO(),
-                    errorReadEnd: errorReadFileDescriptor?.createPlatformDiskIO()
+                    inputWriteEnd: inputWriteFileDescriptor?.createIOChannel(),
+                    outputReadEnd: outputReadFileDescriptor?.createIOChannel(),
+                    errorReadEnd: errorReadFileDescriptor?.createIOChannel()
                 )
             }
 
@@ -521,32 +521,6 @@ internal func monitorProcessTermination(
             }
         }
         source.resume()
-    }
-}
-
-internal typealias TrackedPlatformDiskIO = TrackedDispatchIO
-
-extension TrackedFileDescriptor {
-    internal consuming func createPlatformDiskIO() -> TrackedPlatformDiskIO {
-        // Transferring out the ownership of fileDescriptor means we don't have go close here
-        let shouldClose = self.closeWhenDone
-        let closeFd = self.fileDescriptor
-        let dispatchIO: DispatchIO = DispatchIO(
-            type: .stream,
-            fileDescriptor: self.platformDescriptor(),
-            queue: .global(),
-            cleanupHandler: { error in
-                // Close the file descriptor
-                if shouldClose {
-                    try? closeFd.close()
-                }
-            }
-        )
-        let result: TrackedPlatformDiskIO = .init(
-            dispatchIO, closeWhenDone: self.closeWhenDone
-        )
-        self.closeWhenDone = false
-        return result
     }
 }
 

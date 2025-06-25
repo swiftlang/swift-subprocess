@@ -19,12 +19,14 @@
 internal import Dispatch
 #endif
 
-public struct AsyncBufferSequence: AsyncSequence, Sendable {
+public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
     public typealias Failure = any Swift.Error
     public typealias Element = Buffer
 
     #if canImport(Darwin)
     internal typealias DiskIO = DispatchIO
+    #elseif canImport(WinSDK)
+    internal typealias DiskIO = HANDLE
     #else
     internal typealias DiskIO = FileDescriptor
     #endif
@@ -54,9 +56,11 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
             guard let data else {
                 // We finished reading. Close the file descriptor now
                 #if canImport(Darwin)
-                self.diskIO.close()
+                try _safelyClose(.dispatchIO(self.diskIO))
+                #elseif canImport(WinSDK)
+                try _safelyClose(.handle(self.diskIO))
                 #else
-                try self.diskIO.close()
+                try _safelyClose(.fileDescriptor(self.diskIO))
                 #endif
                 return nil
             }
@@ -337,7 +341,7 @@ private let _pageSize: Int = {
     Int(_subprocess_vm_size())
 }()
 #elseif canImport(WinSDK)
-import WinSDK
+@preconcurrency import WinSDK
 private let _pageSize: Int = {
     var sysInfo: SYSTEM_INFO = SYSTEM_INFO()
     GetSystemInfo(&sysInfo)

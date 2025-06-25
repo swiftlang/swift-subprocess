@@ -14,6 +14,11 @@
 #else
 @preconcurrency import SystemPackage
 #endif
+
+#if canImport(WinSDK)
+@preconcurrency import WinSDK
+#endif
+
 internal import Dispatch
 
 // MARK: - Output
@@ -85,10 +90,15 @@ public struct FileDescriptorOutput: OutputProtocol {
     private let fileDescriptor: FileDescriptor
 
     internal func createPipe() throws -> CreatedPipe {
+        #if canImport(WinSDK)
+        let writeFd = HANDLE(bitPattern: _get_osfhandle(self.fileDescriptor.rawValue))!
+        #else
+        let writeFd = self.fileDescriptor
+        #endif
         return CreatedPipe(
             readFileDescriptor: nil,
             writeFileDescriptor: .init(
-                self.fileDescriptor,
+                writeFd,
                 closeWhenDone: self.closeAfterSpawningProcess
             )
         )
@@ -140,7 +150,7 @@ public struct BytesOutput: OutputProtocol {
     public let maxSize: Int
 
     internal func captureOutput(
-        from diskIO: consuming TrackedPlatformDiskIO
+        from diskIO: consuming IOChannel
     ) async throws -> [UInt8] {
         let result = try await AsyncIO.shared.read(from: diskIO, upTo: self.maxSize)
         try diskIO.safelyClose()
@@ -247,13 +257,13 @@ extension OutputProtocol {
             return try fdOutput.createPipe()
         }
         // Base pipe based implementation for everything else
-        return try CreatedPipe(closeWhenDone: true)
+        return try CreatedPipe(closeWhenDone: true, purpose: .output)
     }
 
     /// Capture the output from the subprocess up to maxSize
     @_disfavoredOverload
     internal func captureOutput(
-        from diskIO: consuming TrackedPlatformDiskIO?
+        from diskIO: consuming IOChannel?
     ) async throws -> OutputType {
         if OutputType.self == Void.self {
             return () as! OutputType
@@ -272,7 +282,7 @@ extension OutputProtocol {
             return try await bytesOutput.captureOutput(from: diskIO) as! Self.OutputType
         }
         // Force unwrap is safe here because only `OutputType.self == Void` would
-        // have nil `TrackedPlatformDiskIO`
+        // have nil `IOChannel`
         let result = try await AsyncIO.shared.read(from: diskIO, upTo: self.maxSize)
         try diskIO.safelyClose()
         #if canImport(Darwin)
@@ -284,7 +294,7 @@ extension OutputProtocol {
 }
 
 extension OutputProtocol where OutputType == Void {
-    internal func captureOutput(from fileDescriptor: consuming TrackedPlatformDiskIO?) async throws {}
+    internal func captureOutput(from fileDescriptor: consuming IOChannel?) async throws {}
 
     #if SubprocessSpan
     /// Convert the output from Data to expected output type

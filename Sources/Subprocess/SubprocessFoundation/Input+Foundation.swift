@@ -133,7 +133,7 @@ extension StandardInputWriter {
 extension AsyncIO {
     internal func write(
         _ data: Data,
-        to diskIO: borrowing TrackedPlatformDiskIO
+        to diskIO: borrowing IOChannel
     ) async throws -> Int {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int, any Error>) in
             let dispatchData = data.withUnsafeBytes {
@@ -163,7 +163,7 @@ extension Data : AsyncIO._ContiguousBytes { }
 extension AsyncIO {
     internal func write(
         _ data: Data,
-        to diskIO: borrowing TrackedPlatformDiskIO
+        to diskIO: borrowing IOChannel
     ) async throws -> Int {
         return try await self._write(data, to: diskIO)
     }

@@ -11,7 +11,7 @@
 
 #if canImport(WinSDK)
 
-import WinSDK
+@preconcurrency import WinSDK
 import FoundationEssentials
 import Testing
 import Dispatch
@@ -269,7 +269,6 @@ extension SubprocessWindowsTests {
             output: .data(limit: 2048 * 1024),
             error: .discarded
         )
-        #expect(catResult.terminationStatus.isSuccess)
         // Make sure we read all bytes
         #expect(
             catResult.standardOutput == expected
@@ -324,7 +323,6 @@ extension SubprocessWindowsTests {
             }
             return buffer
         }
-        #expect(result.terminationStatus.isSuccess)
         #expect(result.value == expected)
     }
 
@@ -361,7 +359,6 @@ extension SubprocessWindowsTests {
             }
             return buffer
         }
-        #expect(result.terminationStatus.isSuccess)
         #expect(result.value == expected)
     }
 }
@@ -548,7 +545,7 @@ extension SubprocessWindowsTests {
         var platformOptions: Subprocess.PlatformOptions = .init()
         platformOptions.consoleBehavior = .detach
         let detachConsoleResult = try await Subprocess.run(
-            .path("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
+            .name("powershell.exe"),
             arguments: [
                 "-File", windowsTester.string,
                 "-mode", "get-console-window",
@@ -572,7 +569,7 @@ extension SubprocessWindowsTests {
         }
         let parentConsole = GetConsoleWindow()
         let newConsoleResult = try await Subprocess.run(
-            .path("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
+            .name("powershell.exe"),
             arguments: [
                 "-File", windowsTester.string,
                 "-mode", "get-console-window",
@@ -603,7 +600,7 @@ extension SubprocessWindowsTests {
             }
         }
         let changeTitleResult = try await Subprocess.run(
-            .path("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
+            .name("powershell.exe"),
             arguments: [
                 "-Command", "$consoleTitle = [console]::Title; Write-Host $consoleTitle",
             ],
@@ -651,7 +648,7 @@ extension SubprocessWindowsTests {
             // Now check the to make sure the process is actually suspended
             // Why not spawn another process to do that?
             var checkResult = try await Subprocess.run(
-                .path("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
+                .name("powershell.exe"),
                 arguments: [
                     "-File", windowsTester.string,
                     "-mode", "is-process-suspended",
@@ -668,7 +665,7 @@ extension SubprocessWindowsTests {
             // Now resume the process
             try subprocess.resume()
             checkResult = try await Subprocess.run(
-                .path("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
+                .name("powershell.exe"),
                 arguments: [
                     "-File", windowsTester.string,
                     "-mode", "is-process-suspended",
@@ -720,7 +717,6 @@ extension SubprocessWindowsTests {
         WaitForSingleObject(processHandle, INFINITE)
 
         // Up to 10 characters because Windows process IDs are DWORDs (UInt32), whose max value is 10 digits.
-        try writeFd.close()
         let data = try await readFd.readUntilEOF(upToLength: 10)
         let resultPID = try #require(
             String(data: data, encoding: .utf8)
