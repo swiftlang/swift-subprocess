@@ -78,25 +78,34 @@ public struct Configuration: Sendable {
 
         let processIdentifier = _spawnResult.execution.processIdentifier
 
-        let result = try await withAsyncTaskCleanupHandler {
-            let inputIO = _spawnResult.inputWriteEnd()
-            let outputIO = _spawnResult.outputReadEnd()
-            let errorIO = _spawnResult.errorReadEnd()
+        let result: Swift.Result<Result, Error>
+        do {
+            result = try await .success(withAsyncTaskCleanupHandler {
+                let inputIO = _spawnResult.inputWriteEnd()
+                let outputIO = _spawnResult.outputReadEnd()
+                let errorIO = _spawnResult.errorReadEnd()
 
-            // Body runs in the same isolation
-            return try await body(_spawnResult.execution, inputIO, outputIO, errorIO)
-        } onCleanup: {
-            // Attempt to terminate the child process
-            await Execution.runTeardownSequence(
-                self.platformOptions.teardownSequence,
-                on: pid
-            )
+                // Body runs in the same isolation
+                return try await body(_spawnResult.execution, inputIO, outputIO, errorIO)
+            } onCleanup: {
+                // Attempt to terminate the child process
+                await Execution.runTeardownSequence(
+                    self.platformOptions.teardownSequence,
+                    on: pid
+                )
+            })
+        } catch {
+            result = .failure(error)
         }
 
-        return ExecutionResult(
-            terminationStatus: try await monitorProcessTermination(forProcessWithIdentifier: processIdentifier),
-            value: result
-        )
+        // Ensure that we begin monitoring process termination after `body` runs
+        // and regardless of whether `body` throws, so that the pid gets reaped
+        // even if `body` throws, and we are not leaving zombie processes in the
+        // process table which will cause the process termination monitoring thread
+        // to effectively hang due to the pid never being awaited
+        let terminationStatus = try await Subprocess.monitorProcessTermination(forProcessWithIdentifier: processIdentifier)
+
+        return try ExecutionResult(terminationStatus: terminationStatus, value: result.get())
     }
 }
 
@@ -779,7 +788,7 @@ internal func withAsyncTaskCleanupHandler<Result>(
             // so _immediately_ if the failure scenario is due to parent task
             // cancellation. We do so in a detached Task to prevent cancellation
             // of the parent task from interrupting enumeration of the stream itself.
-            await Task.detached {
+            await withUncancelledTask {
                 do {
                     var iterator = runCancellationHandlerStream.makeAsyncIterator()
                     while let _ = try await iterator.next() {
@@ -787,7 +796,7 @@ internal func withAsyncTaskCleanupHandler<Result>(
                 } catch {
                     await handler()
                 }
-            }.value
+            }
         }
 
         defer {
