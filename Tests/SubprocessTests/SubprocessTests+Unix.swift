@@ -280,7 +280,7 @@ extension SubprocessUnixTests {
             input: .string(content, using: UTF8.self)
         )
         #expect(catResult.terminationStatus.isSuccess)
-        // We should have read exactly 0 bytes
+        // Output should match the input content
         #expect(catResult.standardOutput == content)
     }
 
