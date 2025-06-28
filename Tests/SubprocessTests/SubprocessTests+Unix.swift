@@ -760,15 +760,8 @@ extension SubprocessUnixTests {
                 }
                 group.addTask {
                     var outputs: [String] = []
-                    for try await bit in standardOutput {
-                        let bitString = bit.withUnsafeBytes { ptr in
-                            return String(decoding: ptr, as: UTF8.self)
-                        }.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if bitString.contains("\n") {
-                            outputs.append(contentsOf: bitString.split(separator: "\n").map { String($0) })
-                        } else {
-                            outputs.append(bitString)
-                        }
+                    for try await line in standardOutput.lines() {
+                        outputs.append(line.trimmingCharacters(in: .newlines))
                     }
                     #expect(outputs == ["saw SIGQUIT", "saw SIGTERM", "saw SIGINT"])
                 }
@@ -881,17 +874,21 @@ extension SubprocessUnixTests {
             let length: Int
             switch size {
             case .large:
-                length = Int(Double.random(in: 1.0 ..< 2.0) * Double(readBufferSize))
+                length = Int(Double.random(in: 1.0 ..< 2.0) * Double(readBufferSize)) + 1
             case .medium:
-                length = Int(Double.random(in: 0.2 ..< 1.0) * Double(readBufferSize))
+                length = Int(Double.random(in: 0.2 ..< 1.0) * Double(readBufferSize)) + 1
             case .small:
-                length = Int.random(in: 0 ..< 16)
+                length = Int.random(in: 1 ..< 16)
             }
 
             var buffer: [UInt8] = Array(repeating: 0, count: length)
             for index in 0 ..< length {
                 buffer[index] = UInt8.random(in: range)
             }
+            // Buffer cannot be empty or a line with a \r ending followed by an empty one with a \n ending would be indistinguishable.
+            // This matters for any line ending sequences where one line ending sequence is the prefix of another. \r and \r\n are the
+            // only two which meet this criteria.
+            precondition(!buffer.isEmpty)
             return buffer
         }
 
@@ -954,6 +951,8 @@ extension SubprocessUnixTests {
         ) { execution, standardOutput in
             var index = 0
             for try await line in standardOutput.lines(encoding: UTF8.self) {
+                defer { index += 1 }
+                try #require(index < testCases.count, "Received more lines than expected")
                 #expect(
                     line == testCases[index].value,
                     """
@@ -963,7 +962,6 @@ extension SubprocessUnixTests {
                     Line Ending \(Array(testCases[index].newLine.utf8))
                     """
                 )
-                index += 1
             }
         }
         try FileManager.default.removeItem(at: testFilePath)
