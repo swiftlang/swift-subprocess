@@ -118,18 +118,6 @@ extension Execution {
         signal: Signal,
         toProcessGroup shouldSendToProcessGroup: Bool = false
     ) throws {
-        try Self.send(
-            signal: signal,
-            to: self.processIdentifier,
-            toProcessGroup: shouldSendToProcessGroup
-        )
-    }
-
-    internal static func send(
-        signal: Signal,
-        to processIdentifier: ProcessIdentifier,
-        toProcessGroup shouldSendToProcessGroup: Bool
-    ) throws {
         let pid = shouldSendToProcessGroup ? -(processIdentifier.value) : processIdentifier.value
         guard kill(pid, signal.rawValue) == 0 else {
             throw SubprocessError(

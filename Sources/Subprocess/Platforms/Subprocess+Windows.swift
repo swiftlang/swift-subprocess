@@ -116,54 +116,33 @@ extension Configuration {
                 }
             }
         }
-        // We don't need the handle objects, so close it right away
-        guard CloseHandle(processInfo.hThread) else {
-            let windowsError = GetLastError()
-            try self.safelyCloseMultiple(
-                inputRead: inputReadFileDescriptor,
-                inputWrite: inputWriteFileDescriptor,
-                outputRead: outputReadFileDescriptor,
-                outputWrite: outputWriteFileDescriptor,
-                errorRead: errorReadFileDescriptor,
-                errorWrite: errorWriteFileDescriptor
-            )
-            throw SubprocessError(
-                code: .init(.spawnFailed),
-                underlyingError: .init(rawValue: windowsError)
-            )
-        }
-        guard CloseHandle(processInfo.hProcess) else {
-            let windowsError = GetLastError()
-            try self.safelyCloseMultiple(
-                inputRead: inputReadFileDescriptor,
-                inputWrite: inputWriteFileDescriptor,
-                outputRead: outputReadFileDescriptor,
-                outputWrite: outputWriteFileDescriptor,
-                errorRead: errorReadFileDescriptor,
-                errorWrite: errorWriteFileDescriptor
-            )
-            throw SubprocessError(
-                code: .init(.spawnFailed),
-                underlyingError: .init(rawValue: windowsError)
-            )
-        }
-
-        try self.safelyCloseMultiple(
-            inputRead: inputReadFileDescriptor,
-            inputWrite: nil,
-            outputRead: nil,
-            outputWrite: outputWriteFileDescriptor,
-            errorRead: nil,
-            errorWrite: errorWriteFileDescriptor
-        )
 
         let pid = ProcessIdentifier(
             value: processInfo.dwProcessId
         )
         let execution = Execution(
             processIdentifier: pid,
+            processInformation: processInfo,
             consoleBehavior: self.platformOptions.consoleBehavior
         )
+
+        do {
+            // After spawn finishes, close all child side fds
+            try self.safelyCloseMultiple(
+                inputRead: inputReadFileDescriptor,
+                inputWrite: nil,
+                outputRead: nil,
+                outputWrite: outputWriteFileDescriptor,
+                errorRead: nil,
+                errorWrite: errorWriteFileDescriptor
+            )
+        } catch {
+            // If spawn() throws, monitorProcessTermination or runDetached
+            // won't have an opportunity to call release, so do it here to avoid leaking the handles.
+            execution.release()
+            throw error
+        }
+
         return SpawnResult(
             execution: execution,
             inputWriteEnd: inputWriteFileDescriptor?.createPlatformDiskIO(),
@@ -259,55 +238,33 @@ extension Configuration {
                 }
             }
         }
-        // We don't need the handle objects, so close it right away
-        guard CloseHandle(processInfo.hThread) else {
-            let windowsError = GetLastError()
-            try self.safelyCloseMultiple(
-                inputRead: inputReadFileDescriptor,
-                inputWrite: inputWriteFileDescriptor,
-                outputRead: outputReadFileDescriptor,
-                outputWrite: outputWriteFileDescriptor,
-                errorRead: errorReadFileDescriptor,
-                errorWrite: errorWriteFileDescriptor
-            )
-            throw SubprocessError(
-                code: .init(.spawnFailed),
-                underlyingError: .init(rawValue: windowsError)
-            )
-        }
-        guard CloseHandle(processInfo.hProcess) else {
-            let windowsError = GetLastError()
-            try self.safelyCloseMultiple(
-                inputRead: inputReadFileDescriptor,
-                inputWrite: inputWriteFileDescriptor,
-                outputRead: outputReadFileDescriptor,
-                outputWrite: outputWriteFileDescriptor,
-                errorRead: errorReadFileDescriptor,
-                errorWrite: errorWriteFileDescriptor
-            )
-            throw SubprocessError(
-                code: .init(.spawnFailed),
-                underlyingError: .init(rawValue: windowsError)
-            )
-        }
-
-        // After spawn finishes, close all child side fds
-        try self.safelyCloseMultiple(
-            inputRead: inputReadFileDescriptor,
-            inputWrite: nil,
-            outputRead: nil,
-            outputWrite: outputWriteFileDescriptor,
-            errorRead: nil,
-            errorWrite: errorWriteFileDescriptor
-        )
 
         let pid = ProcessIdentifier(
             value: processInfo.dwProcessId
         )
         let execution = Execution(
             processIdentifier: pid,
+            processInformation: processInfo,
             consoleBehavior: self.platformOptions.consoleBehavior
         )
+
+        do {
+            // After spawn finishes, close all child side fds
+            try self.safelyCloseMultiple(
+                inputRead: inputReadFileDescriptor,
+                inputWrite: nil,
+                outputRead: nil,
+                outputWrite: outputWriteFileDescriptor,
+                errorRead: nil,
+                errorWrite: errorWriteFileDescriptor
+            )
+        } catch {
+            // If spawn() throws, monitorProcessTermination or runDetached
+            // won't have an opportunity to call release, so do it here to avoid leaking the handles.
+            execution.release()
+            throw error
+        }
+
         return SpawnResult(
             execution: execution,
             inputWriteEnd: inputWriteFileDescriptor?.createPlatformDiskIO(),
@@ -464,7 +421,7 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
 // MARK: - Process Monitoring
 @Sendable
 internal func monitorProcessTermination(
-    forProcessWithIdentifier pid: ProcessIdentifier
+    forExecution execution: Execution
 ) async throws -> TerminationStatus {
     // Once the continuation resumes, it will need to unregister the wait, so
     // yield the wait handle back to the calling scope.
@@ -473,15 +430,8 @@ internal func monitorProcessTermination(
         if let waitHandle {
             _ = UnregisterWait(waitHandle)
         }
-    }
-    guard
-        let processHandle = OpenProcess(
-            DWORD(PROCESS_QUERY_INFORMATION | SYNCHRONIZE),
-            false,
-            pid.value
-        )
-    else {
-        return .exited(1)
+
+        execution.release()
     }
 
     try? await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
@@ -500,7 +450,7 @@ internal func monitorProcessTermination(
         guard
             RegisterWaitForSingleObject(
                 &waitHandle,
-                processHandle,
+                execution.processInformation.hProcess,
                 callback,
                 context,
                 INFINITE,
@@ -518,7 +468,7 @@ internal func monitorProcessTermination(
     }
 
     var status: DWORD = 0
-    guard GetExitCodeProcess(processHandle, &status) else {
+    guard GetExitCodeProcess(execution.processInformation.hProcess, &status) else {
         // The child process terminated but we couldn't get its status back.
         // Assume generic failure.
         return .exited(1)
@@ -536,30 +486,7 @@ extension Execution {
     /// Terminate the current subprocess with the given exit code
     /// - Parameter exitCode: The exit code to use for the subprocess.
     public func terminate(withExitCode exitCode: DWORD) throws {
-        try Self.terminate(self.processIdentifier, withExitCode: exitCode)
-    }
-
-    internal static func terminate(
-        _ processIdentifier: ProcessIdentifier,
-        withExitCode exitCode: DWORD
-    ) throws {
-        guard
-            let processHandle = OpenProcess(
-                // PROCESS_ALL_ACCESS
-                DWORD(STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 0xFFFF),
-                false,
-                processIdentifier.value
-            )
-        else {
-            throw SubprocessError(
-                code: .init(.failedToTerminate),
-                underlyingError: .init(rawValue: GetLastError())
-            )
-        }
-        defer {
-            CloseHandle(processHandle)
-        }
-        guard TerminateProcess(processHandle, exitCode) else {
+        guard TerminateProcess(processInformation.hProcess, exitCode) else {
             throw SubprocessError(
                 code: .init(.failedToTerminate),
                 underlyingError: .init(rawValue: GetLastError())
@@ -569,23 +496,6 @@ extension Execution {
 
     /// Suspend the current subprocess
     public func suspend() throws {
-        guard
-            let processHandle = OpenProcess(
-                // PROCESS_ALL_ACCESS
-                DWORD(STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 0xFFFF),
-                false,
-                self.processIdentifier.value
-            )
-        else {
-            throw SubprocessError(
-                code: .init(.failedToSuspend),
-                underlyingError: .init(rawValue: GetLastError())
-            )
-        }
-        defer {
-            CloseHandle(processHandle)
-        }
-
         let NTSuspendProcess: (@convention(c) (HANDLE) -> LONG)? =
             unsafeBitCast(
                 GetProcAddress(
@@ -600,7 +510,7 @@ extension Execution {
                 underlyingError: .init(rawValue: GetLastError())
             )
         }
-        guard NTSuspendProcess(processHandle) >= 0 else {
+        guard NTSuspendProcess(processInformation.hProcess) >= 0 else {
             throw SubprocessError(
                 code: .init(.failedToSuspend),
                 underlyingError: .init(rawValue: GetLastError())
@@ -610,23 +520,6 @@ extension Execution {
 
     /// Resume the current subprocess after suspension
     public func resume() throws {
-        guard
-            let processHandle = OpenProcess(
-                // PROCESS_ALL_ACCESS
-                DWORD(STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 0xFFFF),
-                false,
-                self.processIdentifier.value
-            )
-        else {
-            throw SubprocessError(
-                code: .init(.failedToResume),
-                underlyingError: .init(rawValue: GetLastError())
-            )
-        }
-        defer {
-            CloseHandle(processHandle)
-        }
-
         let NTResumeProcess: (@convention(c) (HANDLE) -> LONG)? =
             unsafeBitCast(
                 GetProcAddress(
@@ -641,7 +534,7 @@ extension Execution {
                 underlyingError: .init(rawValue: GetLastError())
             )
         }
-        guard NTResumeProcess(processHandle) >= 0 else {
+        guard NTResumeProcess(processInformation.hProcess) >= 0 else {
             throw SubprocessError(
                 code: .init(.failedToResume),
                 underlyingError: .init(rawValue: GetLastError())

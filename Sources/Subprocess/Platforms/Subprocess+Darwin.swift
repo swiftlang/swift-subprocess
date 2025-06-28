@@ -485,18 +485,18 @@ extension String {
 // MARK: - Process Monitoring
 @Sendable
 internal func monitorProcessTermination(
-    forProcessWithIdentifier pid: ProcessIdentifier
+    forExecution execution: Execution
 ) async throws -> TerminationStatus {
     return try await withCheckedThrowingContinuation { continuation in
         let source = DispatchSource.makeProcessSource(
-            identifier: pid.value,
+            identifier: execution.processIdentifier.value,
             eventMask: [.exit],
             queue: .global()
         )
         source.setEventHandler {
             source.cancel()
             var siginfo = siginfo_t()
-            let rc = waitid(P_PID, id_t(pid.value), &siginfo, WEXITED)
+            let rc = waitid(P_PID, id_t(execution.processIdentifier.value), &siginfo, WEXITED)
             guard rc == 0 else {
                 continuation.resume(
                     throwing: SubprocessError(

@@ -78,15 +78,8 @@ extension Execution {
     /// Teardown sequence always ends with a `.kill` signal
     /// - Parameter sequence: The  steps to perform.
     public func teardown(using sequence: some Sequence<TeardownStep> & Sendable) async {
-        await Self.runTeardownSequence(sequence, on: self.processIdentifier)
-    }
-
-    internal static func teardown(
-        using sequence: some Sequence<TeardownStep> & Sendable,
-        on processIdentifier: ProcessIdentifier
-    ) async {
         await withUncancelledTask {
-            await Self.runTeardownSequence(sequence, on: processIdentifier)
+            await runTeardownSequence(sequence)
         }
     }
 }
@@ -98,25 +91,10 @@ internal enum TeardownStepCompletion {
 }
 
 extension Execution {
-    internal static func gracefulShutDown(
-        _ processIdentifier: ProcessIdentifier,
+    internal func gracefulShutDown(
         allowedDurationToNextStep duration: Duration
     ) async {
         #if os(Windows)
-        guard
-            let processHandle = OpenProcess(
-                DWORD(PROCESS_QUERY_INFORMATION | SYNCHRONIZE),
-                false,
-                processIdentifier.value
-            )
-        else {
-            // Nothing more we can do
-            return
-        }
-        defer {
-            CloseHandle(processHandle)
-        }
-
         // 1. Attempt to send WM_CLOSE to the main window
         if _subprocess_windows_send_vm_close(
             processIdentifier.value
@@ -148,15 +126,13 @@ extension Execution {
         // Send SIGTERM
         try? self.send(
             signal: .terminate,
-            to: processIdentifier,
             toProcessGroup: false
         )
         #endif
     }
 
-    internal static func runTeardownSequence(
-        _ sequence: some Sequence<TeardownStep> & Sendable,
-        on processIdentifier: ProcessIdentifier
+    internal func runTeardownSequence(
+        _ sequence: some Sequence<TeardownStep> & Sendable
     ) async {
         // First insert the `.kill` step
         let finalSequence = sequence + [TeardownStep(storage: .kill)]
@@ -177,7 +153,6 @@ extension Execution {
                         }
                     }
                     await self.gracefulShutDown(
-                        processIdentifier,
                         allowedDurationToNextStep: allowedDuration
                     )
                     return await group.next()!
@@ -195,18 +170,17 @@ extension Execution {
                             return .processHasExited
                         }
                     }
-                    try? self.send(signal: signal, to: processIdentifier, toProcessGroup: false)
+                    try? self.send(signal: signal, toProcessGroup: false)
                     return await group.next()!
                 }
             #endif  // !os(Windows)
             case .kill:
                 #if os(Windows)
                 try? self.terminate(
-                    processIdentifier,
                     withExitCode: 0
                 )
                 #else
-                try? self.send(signal: .kill, to: processIdentifier, toProcessGroup: false)
+                try? self.send(signal: .kill, toProcessGroup: false)
                 #endif
                 stepCompletion = .killedTheProcess
             }

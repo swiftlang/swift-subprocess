@@ -644,16 +644,17 @@ public func runDetached(
     output: FileDescriptor? = nil,
     error: FileDescriptor? = nil
 ) throws -> ProcessIdentifier {
+    let execution: Execution
     switch (input, output, error) {
     case (.none, .none, .none):
         let processInput = NoInput()
         let processOutput = DiscardedOutput()
         let processError = DiscardedOutput()
-        return try configuration.spawn(
+        execution = try configuration.spawn(
             withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
             errorPipe: try processError.createPipe()
-        ).execution.processIdentifier
+        ).execution
     case (.none, .none, .some(let errorFd)):
         let processInput = NoInput()
         let processOutput = DiscardedOutput()
@@ -661,22 +662,22 @@ public func runDetached(
             fileDescriptor: errorFd,
             closeAfterSpawningProcess: false
         )
-        return try configuration.spawn(
+        execution = try configuration.spawn(
             withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
             errorPipe: try processError.createPipe()
-        ).execution.processIdentifier
+        ).execution
     case (.none, .some(let outputFd), .none):
         let processInput = NoInput()
         let processOutput = FileDescriptorOutput(
             fileDescriptor: outputFd, closeAfterSpawningProcess: false
         )
         let processError = DiscardedOutput()
-        return try configuration.spawn(
+        execution = try configuration.spawn(
             withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
             errorPipe: try processError.createPipe()
-        ).execution.processIdentifier
+        ).execution
     case (.none, .some(let outputFd), .some(let errorFd)):
         let processInput = NoInput()
         let processOutput = FileDescriptorOutput(
@@ -687,11 +688,11 @@ public func runDetached(
             fileDescriptor: errorFd,
             closeAfterSpawningProcess: false
         )
-        return try configuration.spawn(
+        execution = try configuration.spawn(
             withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
             errorPipe: try processError.createPipe()
-        ).execution.processIdentifier
+        ).execution
     case (.some(let inputFd), .none, .none):
         let processInput = FileDescriptorInput(
             fileDescriptor: inputFd,
@@ -699,11 +700,11 @@ public func runDetached(
         )
         let processOutput = DiscardedOutput()
         let processError = DiscardedOutput()
-        return try configuration.spawn(
+        execution = try configuration.spawn(
             withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
             errorPipe: try processError.createPipe()
-        ).execution.processIdentifier
+        ).execution
     case (.some(let inputFd), .none, .some(let errorFd)):
         let processInput = FileDescriptorInput(
             fileDescriptor: inputFd, closeAfterSpawningProcess: false
@@ -713,11 +714,11 @@ public func runDetached(
             fileDescriptor: errorFd,
             closeAfterSpawningProcess: false
         )
-        return try configuration.spawn(
+        execution = try configuration.spawn(
             withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
             errorPipe: try processError.createPipe()
-        ).execution.processIdentifier
+        ).execution
     case (.some(let inputFd), .some(let outputFd), .none):
         let processInput = FileDescriptorInput(
             fileDescriptor: inputFd,
@@ -728,11 +729,11 @@ public func runDetached(
             closeAfterSpawningProcess: false
         )
         let processError = DiscardedOutput()
-        return try configuration.spawn(
+        execution = try configuration.spawn(
             withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
             errorPipe: try processError.createPipe()
-        ).execution.processIdentifier
+        ).execution
     case (.some(let inputFd), .some(let outputFd), .some(let errorFd)):
         let processInput = FileDescriptorInput(
             fileDescriptor: inputFd,
@@ -746,11 +747,13 @@ public func runDetached(
             fileDescriptor: errorFd,
             closeAfterSpawningProcess: false
         )
-        return try configuration.spawn(
+        execution = try configuration.spawn(
             withInput: try processInput.createPipe(),
             outputPipe: try processOutput.createPipe(),
             errorPipe: try processError.createPipe()
-        ).execution.processIdentifier
+        ).execution
     }
+    execution.release()
+    return execution.processIdentifier
 }
 

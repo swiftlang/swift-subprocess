@@ -71,12 +71,11 @@ public struct Configuration: Sendable {
             outputPipe: output,
             errorPipe: error
         )
-        let pid = spawnResults.execution.processIdentifier
 
         var spawnResultBox: SpawnResult?? = consume spawnResults
         var _spawnResult = spawnResultBox!.take()!
 
-        let processIdentifier = _spawnResult.execution.processIdentifier
+        let execution = _spawnResult.execution
 
         let result: Swift.Result<Result, Error>
         do {
@@ -89,9 +88,8 @@ public struct Configuration: Sendable {
                 return try await body(_spawnResult.execution, inputIO, outputIO, errorIO)
             } onCleanup: {
                 // Attempt to terminate the child process
-                await Execution.runTeardownSequence(
-                    self.platformOptions.teardownSequence,
-                    on: pid
+                await execution.runTeardownSequence(
+                    self.platformOptions.teardownSequence
                 )
             })
         } catch {
@@ -103,7 +101,7 @@ public struct Configuration: Sendable {
         // even if `body` throws, and we are not leaving zombie processes in the
         // process table which will cause the process termination monitoring thread
         // to effectively hang due to the pid never being awaited
-        let terminationStatus = try await Subprocess.monitorProcessTermination(forProcessWithIdentifier: processIdentifier)
+        let terminationStatus = try await Subprocess.monitorProcessTermination(forExecution: _spawnResult.execution)
 
         return try ExecutionResult(terminationStatus: terminationStatus, value: result.get())
     }

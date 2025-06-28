@@ -265,7 +265,7 @@ extension String {
 // MARK: - Process Monitoring
 @Sendable
 internal func monitorProcessTermination(
-    forProcessWithIdentifier pid: ProcessIdentifier
+    forExecution execution: Execution
 ) async throws -> TerminationStatus {
     try await withCheckedThrowingContinuation { continuation in
         _childProcessContinuations.withLock { continuations in
@@ -274,7 +274,7 @@ internal func monitorProcessTermination(
             // the child process has terminated and manages to acquire the lock before
             // we add this continuation to the dictionary, then it will simply loop
             // and report the status again.
-            let oldContinuation = continuations.updateValue(continuation, forKey: pid.value)
+            let oldContinuation = continuations.updateValue(continuation, forKey: execution.processIdentifier.value)
             precondition(oldContinuation == nil)
 
             // Wake up the waiter thread if it is waiting for more child processes.
