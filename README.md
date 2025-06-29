@@ -78,21 +78,6 @@ async let monitorResult = run(
 }
 ```
 
-### Running Unmonitored Processes
-
-While `Subprocess` is designed with Swift’s structural concurrency in mind, it also provides a lower level, synchronous method for launching child processes. However, since `Subprocess` can’t synchronously monitor child process’s state or handle cleanup, you’ll need to attach a FileDescriptor to each I/O directly. Remember to close the `FileDescriptor` once you’re finished.
-
-```swift
-import Subprocess
-
-let input: FileDescriptor = ...
-
-input.closeAfter {
-    let pid = try runDetached(.path("/bin/daemon"), input: input)
-    // ... other opeartions
-}
-```
-
 ### Customizable Execution
 
 You can set various parameters when running the child process, such as `Arguments`, `Environment`, and working directory:
