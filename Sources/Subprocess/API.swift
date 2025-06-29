@@ -614,7 +614,7 @@ public func runDetached(
     input: FileDescriptor? = nil,
     output: FileDescriptor? = nil,
     error: FileDescriptor? = nil
-) throws -> ProcessIdentifier {
+) throws -> ProcessHandle {
     let config: Configuration = Configuration(
         executable: executable,
         arguments: arguments,
@@ -643,7 +643,7 @@ public func runDetached(
     input: FileDescriptor? = nil,
     output: FileDescriptor? = nil,
     error: FileDescriptor? = nil
-) throws -> ProcessIdentifier {
+) throws -> ProcessHandle {
     let execution: Execution
     switch (input, output, error) {
     case (.none, .none, .none):
@@ -753,7 +753,6 @@ public func runDetached(
             errorPipe: try processError.createPipe()
         ).execution
     }
-    execution.release()
-    return execution.processIdentifier
+    return ProcessHandle(execution: execution)
 }
 
