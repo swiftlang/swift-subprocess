@@ -35,6 +35,15 @@ protocol ProcessIdentifierProtocol: Sendable, Hashable, CustomStringConvertible,
     #else
     var value: pid_t { get }
     #endif
+
+    #if os(Linux) || os(Android)
+    var processDescriptor: PlatformFileDescriptor { get }
+    #endif
+
+    #if os(Windows)
+    nonisolated(unsafe) var processDescriptor: PlatformFileDescriptor { get }
+    nonisolated(unsafe) var threadHandle: PlatformFileDescriptor { get }
+    #endif
 }
 
 extension ProcessIdentifier : ProcessIdentifierProtocol {}

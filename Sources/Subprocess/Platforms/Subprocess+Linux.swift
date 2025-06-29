@@ -191,7 +191,7 @@ extension Configuration {
 public struct ProcessIdentifier: Sendable, Hashable {
     /// The platform specific process identifier value
     public let value: pid_t
-    internal let processDescriptor: PlatformFileDescriptor
+    public let processDescriptor: CInt
 
     internal init(value: pid_t, processDescriptor: PlatformFileDescriptor) {
         self.value = value

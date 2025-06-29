@@ -697,6 +697,36 @@ extension SubprocessWindowsTests {
         }
         #expect(stuckProcess.terminationStatus.isSuccess)
     }
+
+    /// Tests a use case for Windows platform handles by assigning the newly created process to a Job Object
+    /// - see: https://devblogs.microsoft.com/oldnewthing/20131209-00/
+    @Test func testPlatformHandles() async throws {
+        let hJob = CreateJobObjectW(nil, nil)
+        defer { #expect(CloseHandle(hJob)) }
+        var info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = DWORD(JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)
+        #expect(SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &info,     DWORD(MemoryLayout<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>.size)))
+
+        var platformOptions = PlatformOptions()
+        platformOptions.preSpawnProcessConfigurator = { (createProcessFlags, startupInfo) in
+            createProcessFlags |= DWORD(CREATE_SUSPENDED)
+        }
+
+        let result = try await Subprocess.run(
+            self.cmdExe,
+            arguments: ["/c", "echo"],
+            platformOptions: platformOptions,
+            output: .discarded
+        ) { execution, _ in
+            guard AssignProcessToJobObject(hJob, execution.processIdentifier.processDescriptor) else {
+                throw SubprocessError.UnderlyingError(rawValue: GetLastError())
+            }
+            guard ResumeThread(execution.processIdentifier.threadHandle) != DWORD(bitPattern: -1) else {
+                throw SubprocessError.UnderlyingError(rawValue: GetLastError())
+            }
+        }
+        #expect(result.terminationStatus.isSuccess)
+    }
 }
 
 // MARK: - User Utils
