@@ -729,27 +729,16 @@ extension SubprocessWindowsTests {
             DWORD(HANDLE_FLAG_INHERIT),
             0
         )
-        let pid = try Subprocess.runDetached(
+        let execution = try Subprocess.runDetached(
             .path("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
             arguments: [
                 "-Command", "Write-Host $PID",
             ],
             output: writeFd
         )
-        // Wait for process to finish
-        guard
-            let processHandle = OpenProcess(
-                DWORD(PROCESS_QUERY_INFORMATION | SYNCHRONIZE),
-                false,
-                pid.value
-            )
-        else {
-            Issue.record("Failed to get process handle")
-            return
-        }
 
         // Wait for the process to finish
-        WaitForSingleObject(processHandle, INFINITE)
+        WaitForSingleObject(execution.platformHandles.processInformation.hProcess, INFINITE)
 
         // Up to 10 characters because Windows process IDs are DWORDs (UInt32), whose max value is 10 digits.
         try writeFd.close()
@@ -757,7 +746,7 @@ extension SubprocessWindowsTests {
         let resultPID = try #require(
             String(data: data, encoding: .utf8)
         ).trimmingCharacters(in: .whitespacesAndNewlines)
-        #expect("\(pid.value)" == resultPID)
+        #expect("\(execution.processIdentifier.value)" == resultPID)
         try readFd.close()
     }
 }
