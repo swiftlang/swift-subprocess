@@ -150,7 +150,8 @@ extension Configuration {
                 )
 
                 let execution = Execution(
-                    processIdentifier: .init(value: pid)
+                    processIdentifier: .init(value: pid),
+                    platformHandles: .init()
                 )
                 return SpawnResult(
                     execution: execution,
@@ -187,6 +188,14 @@ extension Configuration {
             )
         }
     }
+}
+
+// MARK: - PlatformExecution
+
+/// The collection of platform-specific handles used to control the subprocess when running.
+public struct PlatformHandles: Sendable {
+    public init() {}
+    internal func release() {}
 }
 
 // MARK: - Platform Specific Options
