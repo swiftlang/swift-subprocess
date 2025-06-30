@@ -585,7 +585,7 @@ internal enum StringOrRawBytes: Sendable, Hashable {
 /// automatically when done.
 internal struct TrackedFileDescriptor: ~Copyable {
     internal var closeWhenDone: Bool
-    internal let fileDescriptor: FileDescriptor
+    internal var fileDescriptor: FileDescriptor
 
     internal init(
         _ fileDescriptor: FileDescriptor,
@@ -675,7 +675,7 @@ internal struct TrackedDispatchIO: ~Copyable {
             return
         }
         closeWhenDone = false
-        dispatchIO.close()
+        dispatchIO.close(flags: [.stop])
     }
 
     deinit {
