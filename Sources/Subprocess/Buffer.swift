@@ -17,18 +17,8 @@
 extension AsyncBufferSequence {
     /// A immutable collection of bytes
     public struct Buffer: Sendable {
-        #if os(Windows)
-        internal let data: [UInt8]
-
-        internal init(data: [UInt8]) {
-            self.data = data
-        }
-
-        internal static func createFrom(_ data: [UInt8]) -> [Buffer] {
-            return [.init(data: data)]
-        }
-        #else
-        // We need to keep the backingData alive while _ContiguousBufferView is alive
+        #if canImport(Darwin)
+        // We need to keep the backingData alive while Slice is alive
         internal let backingData: DispatchData
         internal let data: DispatchData._ContiguousBufferView
 
@@ -45,7 +35,17 @@ extension AsyncBufferSequence {
             }
             return slices.map{ .init(data: $0, backingData: data) }
         }
-        #endif
+        #else
+        internal let data: [UInt8]
+
+        internal init(data: [UInt8]) {
+            self.data = data
+        }
+
+        internal static func createFrom(_ data: [UInt8]) -> [Buffer] {
+            return [.init(data: data)]
+        }
+        #endif // canImport(Darwin)
     }
 }
 
@@ -92,26 +92,23 @@ extension AsyncBufferSequence.Buffer {
 
 // MARK: - Hashable, Equatable
 extension AsyncBufferSequence.Buffer: Equatable, Hashable {
-    #if os(Windows)
-    // Compiler generated conformances
-    #else
+    #if canImport(Darwin)
     public static func == (lhs: AsyncBufferSequence.Buffer, rhs: AsyncBufferSequence.Buffer) -> Bool {
-        return lhs.data.elementsEqual(rhs.data)
+        return lhs.data == rhs.data
     }
 
     public func hash(into hasher: inout Hasher) {
-        self.data.withUnsafeBytes { ptr in
-            hasher.combine(bytes: ptr)
-        }
+        hasher.combine(self.data)
     }
     #endif
+    // else Compiler generated conformances
 }
 
 // MARK: - DispatchData.Block
 #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl)
 extension DispatchData {
     /// Unfortunately `DispatchData.Region` is not available on Linux, hence our own wrapper
-    internal struct _ContiguousBufferView: @unchecked Sendable, RandomAccessCollection {
+    internal struct _ContiguousBufferView: @unchecked Sendable, RandomAccessCollection, Hashable {
         typealias Element = UInt8
 
         internal let bytes: UnsafeBufferPointer<UInt8>
@@ -125,6 +122,14 @@ extension DispatchData {
 
         internal func withUnsafeBytes<ResultType>(_ body: (UnsafeRawBufferPointer) throws -> ResultType) rethrows -> ResultType {
             return try body(UnsafeRawBufferPointer(self.bytes))
+        }
+
+        internal func hash(into hasher: inout Hasher) {
+            hasher.combine(bytes: UnsafeRawBufferPointer(self.bytes))
+        }
+
+        internal static func == (lhs: DispatchData._ContiguousBufferView, rhs: DispatchData._ContiguousBufferView) -> Bool {
+            return lhs.bytes.elementsEqual(rhs.bytes)
         }
 
         subscript(position: Int) -> UInt8 {
