@@ -9,7 +9,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#if canImport(Glibc) || canImport(Bionic) || canImport(Musl)
+#if os(Linux) || os(Android)
 
 #if canImport(Bionic)
 import Bionic

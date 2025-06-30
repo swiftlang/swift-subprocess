@@ -298,7 +298,7 @@ int _subprocess_spawn(
 #endif // TARGET_OS_MAC
 
 // MARK: - Linux (fork/exec + posix_spawn fallback)
-#if TARGET_OS_LINUX
+#if TARGET_OS_LINUX || TARGET_OS_BSD
 #ifndef __GLIBC_PREREQ
 #define __GLIBC_PREREQ(maj, min) 0
 #endif

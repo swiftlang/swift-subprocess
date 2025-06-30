@@ -102,7 +102,7 @@ extension SubprocessUnixTests {
 extension SubprocessUnixTests {
     @Test func testArgumentsArrayLiteral() async throws {
         let result = try await Subprocess.run(
-            .path("/bin/bash"),
+            .path("/bin/sh"),
             arguments: ["-c", "echo Hello World!"],
             output: .string
         )
@@ -117,7 +117,7 @@ extension SubprocessUnixTests {
 
     @Test func testArgumentsOverride() async throws {
         let result = try await Subprocess.run(
-            .path("/bin/bash"),
+            .path("/bin/sh"),
             arguments: .init(
                 executablePathOverride: "apple",
                 remainingValues: ["-c", "echo $0"]
@@ -157,7 +157,7 @@ extension SubprocessUnixTests {
 extension SubprocessUnixTests {
     @Test func testEnvironmentInherit() async throws {
         let result = try await Subprocess.run(
-            .path("/bin/bash"),
+            .path("/bin/sh"),
             arguments: ["-c", "printenv PATH"],
             environment: .inherit,
             output: .string
@@ -173,7 +173,7 @@ extension SubprocessUnixTests {
 
     @Test func testEnvironmentInheritOverride() async throws {
         let result = try await Subprocess.run(
-            .path("/bin/bash"),
+            .path("/bin/sh"),
             arguments: ["-c", "printenv HOME"],
             environment: .inherit.updating([
                 "HOME": "/my/new/home"
@@ -595,7 +595,7 @@ extension SubprocessUnixTests {
             contentsOf: URL(filePath: theMysteriousIsland.string)
         )
         let catResult = try await Subprocess.run(
-            .path("/bin/bash"),
+            .path("/bin/sh"),
             arguments: ["-c", "cat \(theMysteriousIsland.string) 1>&2"],
             error: .data(limit: 2048 * 1024)
         )
@@ -668,11 +668,14 @@ extension SubprocessUnixTests {
         var platformOptions = PlatformOptions()
         platformOptions.supplementaryGroups = Array(expectedGroups)
         let idResult = try await Subprocess.run(
-            .path("/usr/bin/swift"),
+            .name("swift"),
             arguments: [getgroupsSwift.string],
             platformOptions: platformOptions,
-            output: .string
+            output: .string,
+            error: .string,
         )
+        let error = try #require(idResult.standardError)
+        try #require(error == "")
         #expect(idResult.terminationStatus.isSuccess)
         let ids = try #require(
             idResult.standardOutput
@@ -696,7 +699,7 @@ extension SubprocessUnixTests {
         // Sets the process group ID to 0, which creates a new session
         platformOptions.processGroupID = 0
         let psResult = try await Subprocess.run(
-            .path("/bin/bash"),
+            .path("/bin/sh"),
             arguments: ["-c", "ps -o pid,pgid -p $$"],
             platformOptions: platformOptions,
             output: .string
@@ -723,7 +726,7 @@ extension SubprocessUnixTests {
         // Check the process ID (pid), process group ID (pgid), and
         // controlling terminal's process group ID (tpgid)
         let psResult = try await Subprocess.run(
-            .path("/bin/bash"),
+            .path("/bin/sh"),
             arguments: ["-c", "ps -o pid,pgid,tpgid -p $$"],
             platformOptions: platformOptions,
             output: .string
@@ -731,14 +734,14 @@ extension SubprocessUnixTests {
         try assertNewSessionCreated(with: psResult)
     }
 
-    @Test func testTeardownSequence() async throws {
+    @Test(.requiresBash) func testTeardownSequence() async throws {
         let result = try await Subprocess.run(
-            .path("/bin/bash"),
+            .name("bash"),
             arguments: [
                 "-c",
                 """
                 set -e
-                trap 'echo saw SIGQUIT;' SIGQUIT
+                trap 'echo saw SIGQUIT;' QUIT
                 trap 'echo saw SIGTERM;' TERM
                 trap 'echo saw SIGINT; exit 42;' INT
                 while true; do sleep 1; done
@@ -777,7 +780,7 @@ extension SubprocessUnixTests {
     @Test func testRunDetached() async throws {
         let (readFd, writeFd) = try FileDescriptor.pipe()
         let pid = try runDetached(
-            .path("/bin/bash"),
+            .path("/bin/sh"),
             arguments: ["-c", "echo $$"],
             output: writeFd
         )
@@ -1046,11 +1049,11 @@ extension FileDescriptor {
 
 // MARK: - Performance Tests
 extension SubprocessUnixTests {
-    @Test func testConcurrentRun() async throws {
+    @Test(.requiresBash) func testConcurrentRun() async throws {
         // Launch as many processes as we can
         // Figure out the max open file limit
         let limitResult = try await Subprocess.run(
-            .path("/bin/bash"),
+            .path("/bin/sh"),
             arguments: ["-c", "ulimit -n"],
             output: .string
         )
@@ -1075,8 +1078,9 @@ extension SubprocessUnixTests {
             let byteCount = 1000
             for _ in 0..<maxConcurrent {
                 group.addTask {
+                    // This invocation specifically requires bash semantics; sh (on FreeBSD at least) does not consistently support -s in this way
                     let r = try await Subprocess.run(
-                        .path("/bin/bash"),
+                        .name("bash"),
                         arguments: [
                             "-sc", #"echo "$1" && echo "$1" >&2"#, "--", String(repeating: "X", count: byteCount),
                         ],
@@ -1099,13 +1103,14 @@ extension SubprocessUnixTests {
         }
     }
 
-    @Test func testCaptureLongStandardOutputAndError() async throws {
+    @Test(.requiresBash) func testCaptureLongStandardOutputAndError() async throws {
         try await withThrowingTaskGroup(of: Void.self) { group in
             var running = 0
             for _ in 0..<10 {
                 group.addTask {
+                    // This invocation specifically requires bash semantics; sh (on FreeBSD at least) does not consistently support -s in this way
                     let r = try await Subprocess.run(
-                        .path("/bin/bash"),
+                        .name("bash"),
                         arguments: [
                             "-sc", #"echo "$1" && echo "$1" >&2"#, "--", String(repeating: "X", count: 100_000),
                         ],

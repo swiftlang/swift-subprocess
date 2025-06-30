@@ -9,7 +9,7 @@ var dep: [Package.Dependency] = [
         from: "1.4.2"
     )
 ]
-#if !os(Windows)
+#if !os(Windows) && !os(FreeBSD)
 dep.append(
     .package(
         url: "https://github.com/apple/swift-docc-plugin",
