@@ -48,19 +48,40 @@ extension Configuration {
         outputPipe: consuming CreatedPipe,
         errorPipe: consuming CreatedPipe
     ) throws -> SpawnResult {
+        var inputPipeBox: CreatedPipe? = consume inputPipe
+        var outputPipeBox: CreatedPipe? = consume outputPipe
+        var errorPipeBox: CreatedPipe? = consume errorPipe
+
+        var _inputPipe = inputPipeBox.take()!
+        var _outputPipe = outputPipeBox.take()!
+        var _errorPipe = errorPipeBox.take()!
+
+        let inputReadFileDescriptor: TrackedFileDescriptor? = _inputPipe.readFileDescriptor()
+        let inputWriteFileDescriptor: TrackedFileDescriptor? = _inputPipe.writeFileDescriptor()
+        let outputReadFileDescriptor: TrackedFileDescriptor? = _outputPipe.readFileDescriptor()
+        let outputWriteFileDescriptor: TrackedFileDescriptor? = _outputPipe.writeFileDescriptor()
+        let errorReadFileDescriptor: TrackedFileDescriptor? = _errorPipe.readFileDescriptor()
+        let errorWriteFileDescriptor: TrackedFileDescriptor? = _errorPipe.writeFileDescriptor()
+
         let (
             applicationName,
             commandAndArgs,
             environment,
             intendedWorkingDir
-        ) = try self.preSpawn()
-
-        var inputReadFileDescriptor: TrackedFileDescriptor? = inputPipe.readFileDescriptor()
-        var inputWriteFileDescriptor: TrackedFileDescriptor? = inputPipe.writeFileDescriptor()
-        var outputReadFileDescriptor: TrackedFileDescriptor? = outputPipe.readFileDescriptor()
-        var outputWriteFileDescriptor: TrackedFileDescriptor? = outputPipe.writeFileDescriptor()
-        var errorReadFileDescriptor: TrackedFileDescriptor? = errorPipe.readFileDescriptor()
-        var errorWriteFileDescriptor: TrackedFileDescriptor? = errorPipe.writeFileDescriptor()
+        ): (String?, String, String, String?)
+        do {
+            (applicationName, commandAndArgs, environment, intendedWorkingDir) = try self.preSpawn()
+        } catch {
+            try self.safelyCloseMultiple(
+                inputRead: inputReadFileDescriptor,
+                inputWrite: inputWriteFileDescriptor,
+                outputRead: outputReadFileDescriptor,
+                outputWrite: outputWriteFileDescriptor,
+                errorRead: errorReadFileDescriptor,
+                errorWrite: errorWriteFileDescriptor
+            )
+            throw error
+        }
 
         var startupInfo = try self.generateStartupInfo(
             withInputRead: inputReadFileDescriptor,
@@ -77,7 +98,7 @@ extension Configuration {
             try configurator(&createProcessFlags, &startupInfo)
         }
         // Spawn!
-        try applicationName.withOptionalNTPathRepresentation { applicationNameW in
+        let created = try applicationName.withOptionalNTPathRepresentation { applicationNameW in
             try commandAndArgs.withCString(
                 encodedAs: UTF16.self
             ) { commandAndArgsW in
@@ -85,7 +106,7 @@ extension Configuration {
                     encodedAs: UTF16.self
                 ) { environmentW in
                     try intendedWorkingDir.withOptionalNTPathRepresentation { intendedWorkingDirW in
-                        let created = CreateProcessW(
+                        CreateProcessW(
                             applicationNameW,
                             UnsafeMutablePointer<WCHAR>(mutating: commandAndArgsW),
                             nil,  // lpProcessAttributes
@@ -97,24 +118,25 @@ extension Configuration {
                             &startupInfo,
                             &processInfo
                         )
-                        guard created else {
-                            let windowsError = GetLastError()
-                            try self.safelyCloseMultiple(
-                                inputRead: inputReadFileDescriptor.take(),
-                                inputWrite: inputWriteFileDescriptor.take(),
-                                outputRead: outputReadFileDescriptor.take(),
-                                outputWrite: outputWriteFileDescriptor.take(),
-                                errorRead: errorReadFileDescriptor.take(),
-                                errorWrite: errorWriteFileDescriptor.take()
-                            )
-                            throw SubprocessError(
-                                code: .init(.spawnFailed),
-                                underlyingError: .init(rawValue: windowsError)
-                            )
-                        }
                     }
                 }
             }
+        }
+
+        guard created else {
+            let windowsError = GetLastError()
+            try self.safelyCloseMultiple(
+                inputRead: inputReadFileDescriptor,
+                inputWrite: inputWriteFileDescriptor,
+                outputRead: outputReadFileDescriptor,
+                outputWrite: outputWriteFileDescriptor,
+                errorRead: errorReadFileDescriptor,
+                errorWrite: errorWriteFileDescriptor
+            )
+            throw SubprocessError(
+                code: .init(.spawnFailed),
+                underlyingError: .init(rawValue: windowsError)
+            )
         }
 
         let pid = ProcessIdentifier(
@@ -157,19 +179,40 @@ extension Configuration {
         errorPipe: consuming CreatedPipe,
         userCredentials: PlatformOptions.UserCredentials
     ) throws -> SpawnResult {
+        var inputPipeBox: CreatedPipe? = consume inputPipe
+        var outputPipeBox: CreatedPipe? = consume outputPipe
+        var errorPipeBox: CreatedPipe? = consume errorPipe
+
+        var _inputPipe = inputPipeBox.take()!
+        var _outputPipe = outputPipeBox.take()!
+        var _errorPipe = errorPipeBox.take()!
+
+        let inputReadFileDescriptor: TrackedFileDescriptor? = _inputPipe.readFileDescriptor()
+        let inputWriteFileDescriptor: TrackedFileDescriptor? = _inputPipe.writeFileDescriptor()
+        let outputReadFileDescriptor: TrackedFileDescriptor? = _outputPipe.readFileDescriptor()
+        let outputWriteFileDescriptor: TrackedFileDescriptor? = _outputPipe.writeFileDescriptor()
+        let errorReadFileDescriptor: TrackedFileDescriptor? = _errorPipe.readFileDescriptor()
+        let errorWriteFileDescriptor: TrackedFileDescriptor? = _errorPipe.writeFileDescriptor()
+
         let (
             applicationName,
             commandAndArgs,
             environment,
             intendedWorkingDir
-        ) = try self.preSpawn()
-
-        var inputReadFileDescriptor: TrackedFileDescriptor? = inputPipe.readFileDescriptor()
-        var inputWriteFileDescriptor: TrackedFileDescriptor? = inputPipe.writeFileDescriptor()
-        var outputReadFileDescriptor: TrackedFileDescriptor? = outputPipe.readFileDescriptor()
-        var outputWriteFileDescriptor: TrackedFileDescriptor? = outputPipe.writeFileDescriptor()
-        var errorReadFileDescriptor: TrackedFileDescriptor? = errorPipe.readFileDescriptor()
-        var errorWriteFileDescriptor: TrackedFileDescriptor? = errorPipe.writeFileDescriptor()
+        ): (String?, String, String, String?)
+        do {
+            (applicationName, commandAndArgs, environment, intendedWorkingDir) = try self.preSpawn()
+        } catch {
+            try self.safelyCloseMultiple(
+                inputRead: inputReadFileDescriptor,
+                inputWrite: inputWriteFileDescriptor,
+                outputRead: outputReadFileDescriptor,
+                outputWrite: outputWriteFileDescriptor,
+                errorRead: errorReadFileDescriptor,
+                errorWrite: errorWriteFileDescriptor
+            )
+            throw error
+        }
 
         var startupInfo = try self.generateStartupInfo(
             withInputRead: inputReadFileDescriptor,
@@ -186,7 +229,7 @@ extension Configuration {
             try configurator(&createProcessFlags, &startupInfo)
         }
         // Spawn (featuring pyramid!)
-        try userCredentials.username.withCString(
+        let created = try userCredentials.username.withCString(
             encodedAs: UTF16.self
         ) { usernameW in
             try userCredentials.password.withCString(
@@ -203,7 +246,7 @@ extension Configuration {
                                 encodedAs: UTF16.self
                             ) { environmentW in
                                 try intendedWorkingDir.withOptionalNTPathRepresentation { intendedWorkingDirW in
-                                    let created = CreateProcessWithLogonW(
+                                    CreateProcessWithLogonW(
                                         usernameW,
                                         domainW,
                                         passwordW,
@@ -216,27 +259,28 @@ extension Configuration {
                                         &startupInfo,
                                         &processInfo
                                     )
-                                    guard created else {
-                                        let windowsError = GetLastError()
-                                        try self.safelyCloseMultiple(
-                                            inputRead: inputReadFileDescriptor.take(),
-                                            inputWrite: inputWriteFileDescriptor.take(),
-                                            outputRead: outputReadFileDescriptor.take(),
-                                            outputWrite: outputWriteFileDescriptor.take(),
-                                            errorRead: errorReadFileDescriptor.take(),
-                                            errorWrite: errorWriteFileDescriptor.take()
-                                        )
-                                        throw SubprocessError(
-                                            code: .init(.spawnFailed),
-                                            underlyingError: .init(rawValue: windowsError)
-                                        )
-                                    }
                                 }
                             }
                         }
                     }
                 }
             }
+        }
+
+        guard created else {
+            let windowsError = GetLastError()
+            try self.safelyCloseMultiple(
+                inputRead: inputReadFileDescriptor,
+                inputWrite: inputWriteFileDescriptor,
+                outputRead: outputReadFileDescriptor,
+                outputWrite: outputWriteFileDescriptor,
+                errorRead: errorReadFileDescriptor,
+                errorWrite: errorWriteFileDescriptor
+            )
+            throw SubprocessError(
+                code: .init(.spawnFailed),
+                underlyingError: .init(rawValue: windowsError)
+            )
         }
 
         let pid = ProcessIdentifier(
@@ -1038,10 +1082,9 @@ extension FileDescriptor {
 
 extension TrackedFileDescriptor {
     internal consuming func createPlatformDiskIO() -> TrackedPlatformDiskIO {
-        return .init(
-            self.fileDescriptor,
-            closeWhenDone: self.closeWhenDone
-        )
+        // TrackedPlatformDiskIO is a typealias of TrackedFileDescriptor on Windows (they're the same type)
+        // Just return the same object so we don't create a copy and try to double-close the fd.
+        return self
     }
 
     internal func readUntilEOF(
