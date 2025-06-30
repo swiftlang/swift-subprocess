@@ -476,19 +476,34 @@ extension SubprocessWindowsTests {
                 platformOptions: platformOptions,
                 output: .string
             )
-            #expect(whoamiResult.terminationStatus.isSuccess)
-            let result = try #require(
-                whoamiResult.standardOutput
-            ).trimmingCharacters(in: .whitespacesAndNewlines)
-            // whoami returns `computerName\userName`.
-            let userInfo = result.split(separator: "\\")
-            guard userInfo.count == 2 else {
-                Issue.record("Fail to parse the result for whoami: \(result)")
-                return
+
+            try await withKnownIssue {
+                #expect(whoamiResult.terminationStatus.isSuccess)
+                let result = try #require(
+                    whoamiResult.standardOutput
+                ).trimmingCharacters(in: .whitespacesAndNewlines)
+                // whoami returns `computerName\userName`.
+                let userInfo = result.split(separator: "\\")
+                guard userInfo.count == 2 else {
+                    Issue.record("Fail to parse the result for whoami: \(result)")
+                    return
+                }
+                #expect(
+                    userInfo[1].lowercased() == username.lowercased()
+                )
+            } when: {
+                func userName() -> String {
+                    var capacity = UNLEN + 1
+                    let pointer = UnsafeMutablePointer<UTF16.CodeUnit>.allocate(capacity: Int(capacity))
+                    defer { pointer.deallocate() }
+                    guard GetUserNameW(pointer, &capacity) else {
+                        return ""
+                    }
+                    return String(decodingCString: pointer, as: UTF16.self)
+                }
+                // CreateProcessWithLogonW doesn't appear to work when running in a container
+                return whoamiResult.terminationStatus == .unhandledException(STATUS_DLL_INIT_FAILED) && userName() == "ContainerAdministrator"
             }
-            #expect(
-                userInfo[1].lowercased() == username.lowercased()
-            )
         }
     }
 
@@ -528,7 +543,7 @@ extension SubprocessWindowsTests {
         ).trimmingCharacters(in: .whitespacesAndNewlines)
         // Make sure the child console is different from parent
         #expect(
-            "\(intptr_t(bitPattern: parentConsole))" == differentConsoleValue
+            "\(intptr_t(bitPattern: parentConsole))" != differentConsoleValue
         )
     }
 
@@ -707,13 +722,13 @@ extension SubprocessWindowsTests {
         WaitForSingleObject(processHandle, INFINITE)
 
         // Up to 10 characters because Windows process IDs are DWORDs (UInt32), whose max value is 10 digits.
+        try writeFd.close()
         let data = try await readFd.readUntilEOF(upToLength: 10)
         let resultPID = try #require(
             String(data: data, encoding: .utf8)
         ).trimmingCharacters(in: .whitespacesAndNewlines)
         #expect("\(pid.value)" == resultPID)
         try readFd.close()
-        try writeFd.close()
     }
 }
 
