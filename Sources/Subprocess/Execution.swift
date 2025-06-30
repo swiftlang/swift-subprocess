@@ -50,6 +50,32 @@ public struct Execution: Sendable {
     }
 }
 
+/// An object that represents a subprocess that has been
+/// executed without monitoring the state of the subprocess
+/// nor waiting until it exits. You can use this object to control
+/// the process using platform-native APIs.
+public struct ProcessHandle: Sendable, ~Copyable {
+    /// The process identifier of the current execution
+    public var processIdentifier: ProcessIdentifier {
+        execution.processIdentifier
+    }
+
+    /// The collection of platform-specific handles of the current execution.
+    public var platformHandles: PlatformHandles {
+        execution.platformHandles
+    }
+
+    private let execution: Execution
+
+    init(execution: Execution) {
+        self.execution = execution
+    }
+
+    deinit {
+        execution.release()
+    }
+}
+
 // MARK: - Output Capture
 internal enum OutputCapturingState<Output: Sendable, Error: Sendable>: Sendable {
     case standardOutputCaptured(Output)

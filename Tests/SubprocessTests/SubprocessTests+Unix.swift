@@ -779,20 +779,20 @@ extension SubprocessUnixTests {
 extension SubprocessUnixTests {
     @Test func testRunDetached() async throws {
         let (readFd, writeFd) = try FileDescriptor.pipe()
-        let pid = try runDetached(
+        let execution = try runDetached(
             .path("/bin/sh"),
             arguments: ["-c", "echo $$"],
             output: writeFd
         )
         var status: Int32 = 0
-        waitpid(pid.value, &status, 0)
+        waitpid(execution.processIdentifier.value, &status, 0)
         #expect(_was_process_exited(status) > 0)
         try writeFd.close()
         let data = try await readFd.readUntilEOF(upToLength: 10)
         let resultPID = try #require(
             String(data: Data(data), encoding: .utf8)
         ).trimmingCharacters(in: .whitespacesAndNewlines)
-        #expect("\(pid.value)" == resultPID)
+        #expect("\(execution.processIdentifier.value)" == resultPID)
         try readFd.close()
     }
 
