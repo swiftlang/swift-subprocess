@@ -1014,7 +1014,7 @@ extension FileDescriptor {
                 case .failure(let error):
                     continuation.resume(throwing: error)
                 case .success(let bytes):
-                    continuation.resume(returning: bytes)
+                    continuation.resume(returning: bytes.isEmpty ? nil : bytes)
                 }
             }
         }

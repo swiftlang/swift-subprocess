@@ -24,7 +24,6 @@ jobs:
           dnf install -y procps
         fi
       windows_swift_versions: '["6.1", "nightly-main"]'
-      windows_build_command: 'swift build'
       enable_macos_checks: true
       macos_xcode_versions: '["16.3"]'
 
