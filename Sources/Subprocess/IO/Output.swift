@@ -140,10 +140,10 @@ public struct BytesOutput: OutputProtocol {
     public let maxSize: Int
 
     internal func captureOutput(
-        from diskIO: consuming TrackedPlatformDiskIO?
+        from diskIO: consuming TrackedPlatformDiskIO
     ) async throws -> [UInt8] {
-        let result = try await AsyncIO.shared.read(from: diskIO!, upTo: self.maxSize)
-        try diskIO?.safelyClose()
+        let result = try await AsyncIO.shared.read(from: diskIO, upTo: self.maxSize)
+        try diskIO.safelyClose()
         #if canImport(Darwin)
         return result?.array() ?? []
         #else
@@ -255,17 +255,26 @@ extension OutputProtocol {
     internal func captureOutput(
         from diskIO: consuming TrackedPlatformDiskIO?
     ) async throws -> OutputType {
-        if let bytesOutput = self as? BytesOutput {
-            return try await bytesOutput.captureOutput(from: diskIO) as! Self.OutputType
-        }
-
         if OutputType.self == Void.self {
             return () as! OutputType
         }
+        // `diskIO` is only `nil` for any types that conform to `OutputProtocol`
+        // and have `Void` as ``OutputType` (i.e. `DiscardedOutput`). Since we
+        // made sure `OutputType` is not `Void` on the line above, `diskIO`
+        // must not be nil; otherwise, this is a programmer error.
+        guard var diskIO else {
+            fatalError(
+                "Internal Inconsistency Error: diskIO must not be nil when OutputType is not Void"
+            )
+        }
+
+        if let bytesOutput = self as? BytesOutput {
+            return try await bytesOutput.captureOutput(from: diskIO) as! Self.OutputType
+        }
         // Force unwrap is safe here because only `OutputType.self == Void` would
         // have nil `TrackedPlatformDiskIO`
-        let result = try await AsyncIO.shared.read(from: diskIO!, upTo: self.maxSize)
-        try diskIO?.safelyClose()
+        let result = try await AsyncIO.shared.read(from: diskIO, upTo: self.maxSize)
+        try diskIO.safelyClose()
         #if canImport(Darwin)
         return try self.output(from: result ?? .empty)
         #else

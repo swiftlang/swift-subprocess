@@ -352,8 +352,14 @@ extension AsyncIO {
         )
         var readLength: Int = 0
         let signalStream = self.registerFileDescriptor(fileDescriptor, for: .read)
+        /// Outer loop: every iteration signals we are ready to read more data
         for try await _ in signalStream {
-            // Every iteration signals we are ready to read more data
+            /// Inner loop: repeatedly call `.read()` and read more data until:
+            /// 1. We reached EOF (read length is 0), in which case return the result
+            /// 2. We read `maxLength` bytes, in which case return the result
+            /// 3. `read()` returns -1 and sets `errno` to `EAGAIN` or `EWOULDBLOCK`. In
+            ///     this case we `break` out of the inner loop and wait `.read()` to be
+            ///     ready by `await`ing the next signal in the outer loop.
             while true {
                 let bytesRead = resultBuffer.withUnsafeMutableBufferPointer { bufferPointer in
                     // Get a pointer to the memory at the specified offset
@@ -417,7 +423,13 @@ extension AsyncIO {
         let fileDescriptor = diskIO.fileDescriptor
         let signalStream = self.registerFileDescriptor(fileDescriptor, for: .write)
         var writtenLength: Int = 0
+        /// Outer loop: every iteration signals we are ready to read more data
         for try await _ in signalStream {
+            /// Inner loop: repeatedly call `.write()` and write more data until:
+            /// 1. We've written bytes.count bytes.
+            /// 3. `.write()` returns -1 and sets `errno` to `EAGAIN` or `EWOULDBLOCK`. In
+            ///     this case we `break` out of the inner loop and wait `.write()` to be
+            ///     ready by `await`ing the next signal in the outer loop.
             while true {
                 let written = bytes.withUnsafeBytes { ptr in
                     let remainingLength = ptr.count - writtenLength
@@ -454,7 +466,13 @@ extension AsyncIO {
         let fileDescriptor = diskIO.fileDescriptor
         let signalStream = self.registerFileDescriptor(fileDescriptor, for: .write)
         var writtenLength: Int = 0
+        /// Outer loop: every iteration signals we are ready to read more data
         for try await _ in signalStream {
+            /// Inner loop: repeatedly call `.write()` and write more data until:
+            /// 1. We've written bytes.count bytes.
+            /// 3. `.write()` returns -1 and sets `errno` to `EAGAIN` or `EWOULDBLOCK`. In
+            ///     this case we `break` out of the inner loop and wait `.write()` to be
+            ///     ready by `await`ing the next signal in the outer loop.
             while true {
                 let written = span.withUnsafeBytes { ptr in
                     let remainingLength = ptr.count - writtenLength
