@@ -63,17 +63,4 @@ extension Data {
     }
 }
 
-// MARK: - Workarounds
-#if SubprocessSpan
-extension OutputProtocol {
-    @_disfavoredOverload
-    public func output(from data: some DataProtocol) throws -> OutputType {
-        // FIXME: remove workaround for
-        // rdar://143992296
-        // https://github.com/swiftlang/swift-subprocess/issues/3
-        return try self.output(from: data.bytes)
-    }
-}
-#endif
-
 #endif  // SubprocessFoundation
