@@ -43,7 +43,6 @@ struct SubprocessLinuxTests {
                 //   CAP_SETGID capability in its user namespace), and gid does
                 //   not match the real group ID or saved set-group-ID of the
                 //   calling process.
-                perror("setgid")
                 abort()
             }
         }
@@ -64,55 +63,30 @@ struct SubprocessLinuxTests {
     }
 
     @Test func testSuspendResumeProcess() async throws {
-        let result = try await Subprocess.run(
+        _ = try await Subprocess.run(
             // This will intentionally hang
             .path("/usr/bin/sleep"),
             arguments: ["infinity"],
-            output: .discarded,
             error: .discarded
-        ) { subprocess -> Error? in
-            do {
-                try await tryFinally {
-                    // First suspend the process
-                    try subprocess.send(signal: .suspend)
-                    try await waitForCondition(timeout: .seconds(30), comment: "Process did not transition from running to stopped state after $$") {
-                        let state = try subprocess.state()
-                        switch state {
-                        case .running:
-                            return false
-                        case .zombie:
-                            throw ProcessStateError(expectedState: .stopped, actualState: state)
-                        case .stopped, .sleeping, .uninterruptibleWait:
-                            return true
-                        }
-                    }
-                    // Now resume the process
-                    try subprocess.send(signal: .resume)
-                    try await waitForCondition(timeout: .seconds(30), comment: "Process did not transition from stopped to running state after $$") {
-                        let state = try subprocess.state()
-                        switch state {
-                        case .running, .sleeping, .uninterruptibleWait:
-                            return true
-                        case .zombie:
-                            throw ProcessStateError(expectedState: .running, actualState: state)
-                        case .stopped:
-                            return false
-                        }
-                    }
-                } finally: { error in
-                    // Now kill the process
-                    try subprocess.send(signal: error != nil ? .kill : .terminate)
+        ) { subprocess, standardOutput in
+            try await tryFinally {
+                // First suspend the process
+                try subprocess.send(signal: .suspend)
+                try await waitForCondition(timeout: .seconds(30)) {
+                    let state = try subprocess.state()
+                    return state == .stopped
                 }
-                return nil
-            } catch {
-                return error
+                // Now resume the process
+                try subprocess.send(signal: .resume)
+                try await waitForCondition(timeout: .seconds(30)) {
+                    let state = try subprocess.state()
+                    return state == .running
+                }
+            } finally: { error in
+                // Now kill the process
+                try subprocess.send(signal: error != nil ? .kill : .terminate)
+                for try await _ in standardOutput {}
             }
-        }
-        if let error = result.value {
-            #expect(result.terminationStatus == .unhandledException(SIGKILL))
-            throw error
-        } else {
-            #expect(result.terminationStatus == .unhandledException(SIGTERM))
         }
     }
 
@@ -141,15 +115,6 @@ fileprivate enum ProcessState: String {
     case stopped = "T"
 }
 
-fileprivate struct ProcessStateError: Error, CustomStringConvertible {
-    let expectedState: ProcessState
-    let actualState: ProcessState
-
-    var description: String {
-        "Process did not transition to \(expectedState) state, but was actually \(actualState)"
-    }
-}
-
 extension Execution {
     fileprivate func state() throws -> ProcessState {
         let processStatusFile = "/proc/\(processIdentifier.value)/status"
@@ -175,7 +140,7 @@ extension Execution {
     }
 }
 
-func waitForCondition(timeout: Duration, comment: Comment, _ evaluateCondition: () throws -> Bool) async throws {
+func waitForCondition(timeout: Duration, _ evaluateCondition: () throws -> Bool) async throws {
     var currentCondition = try evaluateCondition()
     let deadline = ContinuousClock.now + timeout
     while ContinuousClock.now < deadline {
@@ -186,13 +151,11 @@ func waitForCondition(timeout: Duration, comment: Comment, _ evaluateCondition: 
         currentCondition = try evaluateCondition()
     }
     struct TimeoutError: Error, CustomStringConvertible {
-        let timeout: Duration
-        let comment: Comment
         var description: String {
-            comment.description.replacingOccurrences(of: "$$", with: "\(timeout)")
+            "Timed out waiting for condition to be true"
         }
     }
-    throw TimeoutError(timeout: timeout, comment: comment)
+    throw TimeoutError()
 }
 
 func tryFinally(_ work: () async throws -> (), finally: (Error?) async throws -> ()) async throws {

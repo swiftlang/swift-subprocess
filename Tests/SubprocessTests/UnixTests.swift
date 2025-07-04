@@ -312,17 +312,7 @@ extension SubprocessUnixTests {
         }
     }
 
-    @Test(
-        .disabled("Linux requires #46 to be fixed", {
-            #if os(Linux)
-            return true
-            #else
-            return false
-            #endif
-        }),
-        .bug("https://github.com/swiftlang/swift-subprocess/issues/46")
-    )
-    func testSubprocessDoesNotInheritVeryHighFileDescriptors() async throws {
+    @Test func testSubprocessDoesNotInheritVeryHighFileDescriptors() async throws {
         var openedFileDescriptors: [CInt] = []
         // Open /dev/null to use as source for duplication
         let devnull: FileDescriptor = try .openDevNull(withAccessMode: .readOnly)
@@ -389,17 +379,7 @@ extension SubprocessUnixTests {
         #expect(checklist.isEmpty)
     }
 
-    @Test(
-        .disabled("Linux requires #46 to be fixed", {
-            #if os(Linux)
-            return true
-            #else
-            return false
-            #endif
-        }),
-        .bug("https://github.com/swiftlang/swift-subprocess/issues/46")
-    )
-    func testSubprocessDoesNotInheritRandomFileDescriptors() async throws {
+    @Test(.requiresBash) func testSubprocessDoesNotInheritRandomFileDescriptors() async throws {
         let pipe = try FileDescriptor.ssp_pipe()
         defer {
             try? pipe.readEnd.close()
@@ -407,7 +387,7 @@ extension SubprocessUnixTests {
         }
         // Spawn bash and then attempt to write to the write end
         let result = try await Subprocess.run(
-            .path("/bin/sh"),
+            .path("/bin/bash"),
             arguments: [
                 "-c",
                 """

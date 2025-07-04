@@ -36,6 +36,7 @@
 #include <pthread.h>
 #include <dirent.h>
 #include <stdio.h>
+#include <limits.h>
 
 #if __has_include(<linux/close_range.h>)
 #include <linux/close_range.h>
@@ -54,7 +55,6 @@ extern char **environ;
 #include <mach/vm_page_size.h>
 #endif
 
-#if !TARGET_OS_WINDOWS
 int _was_process_exited(int status) {
     return WIFEXITED(status);
 }
@@ -73,26 +73,6 @@ int _get_signal_code(int status) {
 
 int _was_process_suspended(int status) {
     return WIFSTOPPED(status);
-}
-
-#endif // !TARGET_OS_WINDOWS
-
-#ifndef SYS_pidfd_send_signal
-#define SYS_pidfd_send_signal 424
-#endif 
-
-int _shims_snprintf(
-    char * _Nonnull str,
-    int len,
-    const char * _Nonnull format,
-    char * _Nonnull str1,
-    char * _Nonnull str2
-) {
-    return snprintf(str, len, format, str1, str2);
-}
-
-int _pidfd_send_signal(int pidfd, int signal) {
-    return syscall(SYS_pidfd_send_signal, pidfd, signal, NULL, 0);
 }
 
 #endif
@@ -304,6 +284,16 @@ int _pidfd_open(pid_t pid) {
     return syscall(SYS_pidfd_open, pid, 0);
 }
 
+// SYS_pidfd_send_signal is only defined on Linux Kernel 5.1 and above
+// Define our dummy value if it's not available
+#ifndef SYS_pidfd_send_signal
+#define SYS_pidfd_send_signal 424
+#endif
+
+int _pidfd_send_signal(int pidfd, int signal) {
+    return syscall(SYS_pidfd_send_signal, pidfd, signal, NULL, 0);
+}
+
 // SYS_clone3 is only defined on Linux Kernel 5.3 and above
 // Define our dummy value if it's not available (as is the case with Musl libc)
 #ifndef SYS_clone3
@@ -344,6 +334,18 @@ static int _clone3(int *pidfd) {
     return syscall(SYS_clone3, &args, sizeof(args));
 }
 
+struct linux_dirent64 {
+    unsigned long d_ino;
+    unsigned long d_off;
+    unsigned short d_reclen;
+    unsigned char d_type;
+    char d_name[];
+};
+
+static int _getdents64(int fd, struct linux_dirent64 *dirp, size_t nbytes) {
+    return syscall(SYS_getdents64, fd, dirp, nbytes);
+}
+
 static pthread_mutex_t _subprocess_fork_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static int _subprocess_make_critical_mask(sigset_t *old_mask) {
@@ -371,10 +373,18 @@ static int _subprocess_make_critical_mask(sigset_t *old_mask) {
     } \
 } while(0)
 
-#if __DARWIN_NSIG
-#  define _SUBPROCESS_SIG_MAX __DARWIN_NSIG
-#else
-#  define _SUBPROCESS_SIG_MAX 32
+#if defined(NSIG_MAX)           /* POSIX issue 8 */
+# define _SUBPROCESS_SIG_MAX NSIG_MAX
+#elif defined(__DARWIN_NSIG)    /* Darwin */
+# define _SUBPROCESS_SIG_MAX __DARWIN_NSIG
+#elif defined(_SIG_MAXSIG)      /* FreeBSD */
+# define _SUBPROCESS_SIG_MAX _SIG_MAXSIG
+#elif defined(_SIGMAX)          /* QNX */
+# define _SUBPROCESS_SIG_MAX (_SIGMAX + 1)
+#elif defined(NSIG)             /* 99% of everything else */
+# define _SUBPROCESS_SIG_MAX NSIG
+#else                           /* Last resort */
+# define _SUBPROCESS_SIG_MAX (sizeof(sigset_t) * CHAR_BIT + 1)
 #endif
 
 int _shims_snprintf(
@@ -394,46 +404,68 @@ static int _positive_int_parse(const char *str) {
         // No digits found
         return -1;
     }
-    if (errno == ERANGE || val <= 0 || val > INT_MAX) {
+    if (errno == ERANGE || value <= 0 || value > INT_MAX) {
         // Out of range
         return -1;
     }
     return (int)value;
 }
 
-static int _highest_possibly_open_fd_dir(const char *fd_dir) {
+// Linux-specific version that uses syscalls directly and doesn't allocate heap memory.
+// Safe to use after vfork() and before execve()
+static int _highest_possibly_open_fd_dir_linux(const char *fd_dir) {
     int highest_fd_so_far = 0;
-    DIR *dir_ptr = opendir(fd_dir);
-    if (dir_ptr == NULL) {
+    int dir_fd = open(fd_dir, O_RDONLY);
+    if (dir_fd < 0) {
+        // errno set by `open`.
         return -1;
     }
 
-    struct dirent *dir_entry = NULL;
-    while ((dir_entry = readdir(dir_ptr)) != NULL) {
-        char *entry_name = dir_entry->d_name;
-        int number = _positive_int_parse(entry_name);
-        if (number > (long)highest_fd_so_far) {
-            highest_fd_so_far = number;
+    // Buffer for directory entries - allocated on stack, no heap allocation
+    char buffer[4096] = {0};
+    long bytes_read = -1;
+
+    while ((bytes_read = _getdents64(dir_fd, (struct linux_dirent64 *)buffer, sizeof(buffer))) > 0) {
+        if (bytes_read < 0) {
+            if (errno == EINTR) {
+                continue;
+            } else {
+                // `errno` set by _getdents64.
+                highest_fd_so_far = -1;
+                goto error;
+            }
+        }
+        long offset = 0;
+        while (offset < bytes_read) {
+            struct linux_dirent64 *entry = (struct linux_dirent64 *)(buffer + offset);
+
+            // Skip "." and ".." entries
+            if (entry->d_name[0] != '.') {
+                int number = _positive_int_parse(entry->d_name);
+                if (number > highest_fd_so_far) {
+                    highest_fd_so_far = number;
+                }
+            }
+
+            offset += entry->d_reclen;
         }
     }
 
-    closedir(dir_ptr);
+error:
+    close(dir_fd);
     return highest_fd_so_far;
 }
 
+// This function is only used on systems with Linux kernel 5.9 or lower.
+// On newer systems, `close_range` is used instead.
 static int _highest_possibly_open_fd(void) {
-#if defined(__APPLE__)
-    int hi = _highest_possibly_open_fd_dir("/dev/fd");
+#if defined(__linux__)
+    int hi = _highest_possibly_open_fd_dir_linux("/dev/fd");
     if (hi < 0) {
-        hi = getdtablesize();
-    }
-#elif defined(__linux__)
-    int hi = _highest_possibly_open_fd_dir("/proc/self/fd");
-    if (hi < 0) {
-        hi = getdtablesize();
+        hi = sysconf(_SC_OPEN_MAX);
     }
 #else
-    int hi = getdtablesize();
+    int hi = sysconf(_SC_OPEN_MAX);
 #endif
     return hi;
 }
@@ -623,11 +655,11 @@ int _subprocess_fork_exec(
         // Close all other file descriptors
         rc = -1;
         errno = ENOSYS;
-#if __has_include(<linux/close_range.h>) || defined(__FreeBSD__)
+        #if (__has_include(<linux/close_range.h>) && (!defined(__ANDROID__) || __ANDROID_API__  >= 34)) || defined(__FreeBSD__)
         // We must NOT close pipefd[1] for writing errors
         rc = close_range(STDERR_FILENO + 1, pipefd[1] - 1, 0);
         rc |= close_range(pipefd[1] + 1, ~0U, 0);
-#endif
+        #endif
         if (rc != 0) {
             // close_range failed (or doesn't exist), fall back to close()
             for (int fd = STDERR_FILENO + 1; fd < _highest_possibly_open_fd(); fd++) {
@@ -657,9 +689,6 @@ int _subprocess_fork_exec(
         // Newer Linux supports clone3 which returns pidfd directly
         if (_pidfd < 0) {
             _pidfd = _pidfd_open(childPid);
-            if (_pidfd < 0) {
-                reap_child_process_and_return_errno;
-            }
         }
 
         // Parent process

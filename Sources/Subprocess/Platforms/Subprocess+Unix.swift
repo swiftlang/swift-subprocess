@@ -112,19 +112,30 @@ extension Execution {
 
         #if os(Linux) || os(Android)
         // On linux, use pidfd_send_signal if possible
-        if shouldSendToProcessGroup {
+        if shouldSendToProcessGroup || self.processIdentifier.processDescriptor < 0 {
             // pidfd_send_signal does not support sending signal to process group
             try _kill(pid, signal: signal)
         } else {
-            guard _pidfd_send_signal(
+            let rc = _pidfd_send_signal(
                 processIdentifier.processDescriptor,
                 signal.rawValue
-            ) == 0 else {
-                throw SubprocessError(
-                    code: .init(.failedToSendSignal(signal.rawValue)),
-                    underlyingError: .init(rawValue: errno)
-                )
+            )
+            let capturedErrno = errno
+            if rc == 0 {
+                // _pidfd_send_signal succeeded
+                return
             }
+            if capturedErrno == ENOSYS {
+                // _pidfd_send_signal is not implemented. Fallback to kill
+                try _kill(pid, signal: signal)
+                return
+            }
+
+            // Throw all other errors
+            throw SubprocessError(
+                code: .init(.failedToSendSignal(signal.rawValue)),
+                underlyingError: .init(rawValue: capturedErrno)
+            )
         }
         #else
         try _kill(pid, signal: signal)

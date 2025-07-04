@@ -1935,17 +1935,7 @@ extension SubprocessIntegrationTests {
         #expect(result.value.error == "hello stderr")
     }
 
-    @Test(
-        .disabled("Linux requires #46 to be fixed", {
-            #if os(Linux)
-            return true
-            #else
-            return false
-            #endif
-        }),
-        .bug("https://github.com/swiftlang/swift-subprocess/issues/46")
-    )
-    func testSubprocessPipeChain() async throws {
+    @Test func testSubprocessPipeChain() async throws {
         struct Pipe: @unchecked Sendable {
             #if os(Windows)
             let readEnd: HANDLE
