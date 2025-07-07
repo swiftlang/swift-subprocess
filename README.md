@@ -7,7 +7,7 @@ Subprocess is a cross-platform package for spawning processes in Swift.
 
 ## Getting Started
 
-To use `Subprocess` in a [SwiftPM](https://swift.org/package-manager/) project, add it as a package dependency to your `Package.swift`:
+To use `Subprocess` in a [SwiftPM](https://swift.org/package-manager/) project, add it as a package dependency to your `Package.swift`: 
 
 
 ```swift
