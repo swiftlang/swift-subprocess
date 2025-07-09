@@ -20,7 +20,7 @@ import Glibc
 #elseif canImport(Musl)
 import Musl
 #elseif canImport(WinSDK)
-import WinSDK
+@preconcurrency import WinSDK
 #endif
 
 /// A step in the graceful shutdown teardown sequence.

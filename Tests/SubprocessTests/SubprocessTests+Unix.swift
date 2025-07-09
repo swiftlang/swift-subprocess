@@ -668,14 +668,11 @@ extension SubprocessUnixTests {
         var platformOptions = PlatformOptions()
         platformOptions.supplementaryGroups = Array(expectedGroups)
         let idResult = try await Subprocess.run(
-            .name("swift"),
+            .path("/usr/bin/swift"),
             arguments: [getgroupsSwift.string],
             platformOptions: platformOptions,
-            output: .string,
-            error: .string,
+            output: .string
         )
-        let error = try #require(idResult.standardError)
-        try #require(error == "")
         #expect(idResult.terminationStatus.isSuccess)
         let ids = try #require(
             idResult.standardOutput

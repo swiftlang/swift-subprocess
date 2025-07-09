@@ -105,9 +105,9 @@ public func run<
         output: try output.createPipe(),
         error: try error.createPipe()
     ) { execution, inputIO, outputIO, errorIO in
-        var inputIOBox: TrackedPlatformDiskIO? = consume inputIO
-        var outputIOBox: TrackedPlatformDiskIO? = consume outputIO
-        var errorIOBox: TrackedPlatformDiskIO? = consume errorIO
+        var inputIOBox: IOChannel? = consume inputIO
+        var outputIOBox: IOChannel? = consume outputIO
+        var errorIOBox: IOChannel? = consume errorIO
 
         // Write input, capture output and error in parallel
         async let stdout = try output.captureOutput(from: outputIOBox.take())
@@ -177,12 +177,12 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol, Error: Out
         output: try output.createPipe(),
         error: try error.createPipe()
     ) { execution, inputIO, outputIO, errorIO in
-        var inputIOBox: TrackedPlatformDiskIO? = consume inputIO
+        var inputIOBox: IOChannel? = consume inputIO
         return try await withThrowingTaskGroup(
             of: Void.self,
             returning: Result.self
         ) { group in
-            var inputIOContainer: TrackedPlatformDiskIO? = inputIOBox.take()
+            var inputIOContainer: IOChannel? = inputIOBox.take()
             group.addTask {
                 if let inputIO = inputIOContainer.take() {
                     let writer = StandardInputWriter(diskIO: inputIO)
@@ -237,13 +237,13 @@ public func run<Result, Input: InputProtocol, Error: OutputProtocol>(
         output: try output.createPipe(),
         error: try error.createPipe()
     ) { execution, inputIO, outputIO, errorIO in
-        var inputIOBox: TrackedPlatformDiskIO? = consume inputIO
-        var outputIOBox: TrackedPlatformDiskIO? = consume outputIO
+        var inputIOBox: IOChannel? = consume inputIO
+        var outputIOBox: IOChannel? = consume outputIO
         return try await withThrowingTaskGroup(
             of: Void.self,
             returning: Result.self
         ) { group in
-            var inputIOContainer: TrackedPlatformDiskIO? = inputIOBox.take()
+            var inputIOContainer: IOChannel? = inputIOBox.take()
             group.addTask {
                 if let inputIO = inputIOContainer.take() {
                     let writer = StandardInputWriter(diskIO: inputIO)
@@ -253,7 +253,7 @@ public func run<Result, Input: InputProtocol, Error: OutputProtocol>(
             }
 
             // Body runs in the same isolation
-            let outputSequence = AsyncBufferSequence(diskIO: outputIOBox.take()!.consumeDiskIO())
+            let outputSequence = AsyncBufferSequence(diskIO: outputIOBox.take()!.consumeIOChannel())
             let result = try await body(execution, outputSequence)
             try await group.waitForAll()
             return result
@@ -299,13 +299,13 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
         output: try output.createPipe(),
         error: try error.createPipe()
     ) { execution, inputIO, outputIO, errorIO in
-        var inputIOBox: TrackedPlatformDiskIO? = consume inputIO
-        var errorIOBox: TrackedPlatformDiskIO? = consume errorIO
+        var inputIOBox: IOChannel? = consume inputIO
+        var errorIOBox: IOChannel? = consume errorIO
         return try await withThrowingTaskGroup(
             of: Void.self,
             returning: Result.self
         ) { group in
-            var inputIOContainer: TrackedPlatformDiskIO? = inputIOBox.take()
+            var inputIOContainer: IOChannel? = inputIOBox.take()
             group.addTask {
                 if let inputIO = inputIOContainer.take() {
                     let writer = StandardInputWriter(diskIO: inputIO)
@@ -315,7 +315,7 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
             }
 
             // Body runs in the same isolation
-            let errorSequence = AsyncBufferSequence(diskIO: errorIOBox.take()!.consumeDiskIO())
+            let errorSequence = AsyncBufferSequence(diskIO: errorIOBox.take()!.consumeIOChannel())
             let result = try await body(execution, errorSequence)
             try await group.waitForAll()
             return result
@@ -363,7 +363,7 @@ public func run<Result, Error: OutputProtocol>(
         error: try error.createPipe()
     ) { execution, inputIO, outputIO, errorIO in
         let writer = StandardInputWriter(diskIO: inputIO!)
-        let outputSequence = AsyncBufferSequence(diskIO: outputIO!.consumeDiskIO())
+        let outputSequence = AsyncBufferSequence(diskIO: outputIO!.consumeIOChannel())
         return try await body(execution, writer, outputSequence)
     }
 }
@@ -408,7 +408,7 @@ public func run<Result, Output: OutputProtocol>(
         error: try error.createPipe()
     ) { execution, inputIO, outputIO, errorIO in
         let writer = StandardInputWriter(diskIO: inputIO!)
-        let errorSequence = AsyncBufferSequence(diskIO: errorIO!.consumeDiskIO())
+        let errorSequence = AsyncBufferSequence(diskIO: errorIO!.consumeIOChannel())
         return try await body(execution, writer, errorSequence)
     }
 }
@@ -460,8 +460,8 @@ public func run<Result>(
         error: try error.createPipe()
     ) { execution, inputIO, outputIO, errorIO in
         let writer = StandardInputWriter(diskIO: inputIO!)
-        let outputSequence = AsyncBufferSequence(diskIO: outputIO!.consumeDiskIO())
-        let errorSequence = AsyncBufferSequence(diskIO: errorIO!.consumeDiskIO())
+        let outputSequence = AsyncBufferSequence(diskIO: outputIO!.consumeIOChannel())
+        let errorSequence = AsyncBufferSequence(diskIO: errorIO!.consumeIOChannel())
         return try await body(execution, writer, outputSequence, errorSequence)
     }
 }
@@ -497,16 +497,16 @@ public func run<
         error: try error.createPipe()
     ) { (execution, inputIO, outputIO, errorIO) -> RunResult in
         // Write input, capture output and error in parallel
-        var inputIOBox: TrackedPlatformDiskIO? = consume inputIO
-        var outputIOBox: TrackedPlatformDiskIO? = consume outputIO
-        var errorIOBox: TrackedPlatformDiskIO? = consume errorIO
+        var inputIOBox: IOChannel? = consume inputIO
+        var outputIOBox: IOChannel? = consume outputIO
+        var errorIOBox: IOChannel? = consume errorIO
         return try await withThrowingTaskGroup(
             of: OutputCapturingState<Output.OutputType, Error.OutputType>?.self,
             returning: RunResult.self
         ) { group in
-            var inputIOContainer: TrackedPlatformDiskIO? = inputIOBox.take()
-            var outputIOContainer: TrackedPlatformDiskIO? = outputIOBox.take()
-            var errorIOContainer: TrackedPlatformDiskIO? = errorIOBox.take()
+            var inputIOContainer: IOChannel? = inputIOBox.take()
+            var outputIOContainer: IOChannel? = outputIOBox.take()
+            var errorIOContainer: IOChannel? = errorIOBox.take()
             group.addTask {
                 if let writeFd = inputIOContainer.take() {
                     let writer = StandardInputWriter(diskIO: writeFd)
@@ -580,8 +580,8 @@ public func run<Result>(
         error: try error.createPipe()
     ) { execution, inputIO, outputIO, errorIO in
         let writer = StandardInputWriter(diskIO: inputIO!)
-        let outputSequence = AsyncBufferSequence(diskIO: outputIO!.consumeDiskIO())
-        let errorSequence = AsyncBufferSequence(diskIO: errorIO!.consumeDiskIO())
+        let outputSequence = AsyncBufferSequence(diskIO: outputIO!.consumeIOChannel())
+        let errorSequence = AsyncBufferSequence(diskIO: errorIO!.consumeIOChannel())
         return try await body(execution, writer, outputSequence, errorSequence)
     }
 }

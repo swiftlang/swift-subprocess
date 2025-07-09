@@ -18,7 +18,7 @@ import Glibc
 #elseif canImport(Musl)
 import Musl
 #elseif canImport(WinSDK)
-import WinSDK
+@preconcurrency import WinSDK
 #endif
 
 /// Error thrown from Subprocess
@@ -41,6 +41,7 @@ extension SubprocessError {
             case failedToWriteToSubprocess
             case failedToMonitorProcess
             case streamOutputExceedsLimit(Int)
+            case asyncIOFailed(String)
             // Signal
             case failedToSendSignal(Int32)
             // Windows Only
@@ -67,18 +68,20 @@ extension SubprocessError {
                 return 5
             case .streamOutputExceedsLimit(_):
                 return 6
-            case .failedToSendSignal(_):
+            case .asyncIOFailed(_):
                 return 7
-            case .failedToTerminate:
+            case .failedToSendSignal(_):
                 return 8
-            case .failedToSuspend:
+            case .failedToTerminate:
                 return 9
-            case .failedToResume:
+            case .failedToSuspend:
                 return 10
-            case .failedToCreatePipe:
+            case .failedToResume:
                 return 11
-            case .invalidWindowsPath(_):
+            case .failedToCreatePipe:
                 return 12
+            case .invalidWindowsPath(_):
+                return 13
             }
         }
 
@@ -108,6 +111,8 @@ extension SubprocessError: CustomStringConvertible, CustomDebugStringConvertible
             return "Failed to monitor the state of child process with underlying error: \(self.underlyingError!)"
         case .streamOutputExceedsLimit(let limit):
             return "Failed to create output from current buffer because the output limit (\(limit)) was reached."
+        case .asyncIOFailed(let reason):
+            return "An error occurred within the AsyncIO subsystem: \(reason). Underlying error: \(self.underlyingError!)"
         case .failedToSendSignal(let signal):
             return "Failed to send signal \(signal) to the child process."
         case .failedToTerminate:
