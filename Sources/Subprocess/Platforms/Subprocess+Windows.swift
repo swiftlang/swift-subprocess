@@ -144,8 +144,7 @@ extension Configuration {
         )
         let execution = Execution(
             processIdentifier: pid,
-            processInformation: processInfo,
-            consoleBehavior: self.platformOptions.consoleBehavior
+            platformHandles: .init(processInformation: processInfo)
         )
 
         do {
@@ -288,8 +287,7 @@ extension Configuration {
         )
         let execution = Execution(
             processIdentifier: pid,
-            processInformation: processInfo,
-            consoleBehavior: self.platformOptions.consoleBehavior
+            platformHandles: .init(processInformation: processInfo)
         )
 
         do {
@@ -315,6 +313,26 @@ extension Configuration {
             outputReadEnd: outputReadFileDescriptor?.createPlatformDiskIO(),
             errorReadEnd: errorReadFileDescriptor?.createPlatformDiskIO()
         )
+    }
+}
+
+// MARK: - PlatformExecution
+
+/// The collection of platform-specific handles used to control the subprocess when running.
+public struct PlatformHandles: Sendable {
+    public nonisolated(unsafe) let processInformation: PROCESS_INFORMATION
+
+    internal init(processInformation: PROCESS_INFORMATION) {
+        self.processInformation = processInformation
+    }
+
+    internal func release() {
+        guard CloseHandle(processInformation.hThread) else {
+            fatalError("Failed to close thread HANDLE: \(SubprocessError.UnderlyingError(rawValue: GetLastError()))")
+        }
+        guard CloseHandle(processInformation.hProcess) else {
+            fatalError("Failed to close process HANDLE: \(SubprocessError.UnderlyingError(rawValue: GetLastError()))")
+        }
     }
 }
 
@@ -494,7 +512,7 @@ internal func monitorProcessTermination(
         guard
             RegisterWaitForSingleObject(
                 &waitHandle,
-                execution.processInformation.hProcess,
+                execution.platformHandles.processInformation.hProcess,
                 callback,
                 context,
                 INFINITE,
@@ -512,7 +530,7 @@ internal func monitorProcessTermination(
     }
 
     var status: DWORD = 0
-    guard GetExitCodeProcess(execution.processInformation.hProcess, &status) else {
+    guard GetExitCodeProcess(execution.platformHandles.processInformation.hProcess, &status) else {
         // The child process terminated but we couldn't get its status back.
         // Assume generic failure.
         return .exited(1)
@@ -530,7 +548,7 @@ extension Execution {
     /// Terminate the current subprocess with the given exit code
     /// - Parameter exitCode: The exit code to use for the subprocess.
     public func terminate(withExitCode exitCode: DWORD) throws {
-        guard TerminateProcess(processInformation.hProcess, exitCode) else {
+        guard TerminateProcess(platformHandles.processInformation.hProcess, exitCode) else {
             throw SubprocessError(
                 code: .init(.failedToTerminate),
                 underlyingError: .init(rawValue: GetLastError())
@@ -554,7 +572,7 @@ extension Execution {
                 underlyingError: .init(rawValue: GetLastError())
             )
         }
-        guard NTSuspendProcess(processInformation.hProcess) >= 0 else {
+        guard NTSuspendProcess(platformHandles.processInformation.hProcess) >= 0 else {
             throw SubprocessError(
                 code: .init(.failedToSuspend),
                 underlyingError: .init(rawValue: GetLastError())
@@ -578,7 +596,7 @@ extension Execution {
                 underlyingError: .init(rawValue: GetLastError())
             )
         }
-        guard NTResumeProcess(processInformation.hProcess) >= 0 else {
+        guard NTResumeProcess(platformHandles.processInformation.hProcess) >= 0 else {
             throw SubprocessError(
                 code: .init(.failedToResume),
                 underlyingError: .init(rawValue: GetLastError())
