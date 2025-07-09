@@ -111,7 +111,7 @@ extension StandardInputWriter {
     public func write(
         _ data: Data
     ) async throws -> Int {
-        return try await self.diskIO.write(data)
+        return try await AsyncIO.shared.write(data, to: self.diskIO)
     }
 
     /// Write a AsyncSequence of Data to the standard input of the subprocess.
@@ -128,35 +128,12 @@ extension StandardInputWriter {
     }
 }
 
-#if os(Windows)
-extension TrackedFileDescriptor {
+
+#if canImport(Darwin)
+extension AsyncIO {
     internal func write(
-        _ data: Data
-    ) async throws -> Int {
-        let fileDescriptor = self.fileDescriptor
-        return try await withCheckedThrowingContinuation { continuation in
-            // TODO: Figure out a better way to asynchronously write
-            DispatchQueue.global(qos: .userInitiated).async {
-                data.withUnsafeBytes {
-                    Self.write(
-                        $0,
-                        to: fileDescriptor
-                    ) { writtenLength, error in
-                        if let error = error {
-                            continuation.resume(throwing: error)
-                        } else {
-                            continuation.resume(returning: writtenLength)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-#else
-extension TrackedDispatchIO {
-    internal func write(
-        _ data: Data
+        _ data: Data,
+        to diskIO: borrowing TrackedPlatformDiskIO
     ) async throws -> Int {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int, any Error>) in
             let dispatchData = data.withUnsafeBytes {
@@ -170,7 +147,7 @@ extension TrackedDispatchIO {
                     )
                 )
             }
-            self.write(dispatchData) { writtenLength, error in
+            self.write(dispatchData, to: diskIO) { writtenLength, error in
                 if let error = error {
                     continuation.resume(throwing: error)
                 } else {
@@ -180,6 +157,17 @@ extension TrackedDispatchIO {
         }
     }
 }
-#endif // os(Windows)
+#else
+extension Data : AsyncIO._ContiguousBytes { }
+
+extension AsyncIO {
+    internal func write(
+        _ data: Data,
+        to diskIO: borrowing TrackedPlatformDiskIO
+    ) async throws -> Int {
+        return try await self._write(data, to: diskIO)
+    }
+}
+#endif // canImport(Darwin)
 
 #endif  // SubprocessFoundation
