@@ -46,3 +46,11 @@ target_link_libraries(Subprocess PUBLIC
   _SubprocessCShims)
 target_link_libraries(Subprocess PRIVATE
   SwiftSystem::SystemPackage)
+
+install(TARGETS Subprocess
+  EXPORT SwiftSubprocessTargets
+  ARCHIVE DESTINATION "${${PROJECT_NAME}_INSTALL_LIBDIR}"
+  LIBRARY DESTINATION "${${PROJECT_NAME}_INSTALL_LIBDIR}"
+  RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+emit_swift_interface(Subprocess)
+install_swift_interface(Subprocess)
