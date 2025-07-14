@@ -158,13 +158,25 @@ public struct BytesOutput: OutputProtocol {
         var result: [UInt8]? = nil
         #endif
         do {
-            result = try await AsyncIO.shared.read(from: diskIO, upTo: self.maxSize)
+            var maxLength = self.maxSize
+            if maxLength != .max {
+                // If we actually have a max length, attempt to read one
+                // more byte to determine whether output exceeds the limit
+                maxLength += 1
+            }
+            result = try await AsyncIO.shared.read(from: diskIO, upTo: maxLength)
         } catch {
             try diskIO.safelyClose()
             throw error
         }
-
         try diskIO.safelyClose()
+
+        if let result, result.count > self.maxSize {
+            throw SubprocessError(
+                code: .init(.outputBufferLimitExceeded(self.maxSize)),
+                underlyingError: nil
+            )
+        }
         #if canImport(Darwin)
         return result?.array() ?? []
         #else
@@ -213,16 +225,19 @@ extension OutputProtocol where Self == FileDescriptorOutput {
 }
 
 extension OutputProtocol where Self == StringOutput<UTF8> {
-    /// Create a `Subprocess` output that collects output as
-    /// UTF8 String with 128kb limit.
-    public static var string: Self {
-        .init(limit: 128 * 1024, encoding: UTF8.self)
+    /// Create a `Subprocess` output that collects output as UTF8 String
+    /// with a buffer limit in bytes. Subprocess throws an error if the
+    /// child process emits more bytes than the limit.
+    public static func string(limit: Int) -> Self {
+        return .init(limit: limit, encoding: UTF8.self)
     }
 }
 
 extension OutputProtocol {
     /// Create a `Subprocess` output that collects output as
-    /// `String` using the given encoding up to limit it bytes.
+    /// `String` using the given encoding up to limit in bytes.
+    /// Subprocess throws an error if the child process emits
+    /// more bytes than the limit.
     public static func string<Encoding: Unicode.Encoding>(
         limit: Int,
         encoding: Encoding.Type
@@ -234,11 +249,8 @@ extension OutputProtocol {
 
 extension OutputProtocol where Self == BytesOutput {
     /// Create a `Subprocess` output that collects output as
-    /// `Buffer` with 128kb limit.
-    public static var bytes: Self { .init(limit: 128 * 1024) }
-
-    /// Create a `Subprocess` output that collects output as
-    /// `Buffer` up to limit it bytes.
+    /// `Buffer` with a buffer limit in bytes. Subprocess throws
+    /// an error if the child process emits more bytes than the limit.
     public static func bytes(limit: Int) -> Self {
         return .init(limit: limit)
     }
@@ -299,13 +311,25 @@ extension OutputProtocol {
         var result: [UInt8]? = nil
         #endif
         do {
-            result = try await AsyncIO.shared.read(from: diskIO, upTo: self.maxSize)
+            var maxLength = self.maxSize
+            if maxLength != .max {
+                // If we actually have a max length, attempt to read one
+                // more byte to determine whether output exceeds the limit
+                maxLength += 1
+            }
+            result = try await AsyncIO.shared.read(from: diskIO, upTo: maxLength)
         } catch {
             try diskIO.safelyClose()
             throw error
         }
 
         try diskIO.safelyClose()
+        if let result, result.count > self.maxSize {
+            throw SubprocessError(
+                code: .init(.outputBufferLimitExceeded(self.maxSize)),
+                underlyingError: nil
+            )
+        }
         #if canImport(Darwin)
         return try self.output(from: result ?? .empty)
         #else

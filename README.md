@@ -143,7 +143,7 @@ let result = try await run(.path("/bin/exe"), platformOptions: platformOptions)
 
 By default, `Subprocess`:
 - Doesn’t send any input to the child process’s standard input
-- Captures the child process’s standard output as a `String`, up to 128kB
+- Asks the user how to capture the output
 - Ignores the child process’s standard error
 
 You can tailor how `Subprocess` handles the standard input, standard output, and standard error by setting the `input`, `output`, and `error` parameters:
@@ -222,13 +222,13 @@ Use it by setting `.fileDescriptor(closeAfterSpawningProcess:)` for `output` or 
 
 This option collects output as a `String` with the given encoding.
 
-Use it by setting `.string` or `.string(limit:encoding:)` for `output` or `error`.
+Use it by setting `.string(limit:encoding:)` for `output` or `error`.
 
 #### `BytesOutput`
 
 This option collects output as `[UInt8]`.
 
-Use it by setting `.bytes` or `.bytes(limit:)` for `output` or `error`.
+Use it by setting`.bytes(limit:)` for `output` or `error`.
 
 
 ### Cross-platform support

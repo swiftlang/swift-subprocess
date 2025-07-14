@@ -50,8 +50,8 @@ struct SubprocessLinuxTests {
             .path("/usr/bin/id"),
             arguments: ["-g"],
             platformOptions: platformOptions,
-            output: .string,
-            error: .string
+            output: .string(limit: 32),
+            error: .string(limit: 32)
         )
         let error = try #require(idResult.standardError)
         try #require(error == "")
