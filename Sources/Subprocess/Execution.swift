@@ -35,16 +35,13 @@ public struct Execution: Sendable {
     public let processIdentifier: ProcessIdentifier
 
     #if os(Windows)
-    internal nonisolated(unsafe) let processInformation: PROCESS_INFORMATION
     internal let consoleBehavior: PlatformOptions.ConsoleBehavior
 
     init(
         processIdentifier: ProcessIdentifier,
-        processInformation: PROCESS_INFORMATION,
         consoleBehavior: PlatformOptions.ConsoleBehavior
     ) {
         self.processIdentifier = processIdentifier
-        self.processInformation = processInformation
         self.consoleBehavior = consoleBehavior
     }
     #else
@@ -54,17 +51,6 @@ public struct Execution: Sendable {
         self.processIdentifier = processIdentifier
     }
     #endif  // os(Windows)
-
-    internal func release() {
-        #if os(Windows)
-        guard CloseHandle(processInformation.hThread) else {
-            fatalError("Failed to close thread HANDLE: \(SubprocessError.UnderlyingError(rawValue: GetLastError()))")
-        }
-        guard CloseHandle(processInformation.hProcess) else {
-            fatalError("Failed to close process HANDLE: \(SubprocessError.UnderlyingError(rawValue: GetLastError()))")
-        }
-        #endif
-    }
 }
 
 // MARK: - Output Capture
