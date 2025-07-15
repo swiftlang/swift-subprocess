@@ -135,11 +135,12 @@ extension Configuration {
         }
 
         let pid = ProcessIdentifier(
-            value: processInfo.dwProcessId
+            value: processInfo.dwProcessId,
+            processHandle: processInfo.hProcess,
+            threadHandle: processInfo.hThread
         )
         let execution = Execution(
             processIdentifier: pid,
-            processInformation: processInfo,
             consoleBehavior: self.platformOptions.consoleBehavior
         )
 
@@ -156,7 +157,7 @@ extension Configuration {
         } catch {
             // If spawn() throws, monitorProcessTermination
             // won't have an opportunity to call release, so do it here to avoid leaking the handles.
-            execution.release()
+            pid.close()
             throw error
         }
 
@@ -279,11 +280,12 @@ extension Configuration {
         }
 
         let pid = ProcessIdentifier(
-            value: processInfo.dwProcessId
+            value: processInfo.dwProcessId,
+            processHandle: processInfo.hProcess,
+            threadHandle: processInfo.hThread
         )
         let execution = Execution(
             processIdentifier: pid,
-            processInformation: processInfo,
             consoleBehavior: self.platformOptions.consoleBehavior
         )
 
@@ -300,7 +302,7 @@ extension Configuration {
         } catch {
             // If spawn() throws, monitorProcessTermination
             // won't have an opportunity to call release, so do it here to avoid leaking the handles.
-            execution.release()
+            pid.close()
             throw error
         }
 
@@ -460,7 +462,7 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
 // MARK: - Process Monitoring
 @Sendable
 internal func monitorProcessTermination(
-    forExecution execution: Execution
+    for processIdentifier: ProcessIdentifier
 ) async throws -> TerminationStatus {
     // Once the continuation resumes, it will need to unregister the wait, so
     // yield the wait handle back to the calling scope.
@@ -469,8 +471,6 @@ internal func monitorProcessTermination(
         if let waitHandle {
             _ = UnregisterWait(waitHandle)
         }
-
-        execution.release()
     }
 
     try? await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
@@ -489,7 +489,7 @@ internal func monitorProcessTermination(
         guard
             RegisterWaitForSingleObject(
                 &waitHandle,
-                execution.processInformation.hProcess,
+                processIdentifier.processHandle,
                 callback,
                 context,
                 INFINITE,
@@ -507,7 +507,7 @@ internal func monitorProcessTermination(
     }
 
     var status: DWORD = 0
-    guard GetExitCodeProcess(execution.processInformation.hProcess, &status) else {
+    guard GetExitCodeProcess(processIdentifier.processHandle, &status) else {
         // The child process terminated but we couldn't get its status back.
         // Assume generic failure.
         return .exited(1)
@@ -525,7 +525,7 @@ extension Execution {
     /// Terminate the current subprocess with the given exit code
     /// - Parameter exitCode: The exit code to use for the subprocess.
     public func terminate(withExitCode exitCode: DWORD) throws {
-        guard TerminateProcess(processInformation.hProcess, exitCode) else {
+        guard TerminateProcess(self.processIdentifier.processHandle, exitCode) else {
             throw SubprocessError(
                 code: .init(.failedToTerminate),
                 underlyingError: .init(rawValue: GetLastError())
@@ -549,7 +549,7 @@ extension Execution {
                 underlyingError: .init(rawValue: GetLastError())
             )
         }
-        guard NTSuspendProcess(processInformation.hProcess) >= 0 else {
+        guard NTSuspendProcess(self.processIdentifier.processHandle) >= 0 else {
             throw SubprocessError(
                 code: .init(.failedToSuspend),
                 underlyingError: .init(rawValue: GetLastError())
@@ -573,7 +573,7 @@ extension Execution {
                 underlyingError: .init(rawValue: GetLastError())
             )
         }
-        guard NTResumeProcess(processInformation.hProcess) >= 0 else {
+        guard NTResumeProcess(self.processIdentifier.processHandle) >= 0 else {
             throw SubprocessError(
                 code: .init(.failedToResume),
                 underlyingError: .init(rawValue: GetLastError())
@@ -676,12 +676,26 @@ extension Environment {
 // MARK: - ProcessIdentifier
 
 /// A platform independent identifier for a subprocess.
-public struct ProcessIdentifier: Sendable, Hashable, Codable {
+public struct ProcessIdentifier: Sendable, Hashable {
     /// Windows specific process identifier value
     public let value: DWORD
+    internal nonisolated(unsafe) let processHandle: HANDLE
+    internal nonisolated(unsafe) let threadHandle: HANDLE
 
-    internal init(value: DWORD) {
+
+    internal init(value: DWORD, processHandle: HANDLE, threadHandle: HANDLE) {
         self.value = value
+        self.processHandle = processHandle
+        self.threadHandle = threadHandle
+    }
+
+    internal func close() {
+        guard CloseHandle(self.threadHandle) else {
+            fatalError("Failed to close thread HANDLE: \(SubprocessError.UnderlyingError(rawValue: GetLastError()))")
+        }
+        guard CloseHandle(self.processHandle) else {
+            fatalError("Failed to close process HANDLE: \(SubprocessError.UnderlyingError(rawValue: GetLastError()))")
+        }
     }
 }
 

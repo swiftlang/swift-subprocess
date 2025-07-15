@@ -64,7 +64,6 @@ extension CollectedResult: Equatable where Output.OutputType: Equatable, Error.O
 
 extension CollectedResult: Hashable where Output.OutputType: Hashable, Error.OutputType: Hashable {}
 
-extension CollectedResult: Codable where Output.OutputType: Codable, Error.OutputType: Codable {}
 
 extension CollectedResult: CustomStringConvertible
 where Output.OutputType: CustomStringConvertible, Error.OutputType: CustomStringConvertible {
@@ -98,8 +97,6 @@ where Output.OutputType: CustomDebugStringConvertible, Error.OutputType: CustomD
 extension ExecutionResult: Equatable where Result: Equatable {}
 
 extension ExecutionResult: Hashable where Result: Hashable {}
-
-extension ExecutionResult: Codable where Result: Codable {}
 
 extension ExecutionResult: CustomStringConvertible where Result: CustomStringConvertible {
     public var description: String {

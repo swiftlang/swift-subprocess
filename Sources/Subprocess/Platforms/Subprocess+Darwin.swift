@@ -477,26 +477,41 @@ extension Configuration {
     }
 }
 
-// Special keys used in Error's user dictionary
-extension String {
-    static let debugDescriptionErrorKey = "NSDebugDescription"
+// MARK: - ProcessIdentifier
+
+/// A platform independent identifier for a Subprocess.
+public struct ProcessIdentifier: Sendable, Hashable {
+    /// The platform specific process identifier value
+    public let value: pid_t
+
+    public init(value: pid_t) {
+        self.value = value
+    }
+
+    internal func close() { /* No-op on Darwin */ }
+}
+
+extension ProcessIdentifier: CustomStringConvertible, CustomDebugStringConvertible {
+    public var description: String { "\(self.value)" }
+
+    public var debugDescription: String { "\(self.value)" }
 }
 
 // MARK: - Process Monitoring
 @Sendable
 internal func monitorProcessTermination(
-    forExecution execution: Execution
+    for processIdentifier: ProcessIdentifier
 ) async throws -> TerminationStatus {
     return try await withCheckedThrowingContinuation { continuation in
         let source = DispatchSource.makeProcessSource(
-            identifier: execution.processIdentifier.value,
+            identifier: processIdentifier.value,
             eventMask: [.exit],
             queue: .global()
         )
         source.setEventHandler {
             source.cancel()
             var siginfo = siginfo_t()
-            let rc = waitid(P_PID, id_t(execution.processIdentifier.value), &siginfo, WEXITED)
+            let rc = waitid(P_PID, id_t(processIdentifier.value), &siginfo, WEXITED)
             guard rc == 0 else {
                 continuation.resume(
                     throwing: SubprocessError(

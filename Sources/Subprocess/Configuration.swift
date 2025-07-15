@@ -103,7 +103,12 @@ public struct Configuration: Sendable {
         // even if `body` throws, and we are not leaving zombie processes in the
         // process table which will cause the process termination monitoring thread
         // to effectively hang due to the pid never being awaited
-        let terminationStatus = try await Subprocess.monitorProcessTermination(forExecution: _spawnResult.execution)
+        let terminationStatus = try await Subprocess.monitorProcessTermination(
+            for: execution.processIdentifier
+        )
+
+        // Close process file descriptor now we finished monitoring
+        execution.processIdentifier.close()
 
         return try ExecutionResult(terminationStatus: terminationStatus, value: result.get())
     }
