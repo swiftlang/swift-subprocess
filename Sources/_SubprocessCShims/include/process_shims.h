@@ -47,6 +47,7 @@ int _subprocess_spawn(
 
 int _subprocess_fork_exec(
     pid_t * _Nonnull pid,
+    int * _Nonnull pidfd,
     const char * _Nonnull exec_path,
     const char * _Nullable working_directory,
     const int file_descriptors[_Nonnull],
@@ -78,6 +79,8 @@ int _shims_snprintf(
     char * _Nonnull str1,
     char * _Nonnull str2
 );
+
+int _pidfd_send_signal(int pidfd, int signal);
 #endif
 
 #endif // !TARGET_OS_WINDOWS
