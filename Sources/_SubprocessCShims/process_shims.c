@@ -14,6 +14,8 @@
 #if TARGET_OS_LINUX
 // For posix_spawn_file_actions_addchdir_np
 #define _GNU_SOURCE 1
+// For pidfd_open
+#include <sys/syscall.h>
 #endif
 
 #include "include/process_shims.h"
@@ -79,6 +81,11 @@ int _shims_snprintf(
 ) {
     return snprintf(str, len, format, str1, str2);
 }
+
+int _pidfd_send_signal(int pidfd, int signal) {
+    return syscall(SYS_pidfd_send_signal, pidfd, signal, NULL, 0);
+}
+
 #endif
 
 #if __has_include(<mach/vm_page_size.h>)
@@ -303,157 +310,13 @@ int _subprocess_spawn(
 #define __GLIBC_PREREQ(maj, min) 0
 #endif
 
-#if _POSIX_SPAWN
-static int _subprocess_is_addchdir_np_available() {
-#if defined(__GLIBC__) && !__GLIBC_PREREQ(2, 29)
-    // Glibc versions prior to 2.29 don't support posix_spawn_file_actions_addchdir_np, impacting:
-    //  - Amazon Linux 2 (EoL mid-2025)
-    return 0;
-#elif defined(__OpenBSD__) || defined(__QNX__)
-    // Currently missing as of:
-    //  - OpenBSD 7.5 (April 2024)
-    //  - QNX 8 (December 2023)
-    return 0;
-#elif defined(__GLIBC__) || TARGET_OS_DARWIN || defined(__FreeBSD__) || (defined(__ANDROID__) && __ANDROID_API__ >= 34) || defined(__musl__)
-    // Pre-standard posix_spawn_file_actions_addchdir_np version available in:
-    //  - Solaris 11.3 (October 2015)
-    //  - Glibc 2.29 (February 2019)
-    //  - macOS 10.15 (October 2019)
-    //  - musl 1.1.24 (October 2019)
-    //  - FreeBSD 13.1 (May 2022)
-    //  - Android 14 (October 2023)
-    return 1;
-#else
-    // Standardized posix_spawn_file_actions_addchdir version (POSIX.1-2024, June 2024) available in:
-    //  - Solaris 11.4 (August 2018)
-    //  - NetBSD 10.0 (March 2024)
-    return 1;
-#endif
+static int _pidfd_open(pid_t pid) {
+    return syscall(SYS_pidfd_open, pid, 0);
 }
-
-static int _subprocess_addchdir_np(
-    posix_spawn_file_actions_t *file_actions,
-    const char * __restrict path
-) {
-#if defined(__GLIBC__) && !__GLIBC_PREREQ(2, 29)
-    // Glibc versions prior to 2.29 don't support posix_spawn_file_actions_addchdir_np, impacting:
-    //  - Amazon Linux 2 (EoL mid-2025)
-    return ENOTSUP;
-#elif defined(__ANDROID__) && __ANDROID_API__ < 34
-    // Android versions prior to 14 (API level 34) don't support posix_spawn_file_actions_addchdir_np
-    return ENOTSUP;
-#elif defined(__OpenBSD__) || defined(__QNX__)
-    // Currently missing as of:
-    //  - OpenBSD 7.5 (April 2024)
-    //  - QNX 8 (December 2023)
-    return ENOTSUP;
-#elif defined(__GLIBC__) || TARGET_OS_DARWIN || defined(__FreeBSD__) || defined(__ANDROID__) || defined(__musl__)
-    // Pre-standard posix_spawn_file_actions_addchdir_np version available in:
-    //  - Solaris 11.3 (October 2015)
-    //  - Glibc 2.29 (February 2019)
-    //  - macOS 10.15 (October 2019)
-    //  - musl 1.1.24 (October 2019)
-    //  - FreeBSD 13.1 (May 2022)
-    //  - Android 14 (API level 34) (October 2023)
-    return posix_spawn_file_actions_addchdir_np(file_actions, path);
-#else
-    // Standardized posix_spawn_file_actions_addchdir version (POSIX.1-2024, June 2024) available in:
-    //  - Solaris 11.4 (August 2018)
-    //  - NetBSD 10.0 (March 2024)
-    return posix_spawn_file_actions_addchdir(file_actions, path);
-#endif
-}
-
-static int _subprocess_posix_spawn_fallback(
-    pid_t * _Nonnull pid,
-    const char * _Nonnull exec_path,
-    const char * _Nullable working_directory,
-    const int file_descriptors[_Nonnull],
-    char * _Nullable const args[_Nonnull],
-    char * _Nullable const env[_Nullable],
-    gid_t * _Nullable process_group_id
-) {
-    // Setup stdin, stdout, and stderr
-    posix_spawn_file_actions_t file_actions;
-
-    int rc = posix_spawn_file_actions_init(&file_actions);
-    if (rc != 0) { return rc; }
-    if (file_descriptors[0] >= 0) {
-        rc = posix_spawn_file_actions_adddup2(
-            &file_actions, file_descriptors[0], STDIN_FILENO
-        );
-        if (rc != 0) { return rc; }
-    }
-    if (file_descriptors[2] >= 0) {
-        rc = posix_spawn_file_actions_adddup2(
-            &file_actions, file_descriptors[2], STDOUT_FILENO
-        );
-        if (rc != 0) { return rc; }
-    }
-    if (file_descriptors[4] >= 0) {
-        rc = posix_spawn_file_actions_adddup2(
-            &file_actions, file_descriptors[4], STDERR_FILENO
-        );
-        if (rc != 0) { return rc; }
-    }
-    // Setup working directory
-    if (working_directory != NULL) {
-        rc = _subprocess_addchdir_np(&file_actions, working_directory);
-        if (rc != 0) {
-            return rc;
-        }
-    }
-
-    // Close parent side
-    if (file_descriptors[1] >= 0) {
-        rc = posix_spawn_file_actions_addclose(&file_actions, file_descriptors[1]);
-        if (rc != 0) { return rc; }
-    }
-    if (file_descriptors[3] >= 0) {
-        rc = posix_spawn_file_actions_addclose(&file_actions, file_descriptors[3]);
-        if (rc != 0) { return rc; }
-    }
-    if (file_descriptors[5] >= 0) {
-        rc = posix_spawn_file_actions_addclose(&file_actions, file_descriptors[5]);
-        if (rc != 0) { return rc; }
-    }
-
-    // Setup spawnattr
-    posix_spawnattr_t spawn_attr;
-    rc = posix_spawnattr_init(&spawn_attr);
-    if (rc != 0) { return rc; }
-    // Masks
-    sigset_t no_signals;
-    sigset_t all_signals;
-    sigemptyset(&no_signals);
-    sigfillset(&all_signals);
-    rc = posix_spawnattr_setsigmask(&spawn_attr, &no_signals);
-    if (rc != 0) { return rc; }
-    rc = posix_spawnattr_setsigdefault(&spawn_attr, &all_signals);
-    if (rc != 0) { return rc; }
-    // Flags
-    short flags = POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF;
-    if (process_group_id != NULL) {
-        flags |= POSIX_SPAWN_SETPGROUP;
-        rc = posix_spawnattr_setpgroup(&spawn_attr, *process_group_id);
-        if (rc != 0) { return rc; }
-    }
-    rc = posix_spawnattr_setflags(&spawn_attr, flags);
-
-    // Spawn!
-    rc = posix_spawn(
-        pid, exec_path,
-        &file_actions, &spawn_attr,
-        args, env
-    );
-    posix_spawn_file_actions_destroy(&file_actions);
-    posix_spawnattr_destroy(&spawn_attr);
-    return rc;
-}
-#endif // _POSIX_SPAWN
 
 int _subprocess_fork_exec(
     pid_t * _Nonnull pid,
+    int * _Nonnull pidfd,
     const char * _Nonnull exec_path,
     const char * _Nullable working_directory,
     const int file_descriptors[_Nonnull],
@@ -470,32 +333,6 @@ int _subprocess_fork_exec(
     write(pipefd[1], &error, sizeof(error));\
     close(pipefd[1]); \
     _exit(EXIT_FAILURE)
-
-    int require_pre_fork = _subprocess_is_addchdir_np_available() == 0 ||
-        uid != NULL ||
-        gid != NULL ||
-        process_group_id != NULL ||
-        (number_of_sgroups > 0 && sgroups != NULL) ||
-        create_session ||
-        configurator != NULL;
-
-#if _POSIX_SPAWN
-    // If posix_spawn is available on this platform and
-    // we do not require prefork, use posix_spawn if possible.
-    //
-    // (Glibc's posix_spawn does not support
-    // `POSIX_SPAWN_SETEXEC` therefore we have to keep
-    // using fork/exec if `require_pre_fork` is true.
-    if (require_pre_fork == 0) {
-        return _subprocess_posix_spawn_fallback(
-            pid, exec_path,
-            working_directory,
-            file_descriptors,
-            args, env,
-            process_group_id
-        );
-    }
-#endif
 
     // Setup pipe to catch exec failures from child
     int pipefd[2];
@@ -557,8 +394,6 @@ int _subprocess_fork_exec(
 
     if (childPid == 0) {
         // Child process
-        close(pipefd[0]);  // Close unused read end
-
         // Reset signal handlers
         for (int signo = 1; signo < _SUBPROCESS_SIG_MAX; signo++) {
             if (signo == SIGKILL || signo == SIGSTOP) {
@@ -620,25 +455,31 @@ int _subprocess_fork_exec(
         // Bind stdin, stdout, and stderr
         if (file_descriptors[0] >= 0) {
             rc = dup2(file_descriptors[0], STDIN_FILENO);
-            if (rc < 0) {
-                write_error_and_exit;
-            }
+        } else {
+            rc = close(STDIN_FILENO);
         }
+        if (rc < 0) {
+            write_error_and_exit;
+        }
+
         if (file_descriptors[2] >= 0) {
             rc = dup2(file_descriptors[2], STDOUT_FILENO);
-            if (rc < 0) {
-                write_error_and_exit;
-            }
+        } else {
+            rc = close(STDOUT_FILENO);
         }
+        if (rc < 0) {
+            write_error_and_exit;
+        }
+
         if (file_descriptors[4] >= 0) {
             rc = dup2(file_descriptors[4], STDERR_FILENO);
-            if (rc < 0) {
-                int error = errno;
-                write(pipefd[1], &error, sizeof(error));
-                close(pipefd[1]);
-                _exit(EXIT_FAILURE);
-            }
+        } else {
+            rc = close(STDERR_FILENO);
         }
+        if (rc < 0) {
+            write_error_and_exit;
+        }
+
         // Close parent side
         if (file_descriptors[1] >= 0) {
             rc = close(file_descriptors[1]);
@@ -649,12 +490,11 @@ int _subprocess_fork_exec(
         if (file_descriptors[5] >= 0) {
             rc = close(file_descriptors[5]);
         }
-        if (rc != 0) {
-            int error = errno;
-            write(pipefd[1], &error, sizeof(error));
-            close(pipefd[1]);
-            _exit(EXIT_FAILURE);
+
+        if (rc < 0) {
+            write_error_and_exit;
         }
+
         // Run custom configuratior
         if (configurator != NULL) {
             configurator();
@@ -664,6 +504,10 @@ int _subprocess_fork_exec(
         // If we reached this point, something went wrong
         write_error_and_exit;
     } else {
+        int _pidfd = _pidfd_open(childPid);
+        if (_pidfd < 0) {
+            return errno;
+        }
         // Parent process
         close(pipefd[1]);  // Close unused write end
 
@@ -680,6 +524,7 @@ int _subprocess_fork_exec(
 
         // Communicate child pid back
         *pid = childPid;
+        *pidfd = _pidfd;
         // Read from the pipe until pipe is closed
         // either due to exec succeeds or error is written
         while (1) {
