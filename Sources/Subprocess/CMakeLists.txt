@@ -9,7 +9,7 @@
 ##
 ##===----------------------------------------------------------------------===##
 
-target_sources(Subprocess PRIVATE
+add_library(Subprocess
   Execution.swift
   Buffer.swift
   Error.swift
@@ -24,9 +24,9 @@ target_sources(Subprocess PRIVATE
   SubprocessFoundation/Output+Foundation.swift
   SubprocessFoundation/Input+Foundation.swift
   Configuration.swift)
-
 if(WIN32)
-  target_sources(Subprocess PRIVATE Platforms/Subprocess+Windows.swift)
+  target_sources(Subprocess PRIVATE
+    Platforms/Subprocess+Windows.swift)
 elseif(LINUX OR ANDROID)
   target_sources(Subprocess PRIVATE
     Platforms/Subprocess+Linux.swift
@@ -36,3 +36,13 @@ elseif(APPLE)
     Platforms/Subprocess+Darwin.swift
     Platforms/Subprocess+Unix.swift)
 endif()
+
+target_compile_options(Subprocess PRIVATE
+  "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-enable-experimental-feature StrictConcurrency>"
+  "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-enable-experimental-feature NonescapableTyeps>"
+  "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-enable-experimental-feature LifetimeDependence>"
+  "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-enable-experimental-feature Span>")
+target_link_libraries(Subprocess PUBLIC
+  _SubprocessCShims)
+target_link_libraries(Subprocess PRIVATE
+  SwiftSystem::SystemPackage)
