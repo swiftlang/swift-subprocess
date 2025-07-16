@@ -533,9 +533,17 @@ internal enum StringOrRawBytes: Sendable, Hashable {
     func createRawBytes() -> UnsafeMutablePointer<CChar> {
         switch self {
         case .string(let string):
+#if os(Windows)
+            return _strdup(string)
+#else
             return strdup(string)
+#endif
         case .rawBytes(let rawBytes):
+#if os(Windows)
+            return _strdup(rawBytes)
+#else
             return strdup(rawBytes)
+#endif
         }
     }
 
