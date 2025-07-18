@@ -210,25 +210,25 @@ Use it by setting `.asyncSequence` for `input`.
 
 This option means the `Subprocess` won’t collect or redirect output from the child process.
 
-Use it by setting `.discarded` for `input` or `error`.
+Use it by setting `.discarded` for `output` or `error`.
 
 #### `FileDescriptorOutput`
 
 This option writes output to a specified `FileDescriptor`. You can choose to have the `Subprocess` close the file descriptor after spawning.
 
-Use it by setting `.fileDescriptor(closeAfterSpawningProcess:)` for `input` or `error`.
+Use it by setting `.fileDescriptor(closeAfterSpawningProcess:)` for `output` or `error`.
 
 #### `StringOutput`
 
 This option collects output as a `String` with the given encoding.
 
-Use it by setting `.string` or `.string(limit:encoding:)` for `input` or `error`.
+Use it by setting `.string` or `.string(limit:encoding:)` for `output` or `error`.
 
 #### `BytesOutput`
 
 This option collects output as `[UInt8]`.
 
-Use it by setting `.bytes` or `.bytes(limit:)` for `input` or `error`.
+Use it by setting `.bytes` or `.bytes(limit:)` for `output` or `error`.
 
 
 ### Cross-platform support
