@@ -21,6 +21,11 @@
 #include <spawn.h>
 #endif
 
+#if TARGET_OS_LINUX
+#include <sys/epoll.h>
+#include <sys/eventfd.h>
+#endif // TARGET_OS_LINUX
+
 #if __has_include(<mach/vm_page_size.h>)
 vm_size_t _subprocess_vm_size(void);
 #endif
@@ -42,6 +47,7 @@ int _subprocess_spawn(
 
 int _subprocess_fork_exec(
     pid_t * _Nonnull pid,
+    int * _Nonnull pidfd,
     const char * _Nonnull exec_path,
     const char * _Nullable working_directory,
     const int file_descriptors[_Nonnull],
@@ -73,6 +79,8 @@ int _shims_snprintf(
     char * _Nonnull str1,
     char * _Nonnull str2
 );
+
+int _pidfd_send_signal(int pidfd, int signal);
 #endif
 
 #endif // !TARGET_OS_WINDOWS
