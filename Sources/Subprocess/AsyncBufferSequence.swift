@@ -23,10 +23,10 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
     public typealias Failure = any Swift.Error
     public typealias Element = Buffer
 
-    #if os(Windows)
-    internal typealias DiskIO = FileDescriptor
-    #else
+    #if canImport(Darwin)
     internal typealias DiskIO = DispatchIO
+    #else
+    internal typealias DiskIO = FileDescriptor
     #endif
 
     @_nonSendable
@@ -47,15 +47,16 @@ public struct AsyncBufferSequence: AsyncSequence, Sendable {
                 return self.buffer.removeFirst()
             }
             // Read more data
-            let data = try await self.diskIO.read(
-                upToLength: readBufferSize
+            let data = try await AsyncIO.shared.read(
+                from: self.diskIO,
+                upTo: readBufferSize
             )
             guard let data else {
                 // We finished reading. Close the file descriptor now
-                #if os(Windows)
-                try self.diskIO.close()
-                #else
+                #if canImport(Darwin)
                 self.diskIO.close()
+                #else
+                try self.diskIO.close()
                 #endif
                 return nil
             }
@@ -132,17 +133,7 @@ extension AsyncBufferSequence {
                         self.eofReached = true
                         return nil
                     }
-                    #if os(Windows)
-                    // Cast data to CodeUnit type
-                    let result = buffer.withUnsafeBytes { ptr in
-                        return Array(
-                            UnsafeBufferPointer<Encoding.CodeUnit>(
-                                start: ptr.bindMemory(to: Encoding.CodeUnit.self).baseAddress!,
-                                count: ptr.count / MemoryLayout<Encoding.CodeUnit>.size
-                            )
-                        )
-                    }
-                    #else
+                    #if canImport(Darwin)
                     // Unfortunately here we _have to_ copy the bytes out because
                     // DispatchIO (rightfully) reuses buffer, which means `buffer.data`
                     // has the same address on all iterations, therefore we can't directly
@@ -157,7 +148,13 @@ extension AsyncBufferSequence {
                             UnsafeBufferPointer(start: ptr.baseAddress?.assumingMemoryBound(to: Encoding.CodeUnit.self), count: elementCount)
                         )
                     }
-
+                    #else
+                    // Cast data to CodeUnitg type
+                    let result = buffer.withUnsafeBytes { ptr in
+                        return ptr.withMemoryRebound(to: Encoding.CodeUnit.self) { codeUnitPtr in
+                            return Array(codeUnitPtr)
+                        }
+                    }
                     #endif
                     return result.isEmpty ? nil : result
                 }
