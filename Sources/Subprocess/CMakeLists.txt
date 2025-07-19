@@ -17,6 +17,7 @@ add_library(Subprocess
   Result.swift
   IO/Output.swift
   IO/Input.swift
+  IO/AsyncIO.swift
   Span+Subprocess.swift
   AsyncBufferSequence.swift
   API.swift

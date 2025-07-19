@@ -10,7 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #if canImport(WinSDK)
-import WinSDK
+@preconcurrency import WinSDK
 #endif
 
 // Confitionally require Foundation due to `Bundle.module`
