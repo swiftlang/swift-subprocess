@@ -779,12 +779,13 @@ extension SubprocessUnixTests {
     @Test func testTerminateProcess() async throws {
         let stuckResult = try await Subprocess.run(
             // This will intentionally hang
-            .path("/bin/cat"),
+            .path("/bin/sleep"),
+            arguments: ["infinity"],
+            output: .discarded,
             error: .discarded
-        ) { subprocess, standardOutput in
+        ) { subprocess in
             // Make sure we can send signals to terminate the process
             try subprocess.send(signal: .terminate)
-            for try await _ in standardOutput {}
         }
         guard case .unhandledException(let exception) = stuckResult.terminationStatus else {
             Issue.record("Wrong termination status reported: \(stuckResult.terminationStatus)")

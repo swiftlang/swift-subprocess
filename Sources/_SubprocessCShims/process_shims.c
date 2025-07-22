@@ -16,6 +16,8 @@
 #define _GNU_SOURCE 1
 // For pidfd_open
 #include <sys/syscall.h>
+#include <sys/utsname.h>
+#include <linux/sched.h>
 #endif
 
 #include "include/process_shims.h"
@@ -28,7 +30,6 @@
 #include <unistd.h>
 #include <grp.h>
 #include <signal.h>
-#include <sys/wait.h>
 #include <signal.h>
 #include <string.h>
 #include <fcntl.h>
@@ -314,6 +315,46 @@ static int _pidfd_open(pid_t pid) {
     return syscall(SYS_pidfd_open, pid, 0);
 }
 
+// SYS_clone3 is only defined on Linux Kernel 5.3 and above
+// Define our dummy value if it's not available
+#ifndef SYS_clone3
+#define SYS_clone3 0xFFFF
+#endif
+
+static int _clone3(int *pidfd) {
+    struct clone_args args = {
+        .flags = CLONE_PIDFD,       // Get a pidfd referring to child
+        .pidfd = (uintptr_t)pidfd,  // Int pointer for the pidfd (int pidfd = -1;)
+        .exit_signal = SIGCHLD,     // Ensure parent gets SIGCHLD
+        .stack = 0,                 // No stack needed for separate address space
+        .stack_size = 0,
+        .parent_tid = 0,
+        .child_tid = 0,
+        .tls = 0
+    };
+
+    return syscall(SYS_clone3, &args, sizeof(args));
+}
+
+static int _linux_kernel_version_at_least(
+    int required_major,
+    int required_minor
+) {
+    struct utsname buf;
+    if (uname(&buf) != 0) {
+        return 0;  // Cannot determine kernel version
+    }
+
+    int major = 0, minor = 0;
+    if (sscanf(buf.release, "%d.%d", &major, &minor) < 2) {
+        return 0;
+    }
+
+    if (major > required_major) return 1;
+    if (major == required_major && minor >= required_minor) return 1;
+    return 0;
+}
+
 int _subprocess_fork_exec(
     pid_t * _Nonnull pid,
     int * _Nonnull pidfd,
@@ -380,11 +421,21 @@ int _subprocess_fork_exec(
         return errno;
     }
 
-    // Finally, fork
+    // Finally, fork / clone
+    int _pidfd = -1;
+    pid_t childPid = -1;
+    if (_linux_kernel_version_at_least(5, 3)) {
+        // One Linux 5.3 and above, use the new clone3 syscall
+        // So we can atomically retrieve pidfd
+        childPid = _clone3(&_pidfd);
+    } else {
+        // On older linux versions, fall back to fork()
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated"
-    pid_t childPid = fork();
+        childPid = fork();
 #pragma GCC diagnostic pop
+    }
+
     if (childPid < 0) {
         // Fork failed
         close(pipefd[0]);
@@ -504,10 +555,15 @@ int _subprocess_fork_exec(
         // If we reached this point, something went wrong
         write_error_and_exit;
     } else {
-        int _pidfd = _pidfd_open(childPid);
-        if (_pidfd < 0) {
-            return errno;
+        // On Linux 5.3 and lower, we have to fetch pidfd separately
+        // Newer Linux supports clone3 which returns pidfd directly
+        if (_linux_kernel_version_at_least(5, 3) == 0) {
+            _pidfd = _pidfd_open(childPid);
+            if (_pidfd < 0) {
+                return errno;
+            }
         }
+
         // Parent process
         close(pipefd[1]);  // Close unused write end
 
