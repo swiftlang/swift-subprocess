@@ -110,7 +110,7 @@ extension Execution {
         }
         let pid = shouldSendToProcessGroup ? -(processIdentifier.value) : processIdentifier.value
 
-        #if os(Linux)
+        #if os(Linux) || os(Android)
         // On linux, use pidfd_send_signal if possible
         if shouldSendToProcessGroup {
             // pidfd_send_signal does not support sending signal to process group

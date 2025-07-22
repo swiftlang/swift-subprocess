@@ -23,7 +23,9 @@
 
 #if TARGET_OS_LINUX
 #include <sys/epoll.h>
+#include <sys/wait.h>
 #include <sys/eventfd.h>
+#include <sys/signalfd.h>
 #endif // TARGET_OS_LINUX
 
 #if __has_include(<mach/vm_page_size.h>)
@@ -81,6 +83,13 @@ int _shims_snprintf(
 );
 
 int _pidfd_send_signal(int pidfd, int signal);
+
+// P_PIDFD is only defined on Linux Kernel 5.4 and above
+// Define our dummy value if it's not available
+#ifndef P_PIDFD
+#define P_PIDFD 3
+#endif
+
 #endif
 
 #endif // !TARGET_OS_WINDOWS
