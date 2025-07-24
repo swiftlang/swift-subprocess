@@ -57,7 +57,7 @@ final class AsyncIO: Sendable {
                     )
                     return
                 }
-                if let data = data {
+                if let data {
                     if buffer.isEmpty {
                         buffer = data
                     } else {
@@ -81,8 +81,8 @@ final class AsyncIO: Sendable {
         to diskIO: borrowing IOChannel
     ) async throws -> Int {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int, any Error>) in
-            let dispatchData = span.withUnsafeBytes {
-                return DispatchData(
+            span.withUnsafeBytes {
+                let dispatchData = DispatchData(
                     bytesNoCopy: $0,
                     deallocator: .custom(
                         nil,
@@ -91,12 +91,13 @@ final class AsyncIO: Sendable {
                         }
                     )
                 )
-            }
-            self.write(dispatchData, to: diskIO) { writtenLength, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume(returning: writtenLength)
+
+                self.write(dispatchData, to: diskIO) { writtenLength, error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume(returning: writtenLength)
+                    }
                 }
             }
         }
@@ -108,8 +109,8 @@ final class AsyncIO: Sendable {
         to diskIO: borrowing IOChannel
     ) async throws -> Int {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int, any Error>) in
-            let dispatchData = array.withUnsafeBytes {
-                return DispatchData(
+            array.withUnsafeBytes {
+                let dispatchData = DispatchData(
                     bytesNoCopy: $0,
                     deallocator: .custom(
                         nil,
@@ -118,12 +119,13 @@ final class AsyncIO: Sendable {
                         }
                     )
                 )
-            }
-            self.write(dispatchData, to: diskIO) { writtenLength, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume(returning: writtenLength)
+
+                self.write(dispatchData, to: diskIO) { writtenLength, error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume(returning: writtenLength)
+                    }
                 }
             }
         }

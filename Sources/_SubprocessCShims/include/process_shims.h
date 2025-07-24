@@ -90,6 +90,7 @@ typedef int BOOL;
 #endif
 
 BOOL _subprocess_windows_send_vm_close(DWORD pid);
+unsigned int _subprocess_windows_get_errno(void);
 
 #endif
 

@@ -152,7 +152,18 @@ public struct BytesOutput: OutputProtocol {
     internal func captureOutput(
         from diskIO: consuming IOChannel
     ) async throws -> [UInt8] {
-        let result = try await AsyncIO.shared.read(from: diskIO, upTo: self.maxSize)
+        #if canImport(Darwin)
+        var result: DispatchData? = nil
+        #else
+        var result: [UInt8]? = nil
+        #endif
+        do {
+            result = try await AsyncIO.shared.read(from: diskIO, upTo: self.maxSize)
+        } catch {
+            try diskIO.safelyClose()
+            throw error
+        }
+
         try diskIO.safelyClose()
         #if canImport(Darwin)
         return result?.array() ?? []
@@ -281,9 +292,19 @@ extension OutputProtocol {
         if let bytesOutput = self as? BytesOutput {
             return try await bytesOutput.captureOutput(from: diskIO) as! Self.OutputType
         }
-        // Force unwrap is safe here because only `OutputType.self == Void` would
-        // have nil `IOChannel`
-        let result = try await AsyncIO.shared.read(from: diskIO, upTo: self.maxSize)
+
+        #if canImport(Darwin)
+        var result: DispatchData? = nil
+        #else
+        var result: [UInt8]? = nil
+        #endif
+        do {
+            result = try await AsyncIO.shared.read(from: diskIO, upTo: self.maxSize)
+        } catch {
+            try diskIO.safelyClose()
+            throw error
+        }
+
         try diskIO.safelyClose()
         #if canImport(Darwin)
         return try self.output(from: result ?? .empty)

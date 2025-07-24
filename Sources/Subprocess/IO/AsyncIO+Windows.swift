@@ -19,6 +19,7 @@
 @preconcurrency import SystemPackage
 #endif
 
+import _SubprocessCShims
 import Synchronization
 internal import Dispatch
 @preconcurrency import WinSDK
@@ -71,7 +72,11 @@ final class AsyncIO: @unchecked Sendable {
         // Create monitor thread
         let threadContext = MonitorThreadContext(ioCompletionPort: port)
         let threadContextPtr = Unmanaged.passRetained(threadContext)
-        let threadHandle = CreateThread(nil, 0, { args in
+        /// Microsoft documentation for `CreateThread` states:
+        /// > A thread in an executable that calls the C run-time library (CRT)
+        /// > should use the _beginthreadex and _endthreadex functions for
+        /// > thread management rather than CreateThread and ExitThread
+        let threadHandleValue = _beginthreadex(nil, 0, { args in
             func reportError(_ error: SubprocessError) {
                 _registration.withLock { store in
                     for continuation in store.values {
@@ -126,18 +131,23 @@ final class AsyncIO: @unchecked Sendable {
                     break
                 }
                 // Notify the continuations
-                _registration.withLock { store in
+                let continuation = _registration.withLock { store -> SignalStream.Continuation? in
                     if let continuation = store[targetFileDescriptor] {
-                        continuation.yield(bytesTransferred)
+                        return continuation
                     }
+                    return nil
                 }
+                continuation?.yield(bytesTransferred)
             }
             return 0
         }, threadContextPtr.toOpaque(), 0, nil)
-        guard let threadHandle = threadHandle else {
+        guard threadHandleValue > 0,
+            let threadHandle = HANDLE(bitPattern: threadHandleValue) else {
+            // _beginthreadex uses errno instead of GetLastError()
+            let capturedError = _subprocess_windows_get_errno()
             let error = SubprocessError(
-                code: .init(.asyncIOFailed("CreateThread failed")),
-                underlyingError: .init(rawValue: GetLastError())
+                code: .init(.asyncIOFailed("_beginthreadex failed")),
+                underlyingError: .init(rawValue: capturedError)
             )
             self.monitorThread = .failure(error)
             return
@@ -156,10 +166,10 @@ final class AsyncIO: @unchecked Sendable {
             return
         }
         PostQueuedCompletionStatus(
-            ioPort,
-            0,
-            shutdownPort,
-            nil
+            ioPort,         // CompletionPort
+            0,              // Number of bytes transferred.
+            shutdownPort,   // Completion key to post status
+            nil             // Overlapped
         )
         // Wait for monitor thread to exit
         WaitForSingleObject(monitorThreadHandle, INFINITE)
@@ -246,26 +256,24 @@ final class AsyncIO: @unchecked Sendable {
         var signalStream = self.registerHandle(handle).makeAsyncIterator()
 
         while true {
+            // We use an empty `_OVERLAPPED()` here because `ReadFile` below
+            // only reads non-seekable files, aka pipes.
             var overlapped = _OVERLAPPED()
             let succeed = try resultBuffer.withUnsafeMutableBufferPointer { bufferPointer in
                 // Get a pointer to the memory at the specified offset
                 // Windows ReadFile uses DWORD for target count, which means we can only
                 // read up to DWORD (aka UInt32) max.
-                let targetCount: DWORD
-                if MemoryLayout<Int>.size == MemoryLayout<Int32>.size {
-                    // On 32 bit systems we don't have to worry about overflowing
-                    targetCount = DWORD(truncatingIfNeeded: bufferPointer.count - readLength)
-                } else {
-                    // On 64 bit systems we need to cap the count at DWORD max
-                    targetCount = DWORD(truncatingIfNeeded: min(bufferPointer.count - readLength, Int(UInt32.max)))
-                }
+                let targetCount: DWORD = self.calculateRemainingCount(
+                    totalCount: bufferPointer.count,
+                    readCount: readLength
+                )
 
                 let offsetAddress = bufferPointer.baseAddress!.advanced(by: readLength)
                 // Read directly into the buffer at the offset
                 return ReadFile(
                     handle,
                     offsetAddress,
-                    DWORD(truncatingIfNeeded: targetCount),
+                    targetCount,
                     nil,
                     &overlapped
                 )
@@ -300,7 +308,7 @@ final class AsyncIO: @unchecked Sendable {
                 return resultBuffer
             } else {
                 // Read some data
-                readLength += Int(bytesRead)
+                readLength += Int(truncatingIfNeeded: bytesRead)
                 if maxLength == .max {
                     // Grow resultBuffer if needed
                     guard Double(readLength) > 0.8 * Double(resultBuffer.count) else {
@@ -333,24 +341,22 @@ final class AsyncIO: @unchecked Sendable {
         var signalStream = self.registerHandle(diskIO.channel).makeAsyncIterator()
         var writtenLength: Int = 0
         while true {
+            // We use an empty `_OVERLAPPED()` here because `WriteFile` below
+            // only writes to non-seekable files, aka pipes.
             var overlapped = _OVERLAPPED()
             let succeed = try span.withUnsafeBytes { ptr in
                 // Windows WriteFile uses DWORD for target count
                 // which means we can only write up to DWORD max
-                let remainingLength: DWORD
-                if MemoryLayout<Int>.size == MemoryLayout<Int32>.size {
-                    // On 32 bit systems we don't have to worry about overflowing
-                    remainingLength = DWORD(truncatingIfNeeded: ptr.count - writtenLength)
-                } else {
-                    // On 64 bit systems we need to cap the count at DWORD max
-                    remainingLength = DWORD(truncatingIfNeeded: min(ptr.count - writtenLength, Int(DWORD.max)))
-                }
+                let remainingLength: DWORD = self.calculateRemainingCount(
+                    totalCount: ptr.count,
+                    readCount: writtenLength
+                )
 
                 let startPtr = ptr.baseAddress!.advanced(by: writtenLength)
                 return WriteFile(
                     handle,
                     startPtr,
-                    DWORD(truncatingIfNeeded: remainingLength),
+                    remainingLength,
                     nil,
                     &overlapped
                 )
@@ -371,7 +377,7 @@ final class AsyncIO: @unchecked Sendable {
             // Now wait for read to finish
             let bytesWritten: DWORD = try await signalStream.next() ?? 0
 
-            writtenLength += Int(bytesWritten)
+            writtenLength += Int(truncatingIfNeeded: bytesWritten)
             if writtenLength >= span.byteCount {
                 return writtenLength
             }
@@ -387,23 +393,21 @@ final class AsyncIO: @unchecked Sendable {
         var signalStream = self.registerHandle(diskIO.channel).makeAsyncIterator()
         var writtenLength: Int = 0
         while true {
+            // We use an empty `_OVERLAPPED()` here because `WriteFile` below
+            // only writes to non-seekable files, aka pipes.
             var overlapped = _OVERLAPPED()
             let succeed = try bytes.withUnsafeBytes { ptr in
                 // Windows WriteFile uses DWORD for target count
                 // which means we can only write up to DWORD max
-                let remainingLength: DWORD
-                if MemoryLayout<Int>.size == MemoryLayout<Int32>.size {
-                    // On 32 bit systems we don't have to worry about overflowing
-                    remainingLength = DWORD(truncatingIfNeeded: ptr.count - writtenLength)
-                } else {
-                    // On 64 bit systems we need to cap the count at DWORD max
-                    remainingLength = DWORD(truncatingIfNeeded: min(ptr.count - writtenLength, Int(DWORD.max)))
-                }
+                let remainingLength: DWORD = self.calculateRemainingCount(
+                    totalCount: ptr.count,
+                    readCount: writtenLength
+                )
                 let startPtr = ptr.baseAddress!.advanced(by: writtenLength)
                 return WriteFile(
                     handle,
                     startPtr,
-                    DWORD(truncatingIfNeeded: remainingLength),
+                    remainingLength,
                     nil,
                     &overlapped
                 )
@@ -423,10 +427,23 @@ final class AsyncIO: @unchecked Sendable {
             }
             // Now wait for read to finish
             let bytesWritten: DWORD = try await signalStream.next() ?? 0
-            writtenLength += Int(bytesWritten)
+            writtenLength += Int(truncatingIfNeeded: bytesWritten)
             if writtenLength >= bytes.count {
                 return writtenLength
             }
+        }
+    }
+
+    // Windows ReadFile uses DWORD for target count, which means we can only
+    // read up to DWORD (aka UInt32) max.
+    private func calculateRemainingCount(totalCount: Int, readCount: Int) -> DWORD {
+        // We support both 32bit and 64bit systems for Windows
+        if MemoryLayout<Int>.size == MemoryLayout<Int32>.size {
+            // On 32 bit systems we don't have to worry about overflowing
+            return DWORD(truncatingIfNeeded: totalCount - readCount)
+        } else {
+            // On 64 bit systems we need to cap the count at DWORD max
+            return DWORD(truncatingIfNeeded: min(totalCount - readCount, Int(DWORD.max)))
         }
     }
 }

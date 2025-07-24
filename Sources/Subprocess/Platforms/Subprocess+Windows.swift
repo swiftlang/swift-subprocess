@@ -358,7 +358,7 @@ public struct PlatformOptions: Sendable {
         public static let inherit: Self = .init(.inherit)
     }
 
-    /// `ConsoleBehavior` defines how should the window appear
+    /// `WindowStyle` defines how should the window appear
     /// when spawning a new process
     public struct WindowStyle: Sendable, Hashable {
         internal enum Storage: Sendable, Hashable {

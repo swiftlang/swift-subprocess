@@ -118,11 +118,7 @@ final class AsyncIO: Sendable {
             shutdownFileDescriptor: shutdownFileDescriptor
         )
         let threadContext = Unmanaged.passRetained(context)
-#if os(FreeBSD) || os(OpenBSD)
-        var thread: pthread_t? = nil
-#else
         var thread: pthread_t = pthread_t()
-#endif
         rc = pthread_create(&thread, nil, { args in
             func reportError(_ error: SubprocessError) {
                 _registration.withLock { store in
@@ -175,11 +171,13 @@ final class AsyncIO: Sendable {
                     }
 
                     // Notify the continuation
-                    _registration.withLock { store in
+                    let continuation = _registration.withLock { store -> SignalStream.Continuation? in
                         if let continuation = store[targetFileDescriptor] {
-                            continuation.yield(true)
+                            return continuation
                         }
+                        return nil
                     }
+                    continuation?.yield(true)
                 }
             }
 
@@ -194,16 +192,10 @@ final class AsyncIO: Sendable {
             return
         }
 
-#if os(FreeBSD) || os(OpenBSD)
-        let monitorThread = thread!
-#else
-        let monitorThread = thread
-#endif
-
         let state = State(
             epollFileDescriptor: epollFileDescriptor,
             shutdownFileDescriptor: shutdownFileDescriptor,
-            monitorThread: monitorThread
+            monitorThread: thread
         )
         self.state = .success(state)
 
@@ -222,6 +214,8 @@ final class AsyncIO: Sendable {
         _ = _SubprocessCShims.write(currentState.shutdownFileDescriptor, &one, MemoryLayout<UInt64>.stride)
         // Cleanup the monitor thread
         pthread_join(currentState.monitorThread, nil)
+        close(currentState.epollFileDescriptor)
+        close(currentState.shutdownFileDescriptor)
     }
 
 
@@ -394,7 +388,7 @@ extension AsyncIO {
                     resultBuffer.removeLast(resultBuffer.count - readLength)
                     return resultBuffer
                 } else {
-                    if errno == EAGAIN || errno == EWOULDBLOCK {
+                    if self.shouldWaitForNextSignal(with: errno) {
                         // No more data for now wait for the next signal
                         break
                     } else {
@@ -443,7 +437,7 @@ extension AsyncIO {
                         return writtenLength
                     }
                 } else {
-                    if errno == EAGAIN || errno == EWOULDBLOCK {
+                    if self.shouldWaitForNextSignal(with: errno) {
                         // No more data for now wait for the next signal
                         break
                     } else {
@@ -486,7 +480,7 @@ extension AsyncIO {
                         return writtenLength
                     }
                 } else {
-                    if errno == EAGAIN || errno == EWOULDBLOCK {
+                    if self.shouldWaitForNextSignal(with: errno) {
                         // No more data for now wait for the next signal
                         break
                     } else {
@@ -500,6 +494,11 @@ extension AsyncIO {
         return 0
     }
 #endif
+
+    @inline(__always)
+    private func shouldWaitForNextSignal(with error: CInt) -> Bool {
+        return error == EAGAIN || error == EWOULDBLOCK || error == EINTR
+    }
 }
 
 extension Array : AsyncIO._ContiguousBytes where Element == UInt8 {}

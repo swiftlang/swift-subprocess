@@ -602,7 +602,7 @@ internal func _safelyClose(_ target: _CloseTarget) throws {
     #if canImport(WinSDK)
     case .handle(let handle):
         /// Windows does not provide a “deregistration” API (the reverse of
-        /// `CreateIoCompletionPort`) for handles and it it reuses HANDLE
+        /// `CreateIoCompletionPort`) for handles and it reuses HANDLE
         /// values once they are closed. Since we rely on the handle value
         /// as the completion key for `CreateIoCompletionPort`, we should
         /// remove the registration when the handle is closed to allow
@@ -688,7 +688,7 @@ internal struct IODescriptor: ~Copyable {
             type: .stream,
             fileDescriptor: self.platformDescriptor(),
             queue: .global(),
-            cleanupHandler: { error in
+            cleanupHandler: { @Sendable error in
                 // Close the file descriptor
                 if shouldClose {
                     try? closeFd.close()

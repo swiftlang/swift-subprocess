@@ -285,11 +285,7 @@ internal func monitorProcessTermination(
 
 // Small helper to provide thread-safe access to the child process to continuations map as well as a condition variable to suspend the calling thread when there are no subprocesses to wait for. Note that Mutex cannot be used here because we need the semantics of pthread_cond_wait, which requires passing the pthread_mutex_t instance as a parameter, something the Mutex API does not provide access to.
 private final class ChildProcessContinuations: Sendable {
-    #if os(FreeBSD) || os(OpenBSD)
-    typealias MutexType = pthread_mutex_t?
-    #else
     typealias MutexType = pthread_mutex_t
-    #endif
 
     private nonisolated(unsafe) var continuations = [pid_t: CheckedContinuation<TerminationStatus, any Error>]()
     private nonisolated(unsafe) let mutex = UnsafeMutablePointer<MutexType>.allocate(capacity: 1)

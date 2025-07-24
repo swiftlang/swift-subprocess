@@ -153,7 +153,7 @@ extension AsyncBufferSequence {
                         )
                     }
                     #else
-                    // Cast data to CodeUnitg type
+                    // Cast data to CodeUnit type
                     let result = buffer.withUnsafeBytes { ptr in
                         return ptr.withMemoryRebound(to: Encoding.CodeUnit.self) { codeUnitPtr in
                             return Array(codeUnitPtr)
