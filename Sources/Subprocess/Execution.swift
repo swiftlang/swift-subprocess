@@ -34,23 +34,11 @@ public struct Execution: Sendable {
     /// The process identifier of the current execution
     public let processIdentifier: ProcessIdentifier
 
-    #if os(Windows)
-    internal let consoleBehavior: PlatformOptions.ConsoleBehavior
-
-    init(
-        processIdentifier: ProcessIdentifier,
-        consoleBehavior: PlatformOptions.ConsoleBehavior
-    ) {
-        self.processIdentifier = processIdentifier
-        self.consoleBehavior = consoleBehavior
-    }
-    #else
     init(
         processIdentifier: ProcessIdentifier
     ) {
         self.processIdentifier = processIdentifier
     }
-    #endif  // os(Windows)
 }
 
 // MARK: - Output Capture
