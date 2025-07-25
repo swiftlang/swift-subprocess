@@ -29,6 +29,8 @@ import Musl
 
 internal import Dispatch
 
+import Synchronization
+
 /// A collection of configurations parameters to use when
 /// spawning a subprocess.
 public struct Configuration: Sendable {
@@ -775,6 +777,16 @@ internal struct IOChannel: ~Copyable, @unchecked Sendable {
     }
 }
 
+#if canImport(WinSDK)
+internal enum PipeNameCounter {
+    private static let value = Atomic<UInt64>(0)
+
+    internal static func nextValue() -> UInt64 {
+        return self.value.add(1, ordering: .relaxed).newValue
+    }
+}
+#endif
+
 internal struct CreatedPipe: ~Copyable {
     internal enum Purpose: CustomStringConvertible {
         /// This pipe is used for standard input. This option maps to
@@ -817,77 +829,96 @@ internal struct CreatedPipe: ~Copyable {
 
     internal init(closeWhenDone: Bool, purpose: Purpose) throws {
         #if canImport(WinSDK)
-        // On Windows, we need to create a named pipe
-        let pipeName = "\\\\.\\pipe\\subprocess-\(purpose)-\(Int.random(in: .min ..< .max))"
-        var saAttributes: SECURITY_ATTRIBUTES = SECURITY_ATTRIBUTES()
-        saAttributes.nLength = DWORD(MemoryLayout<SECURITY_ATTRIBUTES>.size)
-        saAttributes.bInheritHandle = true
-        saAttributes.lpSecurityDescriptor = nil
+        /// On Windows, we need to create a named pipe.
+        /// According to Microsoft documentation:
+        /// > Asynchronous (overlapped) read and write operations are
+        /// > not supported by anonymous pipes.
+        /// See https://learn.microsoft.com/en-us/windows/win32/ipc/anonymous-pipe-operations
+        while true {
+            /// Windows named pipes are system wide. To avoid creating two pipes with the same
+            /// name, create the pipe with `FILE_FLAG_FIRST_PIPE_INSTANCE` such that it will
+            /// return error `ERROR_ACCESS_DENIED` if we try to create another pipe with the same name.
+            let pipeName = "\\\\.\\pipe\\LOCAL\\subprocess-\(purpose)-\(PipeNameCounter.nextValue())"
+            var saAttributes: SECURITY_ATTRIBUTES = SECURITY_ATTRIBUTES()
+            saAttributes.nLength = DWORD(MemoryLayout<SECURITY_ATTRIBUTES>.size)
+            saAttributes.bInheritHandle = true
+            saAttributes.lpSecurityDescriptor = nil
 
-        let parentEnd = pipeName.withCString(
-            encodedAs: UTF16.self
-        ) { pipeNameW in
-            // Use OVERLAPPED for async IO
-            var openMode: DWORD = DWORD(FILE_FLAG_OVERLAPPED)
-            switch purpose {
-            case .input:
-                openMode |= DWORD(PIPE_ACCESS_OUTBOUND)
-            case .output:
-                openMode |= DWORD(PIPE_ACCESS_INBOUND)
+            let parentEnd = pipeName.withCString(
+                encodedAs: UTF16.self
+            ) { pipeNameW in
+                // Use OVERLAPPED for async IO
+                var openMode: DWORD = DWORD(FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE)
+                switch purpose {
+                case .input:
+                    openMode |= DWORD(PIPE_ACCESS_OUTBOUND)
+                case .output:
+                    openMode |= DWORD(PIPE_ACCESS_INBOUND)
+                }
+
+                return CreateNamedPipeW(
+                    pipeNameW,
+                    openMode,
+                    DWORD(PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT),
+                    1, // Max instance,
+                    DWORD(readBufferSize),
+                    DWORD(readBufferSize),
+                    0,
+                    &saAttributes
+                )
+            }
+            guard let parentEnd, parentEnd != INVALID_HANDLE_VALUE else {
+                // Since we created the pipe with `FILE_FLAG_FIRST_PIPE_INSTANCE`,
+                // if there's already a pipe with the same name, GetLastError()
+                // will be set to FILE_FLAG_FIRST_PIPE_INSTANCE. In this case,
+                // try again with a different name.
+                let errorCode = GetLastError()
+                guard errorCode != FILE_FLAG_FIRST_PIPE_INSTANCE else {
+                    continue
+                }
+                // Throw all other errors
+                throw SubprocessError(
+                    code: .init(.asyncIOFailed("CreateNamedPipeW failed")),
+                    underlyingError: .init(rawValue: GetLastError())
+                )
             }
 
-            return CreateNamedPipeW(
-                pipeNameW,
-                openMode,
-                DWORD(PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT),
-                1, // Max instance,
-                DWORD(readBufferSize),
-                DWORD(readBufferSize),
-                0,
-                &saAttributes
-            )
-        }
-        guard let parentEnd, parentEnd != INVALID_HANDLE_VALUE else {
-            throw SubprocessError(
-                code: .init(.asyncIOFailed("CreateNamedPipeW failed")),
-                underlyingError: .init(rawValue: GetLastError())
-            )
-        }
+            let childEnd = pipeName.withCString(
+                encodedAs: UTF16.self
+            ) { pipeNameW in
+                var targetAccess: DWORD = 0
+                switch purpose {
+                case .input:
+                    targetAccess = DWORD(GENERIC_READ)
+                case .output:
+                    targetAccess = DWORD(GENERIC_WRITE)
+                }
 
-        let childEnd = pipeName.withCString(
-            encodedAs: UTF16.self
-        ) { pipeNameW in
-            var targetAccess: DWORD = 0
+                return CreateFileW(
+                    pipeNameW,
+                    targetAccess,
+                    0,
+                    &saAttributes,
+                    DWORD(OPEN_EXISTING),
+                    DWORD(FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED),
+                    nil
+                )
+            }
+            guard let childEnd, childEnd != INVALID_HANDLE_VALUE else {
+                throw SubprocessError(
+                    code: .init(.asyncIOFailed("CreateFileW failed")),
+                    underlyingError: .init(rawValue: GetLastError())
+                )
+            }
             switch purpose {
             case .input:
-                targetAccess = DWORD(GENERIC_READ)
+                self._readFileDescriptor = .init(childEnd, closeWhenDone: closeWhenDone)
+                self._writeFileDescriptor = .init(parentEnd, closeWhenDone: closeWhenDone)
             case .output:
-                targetAccess = DWORD(GENERIC_WRITE)
+                self._readFileDescriptor = .init(parentEnd, closeWhenDone: closeWhenDone)
+                self._writeFileDescriptor = .init(childEnd, closeWhenDone: closeWhenDone)
             }
-
-            return CreateFileW(
-                pipeNameW,
-                targetAccess,
-                0,
-                &saAttributes,
-                DWORD(OPEN_EXISTING),
-                DWORD(FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED),
-                nil
-            )
-        }
-        guard let childEnd, childEnd != INVALID_HANDLE_VALUE else {
-            throw SubprocessError(
-                code: .init(.asyncIOFailed("CreateFileW failed")),
-                underlyingError: .init(rawValue: GetLastError())
-            )
-        }
-        switch purpose {
-        case .input:
-            self._readFileDescriptor = .init(childEnd, closeWhenDone: closeWhenDone)
-            self._writeFileDescriptor = .init(parentEnd, closeWhenDone: closeWhenDone)
-        case .output:
-            self._readFileDescriptor = .init(parentEnd, closeWhenDone: closeWhenDone)
-            self._writeFileDescriptor = .init(childEnd, closeWhenDone: closeWhenDone)
+            return
         }
         #else
         let pipe = try FileDescriptor.pipe()

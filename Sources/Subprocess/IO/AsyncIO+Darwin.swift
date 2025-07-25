@@ -46,7 +46,7 @@ final class AsyncIO: Sendable {
             dispatchIO.read(
                 offset: 0,
                 length: maxLength,
-                queue: .global()
+                queue: DispatchQueue(label: "SubprocessReadQueue")
             ) { done, data, error in
                 if error != 0 {
                     continuation.resume(
