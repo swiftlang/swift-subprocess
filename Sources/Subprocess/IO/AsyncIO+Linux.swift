@@ -214,8 +214,16 @@ final class AsyncIO: Sendable {
         _ = _SubprocessCShims.write(currentState.shutdownFileDescriptor, &one, MemoryLayout<UInt64>.stride)
         // Cleanup the monitor thread
         pthread_join(currentState.monitorThread, nil)
-        close(currentState.epollFileDescriptor)
-        close(currentState.shutdownFileDescriptor)
+        var closeError: CInt = 0
+        if _SubprocessCShims.close(currentState.epollFileDescriptor) != 0 {
+            closeError = errno
+        }
+        if _SubprocessCShims.close(currentState.shutdownFileDescriptor) != 0 {
+            closeError = errno
+        }
+        if closeError != 0 {
+            fatalError("Failed to close epollfd: \(String(cString: strerror(closeError)))")
+        }
     }
 
 

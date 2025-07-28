@@ -870,10 +870,10 @@ internal struct CreatedPipe: ~Copyable {
             guard let parentEnd, parentEnd != INVALID_HANDLE_VALUE else {
                 // Since we created the pipe with `FILE_FLAG_FIRST_PIPE_INSTANCE`,
                 // if there's already a pipe with the same name, GetLastError()
-                // will be set to FILE_FLAG_FIRST_PIPE_INSTANCE. In this case,
+                // will be set to ERROR_ACCESS_DENIED. In this case,
                 // try again with a different name.
                 let errorCode = GetLastError()
-                guard errorCode != FILE_FLAG_FIRST_PIPE_INSTANCE else {
+                guard errorCode != ERROR_ACCESS_DENIED else {
                     continue
                 }
                 // Throw all other errors

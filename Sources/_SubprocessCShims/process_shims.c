@@ -689,7 +689,14 @@ int _subprocess_fork_exec(
                 // exec worked!
                 close(pipefd[0]);
                 return 0;
-            } else if (read_rc > 0) {
+            }
+            // if we reach this point, exec failed.
+            // Since we already have the child pid (fork succeed), reap the child
+            // This mimic posix_spawn behavior
+            siginfo_t info;
+            waitid(P_PID, childPid, &info, WEXITED);
+
+            if (read_rc > 0) {
                 // Child exec failed and reported back
                 close(pipefd[0]);
                 return childError;

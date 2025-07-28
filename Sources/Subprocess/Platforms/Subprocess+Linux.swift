@@ -131,14 +131,6 @@ extension Configuration {
                         underlyingError: .init(rawValue: spawnError)
                     )
                 }
-                func captureError(_ work: () throws -> Void) -> (any Swift.Error)? {
-                    do {
-                        try work()
-                        return nil
-                    } catch {
-                        return error
-                    }
-                }
                 // After spawn finishes, close all child side fds
                 try self.safelyCloseMultiple(
                     inputRead: inputReadFileDescriptor,
@@ -267,7 +259,7 @@ extension String {
 internal func monitorProcessTermination(
     forExecution execution: Execution
 ) async throws -> TerminationStatus {
-    try await withCheckedThrowingContinuation { continuation in
+    return try await withCheckedThrowingContinuation { continuation in
         _childProcessContinuations.withLock { continuations in
             // We don't need to worry about a race condition here because waitid()
             // does not clear the wait/zombie state of the child process. If it sees
