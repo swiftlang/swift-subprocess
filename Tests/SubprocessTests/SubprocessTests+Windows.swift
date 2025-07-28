@@ -453,7 +453,9 @@ extension SubprocessWindowsTests {
 
 // MARK: - PlatformOption Tests
 extension SubprocessWindowsTests {
-    @Test(.enabled(if: SubprocessWindowsTests.hasAdminPrivileges()))
+    // Disabled until we investigate CI specific failures
+    // https://github.com/swiftlang/swift-subprocess/issues/128
+    @Test(.enabled(if: false))
     func testPlatformOptionsRunAsUser() async throws {
         try await self.withTemporaryUser { username, password, succeed in
             // Use public directory as working directory so the newly created user
