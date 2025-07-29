@@ -56,12 +56,12 @@ extension Configuration {
             var _outputPipe = outputPipeBox.take()!
             var _errorPipe = errorPipeBox.take()!
 
-            let inputReadFileDescriptor: TrackedFileDescriptor? = _inputPipe.readFileDescriptor()
-            let inputWriteFileDescriptor: TrackedFileDescriptor? = _inputPipe.writeFileDescriptor()
-            let outputReadFileDescriptor: TrackedFileDescriptor? = _outputPipe.readFileDescriptor()
-            let outputWriteFileDescriptor: TrackedFileDescriptor? = _outputPipe.writeFileDescriptor()
-            let errorReadFileDescriptor: TrackedFileDescriptor? = _errorPipe.readFileDescriptor()
-            let errorWriteFileDescriptor: TrackedFileDescriptor? = _errorPipe.writeFileDescriptor()
+            let inputReadFileDescriptor: IODescriptor? = _inputPipe.readFileDescriptor()
+            let inputWriteFileDescriptor: IODescriptor? = _inputPipe.writeFileDescriptor()
+            let outputReadFileDescriptor: IODescriptor? = _outputPipe.readFileDescriptor()
+            let outputWriteFileDescriptor: IODescriptor? = _outputPipe.writeFileDescriptor()
+            let errorReadFileDescriptor: IODescriptor? = _errorPipe.readFileDescriptor()
+            let errorWriteFileDescriptor: IODescriptor? = _errorPipe.writeFileDescriptor()
 
             for possibleExecutablePath in possiblePaths {
                 var processGroupIDPtr: UnsafeMutablePointer<gid_t>? = nil
@@ -131,14 +131,6 @@ extension Configuration {
                         underlyingError: .init(rawValue: spawnError)
                     )
                 }
-                func captureError(_ work: () throws -> Void) -> (any Swift.Error)? {
-                    do {
-                        try work()
-                        return nil
-                    } catch {
-                        return error
-                    }
-                }
                 // After spawn finishes, close all child side fds
                 try self.safelyCloseMultiple(
                     inputRead: inputReadFileDescriptor,
@@ -154,9 +146,9 @@ extension Configuration {
                 )
                 return SpawnResult(
                     execution: execution,
-                    inputWriteEnd: inputWriteFileDescriptor?.createPlatformDiskIO(),
-                    outputReadEnd: outputReadFileDescriptor?.createPlatformDiskIO(),
-                    errorReadEnd: errorReadFileDescriptor?.createPlatformDiskIO()
+                    inputWriteEnd: inputWriteFileDescriptor?.createIOChannel(),
+                    outputReadEnd: outputReadFileDescriptor?.createIOChannel(),
+                    errorReadEnd: errorReadFileDescriptor?.createIOChannel()
                 )
             }
 
@@ -267,7 +259,7 @@ extension String {
 internal func monitorProcessTermination(
     forExecution execution: Execution
 ) async throws -> TerminationStatus {
-    try await withCheckedThrowingContinuation { continuation in
+    return try await withCheckedThrowingContinuation { continuation in
         _childProcessContinuations.withLock { continuations in
             // We don't need to worry about a race condition here because waitid()
             // does not clear the wait/zombie state of the child process. If it sees
@@ -285,11 +277,7 @@ internal func monitorProcessTermination(
 
 // Small helper to provide thread-safe access to the child process to continuations map as well as a condition variable to suspend the calling thread when there are no subprocesses to wait for. Note that Mutex cannot be used here because we need the semantics of pthread_cond_wait, which requires passing the pthread_mutex_t instance as a parameter, something the Mutex API does not provide access to.
 private final class ChildProcessContinuations: Sendable {
-    #if os(FreeBSD) || os(OpenBSD)
-    typealias MutexType = pthread_mutex_t?
-    #else
     typealias MutexType = pthread_mutex_t
-    #endif
 
     private nonisolated(unsafe) var continuations = [pid_t: CheckedContinuation<TerminationStatus, any Error>]()
     private nonisolated(unsafe) let mutex = UnsafeMutablePointer<MutexType>.allocate(capacity: 1)

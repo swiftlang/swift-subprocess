@@ -24,10 +24,12 @@ import Glibc
 #elseif canImport(Musl)
 import Musl
 #elseif canImport(WinSDK)
-import WinSDK
+@preconcurrency import WinSDK
 #endif
 
 internal import Dispatch
+
+import Synchronization
 
 /// A collection of configurations parameters to use when
 /// spawning a subprocess.
@@ -64,7 +66,7 @@ public struct Configuration: Sendable {
         output: consuming CreatedPipe,
         error: consuming CreatedPipe,
         isolation: isolated (any Actor)? = #isolation,
-        _ body: ((Execution, consuming TrackedPlatformDiskIO?, consuming TrackedPlatformDiskIO?, consuming TrackedPlatformDiskIO?) async throws -> Result)
+        _ body: ((Execution, consuming IOChannel?, consuming IOChannel?, consuming IOChannel?) async throws -> Result)
     ) async throws -> ExecutionResult<Result> {
         let spawnResults = try self.spawn(
             withInput: input,
@@ -139,12 +141,12 @@ extension Configuration {
     /// Close each input individually, and throw the first error if there's multiple errors thrown
     @Sendable
     internal func safelyCloseMultiple(
-        inputRead: consuming TrackedFileDescriptor?,
-        inputWrite: consuming TrackedFileDescriptor?,
-        outputRead: consuming TrackedFileDescriptor?,
-        outputWrite: consuming TrackedFileDescriptor?,
-        errorRead: consuming TrackedFileDescriptor?,
-        errorWrite: consuming TrackedFileDescriptor?
+        inputRead: consuming IODescriptor?,
+        inputWrite: consuming IODescriptor?,
+        outputRead: consuming IODescriptor?,
+        outputWrite: consuming IODescriptor?,
+        errorRead: consuming IODescriptor?,
+        errorWrite: consuming IODescriptor?
     ) throws {
         var possibleError: (any Swift.Error)? = nil
 
@@ -495,15 +497,15 @@ extension Configuration {
     /// via `SpawnResult` to perform actual reads
     internal struct SpawnResult: ~Copyable {
         let execution: Execution
-        var _inputWriteEnd: TrackedPlatformDiskIO?
-        var _outputReadEnd: TrackedPlatformDiskIO?
-        var _errorReadEnd: TrackedPlatformDiskIO?
+        var _inputWriteEnd: IOChannel?
+        var _outputReadEnd: IOChannel?
+        var _errorReadEnd: IOChannel?
 
         init(
             execution: Execution,
-            inputWriteEnd: consuming TrackedPlatformDiskIO?,
-            outputReadEnd: consuming TrackedPlatformDiskIO?,
-            errorReadEnd: consuming TrackedPlatformDiskIO?
+            inputWriteEnd: consuming IOChannel?,
+            outputReadEnd: consuming IOChannel?,
+            errorReadEnd: consuming IOChannel?
         ) {
             self.execution = execution
             self._inputWriteEnd = consume inputWriteEnd
@@ -511,15 +513,15 @@ extension Configuration {
             self._errorReadEnd = consume errorReadEnd
         }
 
-        mutating func inputWriteEnd() -> TrackedPlatformDiskIO? {
+        mutating func inputWriteEnd() -> IOChannel? {
             return self._inputWriteEnd.take()
         }
 
-        mutating func outputReadEnd() -> TrackedPlatformDiskIO? {
+        mutating func outputReadEnd() -> IOChannel? {
             return self._outputReadEnd.take()
         }
 
-        mutating func errorReadEnd() -> TrackedPlatformDiskIO? {
+        mutating func errorReadEnd() -> IOChannel? {
             return self._errorReadEnd.take()
         }
     }
@@ -589,36 +591,45 @@ internal enum StringOrRawBytes: Sendable, Hashable {
     }
 }
 
-/// A wrapped `FileDescriptor` and whether it should be closed
-/// automatically when done.
-internal struct TrackedFileDescriptor: ~Copyable {
-    internal var closeWhenDone: Bool
-    internal let fileDescriptor: FileDescriptor
-
-    internal init(
-        _ fileDescriptor: FileDescriptor,
-        closeWhenDone: Bool
-    ) {
-        self.fileDescriptor = fileDescriptor
-        self.closeWhenDone = closeWhenDone
-    }
-
-    #if os(Windows)
-    consuming func consumeDiskIO() -> FileDescriptor {
-        let result = self.fileDescriptor
-        // Transfer the ownership out and therefor
-        // don't perform close on deinit
-        self.closeWhenDone = false
-        return result
-    }
+internal enum _CloseTarget {
+    #if canImport(WinSDK)
+    case handle(HANDLE)
     #endif
+    case fileDescriptor(FileDescriptor)
+    case dispatchIO(DispatchIO)
+}
 
-    internal mutating func safelyClose() throws {
-        guard self.closeWhenDone else {
-            return
+internal func _safelyClose(_ target: _CloseTarget) throws {
+    switch target {
+    #if canImport(WinSDK)
+    case .handle(let handle):
+        /// Windows does not provide a “deregistration” API (the reverse of
+        /// `CreateIoCompletionPort`) for handles and it reuses HANDLE
+        /// values once they are closed. Since we rely on the handle value
+        /// as the completion key for `CreateIoCompletionPort`, we should
+        /// remove the registration when the handle is closed to allow
+        /// new registration to proceed if the handle is reused.
+        AsyncIO.shared.removeRegistration(for: handle)
+        guard CloseHandle(handle) else {
+            let error = GetLastError()
+            // Getting `ERROR_INVALID_HANDLE` suggests that the file descriptor
+            // might have been closed unexpectedly. This can pose security risks
+            // if another part of the code inadvertently reuses the same HANDLE.
+            // We use `fatalError` upon receiving `ERROR_INVALID_HANDLE`
+            // to prevent accidentally closing a different HANDLE.
+            guard error != ERROR_INVALID_HANDLE else {
+                fatalError(
+                    "HANDLE \(handle) is already closed"
+                )
+            }
+            let subprocessError = SubprocessError(
+                code: .init(.asyncIOFailed("Failed to close HANDLE")),
+                underlyingError: .init(rawValue: error)
+            )
+            throw subprocessError
         }
-        closeWhenDone = false
-
+    #endif
+    case .fileDescriptor(let fileDescriptor):
         do {
             try fileDescriptor.close()
         } catch {
@@ -640,42 +651,56 @@ internal struct TrackedFileDescriptor: ~Copyable {
             // Throw other kinds of errors to allow user to catch them
             throw error
         }
-    }
-
-    deinit {
-        guard self.closeWhenDone else {
-            return
-        }
-
-        fatalError("FileDescriptor \(self.fileDescriptor.rawValue) was not closed")
-    }
-
-    internal func platformDescriptor() -> PlatformFileDescriptor {
-        return self.fileDescriptor.platformDescriptor
+    case .dispatchIO(let dispatchIO):
+        dispatchIO.close()
     }
 }
 
-#if !os(Windows)
-/// A wrapped `DispatchIO` and whether it should be closed
-/// automatically when done.
-internal struct TrackedDispatchIO: ~Copyable {
+/// `IODescriptor` wraps platform-specific `FileDescriptor`,
+/// which is used to establish a connection to the standard input/output (IO)
+/// system during the process of spawning a child process. Unlike `IODescriptor`,
+/// the `IODescriptor` does not support data read/write operations;
+/// its primary function is to facilitate the spawning of child processes
+/// by providing a platform-specific file descriptor.
+internal struct IODescriptor: ~Copyable {
+    #if canImport(WinSDK)
+    typealias Descriptor = HANDLE
+    #else
+    typealias Descriptor = FileDescriptor
+    #endif
+
     internal var closeWhenDone: Bool
-    internal var dispatchIO: DispatchIO
+    internal let descriptor: Descriptor
 
     internal init(
-        _ dispatchIO: DispatchIO,
+        _ descriptor: Descriptor,
         closeWhenDone: Bool
     ) {
-        self.dispatchIO = dispatchIO
+        self.descriptor = descriptor
         self.closeWhenDone = closeWhenDone
     }
 
-    consuming func consumeDiskIO() -> DispatchIO {
-        let result = self.dispatchIO
-        // Transfer the ownership out and therefor
-        // don't perform close on deinit
+    consuming func createIOChannel() -> IOChannel {
+        let shouldClose = self.closeWhenDone
         self.closeWhenDone = false
-        return result
+        #if canImport(Darwin)
+        // Transferring out the ownership of fileDescriptor means we don't have go close here
+        let closeFd = self.descriptor
+        let dispatchIO: DispatchIO = DispatchIO(
+            type: .stream,
+            fileDescriptor: self.platformDescriptor(),
+            queue: .global(),
+            cleanupHandler: { @Sendable error in
+                // Close the file descriptor
+                if shouldClose {
+                    try? closeFd.close()
+                }
+            }
+        )
+        return IOChannel(dispatchIO, closeWhenDone: shouldClose)
+        #else
+        return IOChannel(self.descriptor, closeWhenDone: shouldClose)
+        #endif
     }
 
     internal mutating func safelyClose() throws {
@@ -683,7 +708,12 @@ internal struct TrackedDispatchIO: ~Copyable {
             return
         }
         closeWhenDone = false
-        dispatchIO.close()
+
+        #if canImport(WinSDK)
+        try _safelyClose(.handle(self.descriptor))
+        #else
+        try _safelyClose(.fileDescriptor(self.descriptor))
+        #endif
     }
 
     deinit {
@@ -691,33 +721,207 @@ internal struct TrackedDispatchIO: ~Copyable {
             return
         }
 
-        fatalError("DispatchIO \(self.dispatchIO) was not closed")
+        fatalError("FileDescriptor \(self.descriptor) was not closed")
+    }
+
+    internal func platformDescriptor() -> PlatformFileDescriptor {
+        #if canImport(WinSDK)
+        return self.descriptor
+        #else
+        return self.descriptor.platformDescriptor
+        #endif
+    }
+}
+
+internal struct IOChannel: ~Copyable, @unchecked Sendable {
+    #if canImport(WinSDK)
+    typealias Channel = HANDLE
+    #elseif canImport(Darwin)
+    typealias Channel = DispatchIO
+    #else
+    typealias Channel = FileDescriptor
+    #endif
+
+    internal var closeWhenDone: Bool
+    internal let channel: Channel
+
+    internal init(
+        _ channel: Channel,
+        closeWhenDone: Bool
+    ) {
+        self.channel = channel
+        self.closeWhenDone = closeWhenDone
+    }
+
+    internal mutating func safelyClose() throws {
+        guard self.closeWhenDone else {
+            return
+        }
+        closeWhenDone = false
+
+        #if canImport(WinSDK)
+        try _safelyClose(.handle(self.channel))
+        #elseif canImport(Darwin)
+        try _safelyClose(.dispatchIO(self.channel))
+        #else
+        try _safelyClose(.fileDescriptor(self.channel))
+        #endif
+    }
+
+    internal consuming func consumeIOChannel() -> Channel {
+        let result = self.channel
+        // Transfer the ownership out and therefor
+        // don't perform close on deinit
+        self.closeWhenDone = false
+        return result
+    }
+}
+
+#if canImport(WinSDK)
+internal enum PipeNameCounter {
+    private static let value = Atomic<UInt64>(0)
+
+    internal static func nextValue() -> UInt64 {
+        return self.value.add(1, ordering: .relaxed).newValue
     }
 }
 #endif
 
 internal struct CreatedPipe: ~Copyable {
-    internal var _readFileDescriptor: TrackedFileDescriptor?
-    internal var _writeFileDescriptor: TrackedFileDescriptor?
+    internal enum Purpose: CustomStringConvertible {
+        /// This pipe is used for standard input. This option maps to
+        /// `PIPE_ACCESS_OUTBOUND` on Windows where child only reads,
+        /// parent only writes.
+        case input
+        /// This pipe is used for standard output and standard error.
+        /// This option maps to `PIPE_ACCESS_INBOUND` on Windows where
+        /// child only writes, parent only reads.
+        case output
+
+        var description: String {
+            switch self {
+            case .input:
+                return "input"
+            case .output:
+                return "output"
+            }
+        }
+    }
+
+    internal var _readFileDescriptor: IODescriptor?
+    internal var _writeFileDescriptor: IODescriptor?
 
     internal init(
-        readFileDescriptor: consuming TrackedFileDescriptor?,
-        writeFileDescriptor: consuming TrackedFileDescriptor?
+        readFileDescriptor: consuming IODescriptor?,
+        writeFileDescriptor: consuming IODescriptor?
     ) {
         self._readFileDescriptor = readFileDescriptor
         self._writeFileDescriptor = writeFileDescriptor
     }
 
-    mutating func readFileDescriptor() -> TrackedFileDescriptor? {
+    mutating func readFileDescriptor() -> IODescriptor? {
         return self._readFileDescriptor.take()
     }
 
-    mutating func writeFileDescriptor() -> TrackedFileDescriptor? {
+    mutating func writeFileDescriptor() -> IODescriptor? {
         return self._writeFileDescriptor.take()
     }
 
-    internal init(closeWhenDone: Bool) throws {
-        let pipe = try FileDescriptor.ssp_pipe()
+    internal init(closeWhenDone: Bool, purpose: Purpose) throws {
+        #if canImport(WinSDK)
+        /// On Windows, we need to create a named pipe.
+        /// According to Microsoft documentation:
+        /// > Asynchronous (overlapped) read and write operations are
+        /// > not supported by anonymous pipes.
+        /// See https://learn.microsoft.com/en-us/windows/win32/ipc/anonymous-pipe-operations
+        while true {
+            /// Windows named pipes are system wide. To avoid creating two pipes with the same
+            /// name, create the pipe with `FILE_FLAG_FIRST_PIPE_INSTANCE` such that it will
+            /// return error `ERROR_ACCESS_DENIED` if we try to create another pipe with the same name.
+            let pipeName = "\\\\.\\pipe\\LOCAL\\subprocess-\(purpose)-\(PipeNameCounter.nextValue())"
+            var saAttributes: SECURITY_ATTRIBUTES = SECURITY_ATTRIBUTES()
+            saAttributes.nLength = DWORD(MemoryLayout<SECURITY_ATTRIBUTES>.size)
+            saAttributes.bInheritHandle = true
+            saAttributes.lpSecurityDescriptor = nil
+
+            let parentEnd = pipeName.withCString(
+                encodedAs: UTF16.self
+            ) { pipeNameW in
+                // Use OVERLAPPED for async IO
+                var openMode: DWORD = DWORD(FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE)
+                switch purpose {
+                case .input:
+                    openMode |= DWORD(PIPE_ACCESS_OUTBOUND)
+                case .output:
+                    openMode |= DWORD(PIPE_ACCESS_INBOUND)
+                }
+
+                return CreateNamedPipeW(
+                    pipeNameW,
+                    openMode,
+                    DWORD(PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT),
+                    1, // Max instance,
+                    DWORD(readBufferSize),
+                    DWORD(readBufferSize),
+                    0,
+                    &saAttributes
+                )
+            }
+            guard let parentEnd, parentEnd != INVALID_HANDLE_VALUE else {
+                // Since we created the pipe with `FILE_FLAG_FIRST_PIPE_INSTANCE`,
+                // if there's already a pipe with the same name, GetLastError()
+                // will be set to ERROR_ACCESS_DENIED. In this case,
+                // try again with a different name.
+                let errorCode = GetLastError()
+                guard errorCode != ERROR_ACCESS_DENIED else {
+                    continue
+                }
+                // Throw all other errors
+                throw SubprocessError(
+                    code: .init(.asyncIOFailed("CreateNamedPipeW failed")),
+                    underlyingError: .init(rawValue: GetLastError())
+                )
+            }
+
+            let childEnd = pipeName.withCString(
+                encodedAs: UTF16.self
+            ) { pipeNameW in
+                var targetAccess: DWORD = 0
+                switch purpose {
+                case .input:
+                    targetAccess = DWORD(GENERIC_READ)
+                case .output:
+                    targetAccess = DWORD(GENERIC_WRITE)
+                }
+
+                return CreateFileW(
+                    pipeNameW,
+                    targetAccess,
+                    0,
+                    &saAttributes,
+                    DWORD(OPEN_EXISTING),
+                    DWORD(FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED),
+                    nil
+                )
+            }
+            guard let childEnd, childEnd != INVALID_HANDLE_VALUE else {
+                throw SubprocessError(
+                    code: .init(.asyncIOFailed("CreateFileW failed")),
+                    underlyingError: .init(rawValue: GetLastError())
+                )
+            }
+            switch purpose {
+            case .input:
+                self._readFileDescriptor = .init(childEnd, closeWhenDone: closeWhenDone)
+                self._writeFileDescriptor = .init(parentEnd, closeWhenDone: closeWhenDone)
+            case .output:
+                self._readFileDescriptor = .init(parentEnd, closeWhenDone: closeWhenDone)
+                self._writeFileDescriptor = .init(childEnd, closeWhenDone: closeWhenDone)
+            }
+            return
+        }
+        #else
+        let pipe = try FileDescriptor.pipe()
         self._readFileDescriptor = .init(
             pipe.readEnd,
             closeWhenDone: closeWhenDone
@@ -726,6 +930,7 @@ internal struct CreatedPipe: ~Copyable {
             pipe.writeEnd,
             closeWhenDone: closeWhenDone
         )
+        #endif
     }
 }
 

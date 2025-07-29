@@ -14,6 +14,11 @@
 #else
 @preconcurrency import SystemPackage
 #endif
+
+#if canImport(WinSDK)
+@preconcurrency import WinSDK
+#endif
+
 internal import Dispatch
 
 // MARK: - Output
@@ -85,10 +90,15 @@ public struct FileDescriptorOutput: OutputProtocol {
     private let fileDescriptor: FileDescriptor
 
     internal func createPipe() throws -> CreatedPipe {
+        #if canImport(WinSDK)
+        let writeFd = HANDLE(bitPattern: _get_osfhandle(self.fileDescriptor.rawValue))!
+        #else
+        let writeFd = self.fileDescriptor
+        #endif
         return CreatedPipe(
             readFileDescriptor: nil,
             writeFileDescriptor: .init(
-                self.fileDescriptor,
+                writeFd,
                 closeWhenDone: self.closeAfterSpawningProcess
             )
         )
@@ -140,16 +150,25 @@ public struct BytesOutput: OutputProtocol {
     public let maxSize: Int
 
     internal func captureOutput(
-        from diskIO: consuming TrackedPlatformDiskIO?
+        from diskIO: consuming IOChannel
     ) async throws -> [UInt8] {
-        #if os(Windows)
-        let result = try await diskIO?.fileDescriptor.read(upToLength: self.maxSize) ?? []
-        try diskIO?.safelyClose()
-        return result
+        #if canImport(Darwin)
+        var result: DispatchData? = nil
         #else
-        let result = try await diskIO!.dispatchIO.read(upToLength: self.maxSize)
-        try diskIO?.safelyClose()
+        var result: [UInt8]? = nil
+        #endif
+        do {
+            result = try await AsyncIO.shared.read(from: diskIO, upTo: self.maxSize)
+        } catch {
+            try diskIO.safelyClose()
+            throw error
+        }
+
+        try diskIO.safelyClose()
+        #if canImport(Darwin)
         return result?.array() ?? []
+        #else
+        return result ?? []
         #endif
     }
 
@@ -249,35 +268,54 @@ extension OutputProtocol {
             return try fdOutput.createPipe()
         }
         // Base pipe based implementation for everything else
-        return try CreatedPipe(closeWhenDone: true)
+        return try CreatedPipe(closeWhenDone: true, purpose: .output)
     }
 
     /// Capture the output from the subprocess up to maxSize
     @_disfavoredOverload
     internal func captureOutput(
-        from diskIO: consuming TrackedPlatformDiskIO?
+        from diskIO: consuming IOChannel?
     ) async throws -> OutputType {
+        if OutputType.self == Void.self {
+            return () as! OutputType
+        }
+        // `diskIO` is only `nil` for any types that conform to `OutputProtocol`
+        // and have `Void` as ``OutputType` (i.e. `DiscardedOutput`). Since we
+        // made sure `OutputType` is not `Void` on the line above, `diskIO`
+        // must not be nil; otherwise, this is a programmer error.
+        guard var diskIO else {
+            fatalError(
+                "Internal Inconsistency Error: diskIO must not be nil when OutputType is not Void"
+            )
+        }
+
         if let bytesOutput = self as? BytesOutput {
             return try await bytesOutput.captureOutput(from: diskIO) as! Self.OutputType
         }
 
-        if OutputType.self == Void.self {
-            return () as! OutputType
-        }
-        #if os(Windows)
-        let result = try await diskIO?.fileDescriptor.read(upToLength: self.maxSize)
-        try diskIO?.safelyClose()
-        return try self.output(from: result ?? [])
+        #if canImport(Darwin)
+        var result: DispatchData? = nil
         #else
-        let result = try await diskIO!.dispatchIO.read(upToLength: self.maxSize)
-        try diskIO?.safelyClose()
+        var result: [UInt8]? = nil
+        #endif
+        do {
+            result = try await AsyncIO.shared.read(from: diskIO, upTo: self.maxSize)
+        } catch {
+            try diskIO.safelyClose()
+            throw error
+        }
+
+        try diskIO.safelyClose()
+        #if canImport(Darwin)
         return try self.output(from: result ?? .empty)
+        #else
+        return try self.output(from: result ?? [])
         #endif
     }
 }
 
 extension OutputProtocol where OutputType == Void {
-    internal func captureOutput(from fileDescriptor: consuming TrackedPlatformDiskIO?) async throws {}
+    internal func captureOutput(from fileDescriptor: consuming IOChannel?) async throws {}
 
     #if SubprocessSpan
     /// Convert the output from Data to expected output type
@@ -293,20 +331,7 @@ extension OutputProtocol where OutputType == Void {
 
 #if SubprocessSpan
 extension OutputProtocol {
-    #if os(Windows)
-    internal func output(from data: [UInt8]) throws -> OutputType {
-        guard !data.isEmpty else {
-            let empty = UnsafeRawBufferPointer(start: nil, count: 0)
-            let span = RawSpan(_unsafeBytes: empty)
-            return try self.output(from: span)
-        }
-
-        return try data.withUnsafeBufferPointer { ptr in
-            let span = RawSpan(_unsafeBytes: UnsafeRawBufferPointer(ptr))
-            return try self.output(from: span)
-        }
-    }
-    #else
+    #if canImport(Darwin)
     internal func output(from data: DispatchData) throws -> OutputType {
         guard !data.isEmpty else {
             let empty = UnsafeRawBufferPointer(start: nil, count: 0)
@@ -320,7 +345,20 @@ extension OutputProtocol {
             return try self.output(from: span)
         }
     }
-    #endif // os(Windows)
+    #else
+    internal func output(from data: [UInt8]) throws -> OutputType {
+        guard !data.isEmpty else {
+            let empty = UnsafeRawBufferPointer(start: nil, count: 0)
+            let span = RawSpan(_unsafeBytes: empty)
+            return try self.output(from: span)
+        }
+
+        return try data.withUnsafeBufferPointer { ptr in
+            let span = RawSpan(_unsafeBytes: UnsafeRawBufferPointer(ptr))
+            return try self.output(from: span)
+        }
+    }
+    #endif // canImport(Darwin)
 }
 #endif
 

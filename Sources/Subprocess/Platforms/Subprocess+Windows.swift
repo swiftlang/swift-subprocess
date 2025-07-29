@@ -11,7 +11,7 @@
 
 #if canImport(WinSDK)
 
-import WinSDK
+@preconcurrency import WinSDK
 internal import Dispatch
 #if canImport(System)
 @preconcurrency import System
@@ -48,37 +48,32 @@ extension Configuration {
         outputPipe: consuming CreatedPipe,
         errorPipe: consuming CreatedPipe
     ) throws -> SpawnResult {
-        var inputPipeBox: CreatedPipe? = consume inputPipe
-        var outputPipeBox: CreatedPipe? = consume outputPipe
-        var errorPipeBox: CreatedPipe? = consume errorPipe
+        var inputReadFileDescriptor: IODescriptor? = inputPipe.readFileDescriptor()
+        var inputWriteFileDescriptor: IODescriptor? = inputPipe.writeFileDescriptor()
+        var outputReadFileDescriptor: IODescriptor? = outputPipe.readFileDescriptor()
+        var outputWriteFileDescriptor: IODescriptor? = outputPipe.writeFileDescriptor()
+        var errorReadFileDescriptor: IODescriptor? = errorPipe.readFileDescriptor()
+        var errorWriteFileDescriptor: IODescriptor? = errorPipe.writeFileDescriptor()
 
-        var _inputPipe = inputPipeBox.take()!
-        var _outputPipe = outputPipeBox.take()!
-        var _errorPipe = errorPipeBox.take()!
-
-        let inputReadFileDescriptor: TrackedFileDescriptor? = _inputPipe.readFileDescriptor()
-        let inputWriteFileDescriptor: TrackedFileDescriptor? = _inputPipe.writeFileDescriptor()
-        let outputReadFileDescriptor: TrackedFileDescriptor? = _outputPipe.readFileDescriptor()
-        let outputWriteFileDescriptor: TrackedFileDescriptor? = _outputPipe.writeFileDescriptor()
-        let errorReadFileDescriptor: TrackedFileDescriptor? = _errorPipe.readFileDescriptor()
-        let errorWriteFileDescriptor: TrackedFileDescriptor? = _errorPipe.writeFileDescriptor()
-
-        let (
-            applicationName,
-            commandAndArgs,
-            environment,
-            intendedWorkingDir
-        ): (String?, String, String, String?)
+        let applicationName: String?
+        let commandAndArgs: String
+        let environment: String
+        let intendedWorkingDir: String?
         do {
-            (applicationName, commandAndArgs, environment, intendedWorkingDir) = try self.preSpawn()
+            (
+                applicationName,
+                commandAndArgs,
+                environment,
+                intendedWorkingDir
+            ) = try self.preSpawn()
         } catch {
             try self.safelyCloseMultiple(
-                inputRead: inputReadFileDescriptor,
-                inputWrite: inputWriteFileDescriptor,
-                outputRead: outputReadFileDescriptor,
-                outputWrite: outputWriteFileDescriptor,
-                errorRead: errorReadFileDescriptor,
-                errorWrite: errorWriteFileDescriptor
+                inputRead: inputReadFileDescriptor.take(),
+                inputWrite: inputWriteFileDescriptor.take(),
+                outputRead: outputReadFileDescriptor.take(),
+                outputWrite: outputWriteFileDescriptor.take(),
+                errorRead: errorReadFileDescriptor.take(),
+                errorWrite: errorWriteFileDescriptor.take()
             )
             throw error
         }
@@ -167,9 +162,9 @@ extension Configuration {
 
         return SpawnResult(
             execution: execution,
-            inputWriteEnd: inputWriteFileDescriptor?.createPlatformDiskIO(),
-            outputReadEnd: outputReadFileDescriptor?.createPlatformDiskIO(),
-            errorReadEnd: errorReadFileDescriptor?.createPlatformDiskIO()
+            inputWriteEnd: inputWriteFileDescriptor?.createIOChannel(),
+            outputReadEnd: outputReadFileDescriptor?.createIOChannel(),
+            errorReadEnd: errorReadFileDescriptor?.createIOChannel()
         )
     }
 
@@ -187,12 +182,12 @@ extension Configuration {
         var _outputPipe = outputPipeBox.take()!
         var _errorPipe = errorPipeBox.take()!
 
-        let inputReadFileDescriptor: TrackedFileDescriptor? = _inputPipe.readFileDescriptor()
-        let inputWriteFileDescriptor: TrackedFileDescriptor? = _inputPipe.writeFileDescriptor()
-        let outputReadFileDescriptor: TrackedFileDescriptor? = _outputPipe.readFileDescriptor()
-        let outputWriteFileDescriptor: TrackedFileDescriptor? = _outputPipe.writeFileDescriptor()
-        let errorReadFileDescriptor: TrackedFileDescriptor? = _errorPipe.readFileDescriptor()
-        let errorWriteFileDescriptor: TrackedFileDescriptor? = _errorPipe.writeFileDescriptor()
+        let inputReadFileDescriptor: IODescriptor? = _inputPipe.readFileDescriptor()
+        let inputWriteFileDescriptor: IODescriptor? = _inputPipe.writeFileDescriptor()
+        let outputReadFileDescriptor: IODescriptor? = _outputPipe.readFileDescriptor()
+        let outputWriteFileDescriptor: IODescriptor? = _outputPipe.writeFileDescriptor()
+        let errorReadFileDescriptor: IODescriptor? = _errorPipe.readFileDescriptor()
+        let errorWriteFileDescriptor: IODescriptor? = _errorPipe.writeFileDescriptor()
 
         let (
             applicationName,
@@ -311,9 +306,9 @@ extension Configuration {
 
         return SpawnResult(
             execution: execution,
-            inputWriteEnd: inputWriteFileDescriptor?.createPlatformDiskIO(),
-            outputReadEnd: outputReadFileDescriptor?.createPlatformDiskIO(),
-            errorReadEnd: errorReadFileDescriptor?.createPlatformDiskIO()
+            inputWriteEnd: inputWriteFileDescriptor?.createIOChannel(),
+            outputReadEnd: outputReadFileDescriptor?.createIOChannel(),
+            errorReadEnd: errorReadFileDescriptor?.createIOChannel()
         )
     }
 }
@@ -363,7 +358,7 @@ public struct PlatformOptions: Sendable {
         public static let inherit: Self = .init(.inherit)
     }
 
-    /// `ConsoleBehavior` defines how should the window appear
+    /// `WindowStyle` defines how should the window appear
     /// when spawning a new process
     public struct WindowStyle: Sendable, Hashable {
         internal enum Storage: Sendable, Hashable {
@@ -778,12 +773,12 @@ extension Configuration {
     }
 
     private func generateStartupInfo(
-        withInputRead inputReadFileDescriptor: borrowing TrackedFileDescriptor?,
-        inputWrite inputWriteFileDescriptor: borrowing TrackedFileDescriptor?,
-        outputRead outputReadFileDescriptor: borrowing TrackedFileDescriptor?,
-        outputWrite outputWriteFileDescriptor: borrowing TrackedFileDescriptor?,
-        errorRead errorReadFileDescriptor: borrowing TrackedFileDescriptor?,
-        errorWrite errorWriteFileDescriptor: borrowing TrackedFileDescriptor?,
+        withInputRead inputReadFileDescriptor: borrowing IODescriptor?,
+        inputWrite inputWriteFileDescriptor: borrowing IODescriptor?,
+        outputRead outputReadFileDescriptor: borrowing IODescriptor?,
+        outputWrite outputWriteFileDescriptor: borrowing IODescriptor?,
+        errorRead errorReadFileDescriptor: borrowing IODescriptor?,
+        errorWrite errorWriteFileDescriptor: borrowing IODescriptor?,
     ) throws -> STARTUPINFOW {
         var info: STARTUPINFOW = STARTUPINFOW()
         info.cb = DWORD(MemoryLayout<STARTUPINFOW>.size)
@@ -955,8 +950,6 @@ extension Configuration {
 // MARK: - Type alias
 internal typealias PlatformFileDescriptor = HANDLE
 
-internal typealias TrackedPlatformDiskIO = TrackedFileDescriptor
-
 // MARK: - Pipe Support
 extension FileDescriptor {
     // NOTE: Not the same as SwiftSystem's FileDescriptor.pipe, which has different behavior,
@@ -1001,171 +994,6 @@ extension FileDescriptor {
 
     var platformDescriptor: PlatformFileDescriptor {
         return HANDLE(bitPattern: _get_osfhandle(self.rawValue))!
-    }
-}
-
-extension FileDescriptor {
-    internal func read(upToLength maxLength: Int) async throws -> [UInt8]? {
-        return try await withCheckedThrowingContinuation { continuation in
-            self.readUntilEOF(
-                upToLength: maxLength
-            ) { result in
-                switch result {
-                case .failure(let error):
-                    continuation.resume(throwing: error)
-                case .success(let bytes):
-                    continuation.resume(returning: bytes.isEmpty ? nil : bytes)
-                }
-            }
-        }
-    }
-
-    internal func readUntilEOF(
-        upToLength maxLength: Int,
-        resultHandler: @Sendable @escaping (Swift.Result<[UInt8], any (Error & Sendable)>) -> Void
-    ) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            var totalBytesRead: Int = 0
-            var lastError: DWORD? = nil
-            let values = [UInt8](
-                unsafeUninitializedCapacity: maxLength
-            ) { buffer, initializedCount in
-                while true {
-                    guard let baseAddress = buffer.baseAddress else {
-                        initializedCount = 0
-                        break
-                    }
-                    let bufferPtr = baseAddress.advanced(by: totalBytesRead)
-                    var bytesRead: DWORD = 0
-                    let readSucceed = ReadFile(
-                        self.platformDescriptor,
-                        UnsafeMutableRawPointer(mutating: bufferPtr),
-                        DWORD(maxLength - totalBytesRead),
-                        &bytesRead,
-                        nil
-                    )
-                    if !readSucceed {
-                        // Windows throws ERROR_BROKEN_PIPE when the pipe is closed
-                        let error = GetLastError()
-                        if error == ERROR_BROKEN_PIPE {
-                            // We are done reading
-                            initializedCount = totalBytesRead
-                        } else {
-                            // We got some error
-                            lastError = error
-                            initializedCount = 0
-                        }
-                        break
-                    } else {
-                        // We successfully read the current round
-                        totalBytesRead += Int(bytesRead)
-                    }
-
-                    if totalBytesRead >= maxLength {
-                        initializedCount = min(maxLength, totalBytesRead)
-                        break
-                    }
-                }
-            }
-            if let lastError = lastError {
-                let windowsError = SubprocessError(
-                    code: .init(.failedToReadFromSubprocess),
-                    underlyingError: .init(rawValue: lastError)
-                )
-                resultHandler(.failure(windowsError))
-            } else {
-                resultHandler(.success(values))
-            }
-        }
-    }
-}
-
-extension TrackedFileDescriptor {
-    internal consuming func createPlatformDiskIO() -> TrackedPlatformDiskIO {
-        // TrackedPlatformDiskIO is a typealias of TrackedFileDescriptor on Windows (they're the same type)
-        // Just return the same object so we don't create a copy and try to double-close the fd.
-        return self
-    }
-
-    internal func readUntilEOF(
-        upToLength maxLength: Int,
-        resultHandler: @Sendable @escaping (Swift.Result<[UInt8], any (Error & Sendable)>) -> Void
-    ) {
-        self.fileDescriptor.readUntilEOF(
-            upToLength: maxLength,
-            resultHandler: resultHandler
-        )
-    }
-
-#if SubprocessSpan
-    internal func write(
-        _ span: borrowing RawSpan
-    ) async throws -> Int {
-        let fileDescriptor = self.fileDescriptor
-        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int, any Error>) in
-            span.withUnsafeBytes { ptr in
-                // TODO: Use WriteFileEx for asyc here
-                Self.write(
-                    ptr,
-                    to: fileDescriptor
-                ) { writtenLength, error in
-                    if let error = error {
-                        continuation.resume(throwing: error)
-                    } else {
-                        continuation.resume(returning: writtenLength)
-                    }
-                }
-            }
-        }
-    }
-#endif
-
-    internal func write(
-        _ array: [UInt8]
-    ) async throws -> Int {
-        try await withCheckedThrowingContinuation { continuation in
-            // TODO: Figure out a better way to asynchronously write
-            let fd = self.fileDescriptor
-            DispatchQueue.global(qos: .userInitiated).async {
-                array.withUnsafeBytes {
-                    Self.write(
-                        $0,
-                        to: fd
-                    ) { writtenLength, error in
-                        if let error = error {
-                            continuation.resume(throwing: error)
-                        } else {
-                            continuation.resume(returning: writtenLength)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    internal static func write(
-        _ ptr: UnsafeRawBufferPointer,
-        to fileDescriptor: FileDescriptor,
-        completion: @escaping (Int, Swift.Error?) -> Void
-    ) {
-        let handle = HANDLE(bitPattern: _get_osfhandle(fileDescriptor.rawValue))!
-        var writtenBytes: DWORD = 0
-        let writeSucceed = WriteFile(
-            handle,
-            ptr.baseAddress,
-            DWORD(ptr.count),
-            &writtenBytes,
-            nil
-        )
-        if !writeSucceed {
-            let error = SubprocessError(
-                code: .init(.failedToWriteToSubprocess),
-                underlyingError: .init(rawValue: GetLastError())
-            )
-            completion(Int(writtenBytes), error)
-        } else {
-            completion(Int(writtenBytes), nil)
-        }
     }
 }
 

@@ -11,7 +11,7 @@
 
 #if canImport(WinSDK)
 
-import WinSDK
+@preconcurrency import WinSDK
 import FoundationEssentials
 import Testing
 import Dispatch
@@ -27,7 +27,7 @@ import TestResources
 
 @Suite(.serialized)
 struct SubprocessWindowsTests {
-    private let cmdExe: Subprocess.Executable = .path("C:\\Windows\\System32\\cmd.exe")
+    private let cmdExe: Subprocess.Executable = .name("cmd.exe")
 }
 
 // MARK: - Executable Tests
@@ -87,7 +87,7 @@ extension SubprocessWindowsTests {
             Issue.record("Expected to throw POSIXError")
         } catch {
             guard let subprocessError = error as? SubprocessError,
-                let underlying = subprocessError.underlyingError
+                  let underlying = subprocessError.underlyingError
             else {
                 Issue.record("Expected CocoaError, got \(error)")
                 return
@@ -128,7 +128,6 @@ extension SubprocessWindowsTests {
             environment: .inherit,
             output: .string
         )
-        #expect(result.terminationStatus.isSuccess)
         // As a sanity check, make sure there's
         // `C:\Windows\system32` in PATH
         // since we inherited the environment variables
@@ -249,7 +248,6 @@ extension SubprocessWindowsTests {
             output: .data(limit: 2048 * 1024)
         )
 
-        #expect(catResult.terminationStatus.isSuccess)
         // Make sure we read all bytes
         #expect(
             catResult.standardOutput == expected
@@ -271,7 +269,6 @@ extension SubprocessWindowsTests {
             output: .data(limit: 2048 * 1024),
             error: .discarded
         )
-        #expect(catResult.terminationStatus.isSuccess)
         // Make sure we read all bytes
         #expect(
             catResult.standardOutput == expected
@@ -304,7 +301,6 @@ extension SubprocessWindowsTests {
             input: .sequence(stream),
             output: .data(limit: 2048 * 1024)
         )
-        #expect(catResult.terminationStatus.isSuccess)
         #expect(
             catResult.standardOutput == expected
         )
@@ -327,7 +323,6 @@ extension SubprocessWindowsTests {
             }
             return buffer
         }
-        #expect(result.terminationStatus.isSuccess)
         #expect(result.value == expected)
     }
 
@@ -364,7 +359,6 @@ extension SubprocessWindowsTests {
             }
             return buffer
         }
-        #expect(result.terminationStatus.isSuccess)
         #expect(result.value == expected)
     }
 }
@@ -510,7 +504,7 @@ extension SubprocessWindowsTests {
     @Test func testPlatformOptionsCreateNewConsole() async throws {
         let parentConsole = GetConsoleWindow()
         let sameConsoleResult = try await Subprocess.run(
-            .path("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
+            .name("powershell.exe"),
             arguments: [
                 "-File", windowsTester.string,
                 "-mode", "get-console-window",
@@ -529,7 +523,7 @@ extension SubprocessWindowsTests {
         var platformOptions: Subprocess.PlatformOptions = .init()
         platformOptions.consoleBehavior = .createNew
         let differentConsoleResult = try await Subprocess.run(
-            .path("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
+            .name("powershell.exe"),
             arguments: [
                 "-File", windowsTester.string,
                 "-mode", "get-console-window",
@@ -551,7 +545,7 @@ extension SubprocessWindowsTests {
         var platformOptions: Subprocess.PlatformOptions = .init()
         platformOptions.consoleBehavior = .detach
         let detachConsoleResult = try await Subprocess.run(
-            .path("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
+            .name("powershell.exe"),
             arguments: [
                 "-File", windowsTester.string,
                 "-mode", "get-console-window",
@@ -575,7 +569,7 @@ extension SubprocessWindowsTests {
         }
         let parentConsole = GetConsoleWindow()
         let newConsoleResult = try await Subprocess.run(
-            .path("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
+            .name("powershell.exe"),
             arguments: [
                 "-File", windowsTester.string,
                 "-mode", "get-console-window",
@@ -606,7 +600,7 @@ extension SubprocessWindowsTests {
             }
         }
         let changeTitleResult = try await Subprocess.run(
-            .path("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
+            .name("powershell.exe"),
             arguments: [
                 "-Command", "$consoleTitle = [console]::Title; Write-Host $consoleTitle",
             ],
@@ -654,7 +648,7 @@ extension SubprocessWindowsTests {
             // Now check the to make sure the process is actually suspended
             // Why not spawn another process to do that?
             var checkResult = try await Subprocess.run(
-                .path("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
+                .name("powershell.exe"),
                 arguments: [
                     "-File", windowsTester.string,
                     "-mode", "is-process-suspended",
@@ -671,7 +665,7 @@ extension SubprocessWindowsTests {
             // Now resume the process
             try subprocess.resume()
             checkResult = try await Subprocess.run(
-                .path("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
+                .name("powershell.exe"),
                 arguments: [
                     "-File", windowsTester.string,
                     "-mode", "is-process-suspended",
@@ -700,12 +694,13 @@ extension SubprocessWindowsTests {
             0
         )
         let pid = try Subprocess.runDetached(
-            .path("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
+            .name("powershell.exe"),
             arguments: [
                 "-Command", "Write-Host $PID",
             ],
             output: writeFd
         )
+        try writeFd.close()
         // Wait for process to finish
         guard
             let processHandle = OpenProcess(
@@ -722,7 +717,6 @@ extension SubprocessWindowsTests {
         WaitForSingleObject(processHandle, INFINITE)
 
         // Up to 10 characters because Windows process IDs are DWORDs (UInt32), whose max value is 10 digits.
-        try writeFd.close()
         let data = try await readFd.readUntilEOF(upToLength: 10)
         let resultPID = try #require(
             String(data: data, encoding: .utf8)

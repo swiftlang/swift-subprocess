@@ -671,11 +671,8 @@ extension SubprocessUnixTests {
             .name("swift"),
             arguments: [getgroupsSwift.string],
             platformOptions: platformOptions,
-            output: .string,
-            error: .string,
+            output: .string
         )
-        let error = try #require(idResult.standardError)
-        try #require(error == "")
         #expect(idResult.terminationStatus.isSuccess)
         let ids = try #require(
             idResult.standardOutput

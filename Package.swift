@@ -6,7 +6,9 @@ import PackageDescription
 var dep: [Package.Dependency] = [
     .package(
         url: "https://github.com/apple/swift-system",
-        from: "1.5.0"
+        // Temporarily pin to 1.5.0 because 1.6.0 has a breaking change for Ubuntu Focal
+        // https://github.com/apple/swift-system/issues/237
+        exact: "1.5.0"
     )
 ]
 #if !os(Windows)

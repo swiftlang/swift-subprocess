@@ -15,6 +15,10 @@
 @preconcurrency import SystemPackage
 #endif
 
+#if canImport(WinSDK)
+@preconcurrency import WinSDK
+#endif
+
 #if SubprocessFoundation
 
 #if canImport(Darwin)
@@ -78,9 +82,14 @@ public struct FileDescriptorInput: InputProtocol {
     private let closeAfterSpawningProcess: Bool
 
     internal func createPipe() throws -> CreatedPipe {
+        #if canImport(WinSDK)
+        let readFd = HANDLE(bitPattern: _get_osfhandle(self.fileDescriptor.rawValue))!
+        #else
+        let readFd = self.fileDescriptor
+        #endif
         return CreatedPipe(
             readFileDescriptor: .init(
-                self.fileDescriptor,
+                readFd,
                 closeWhenDone: self.closeAfterSpawningProcess
             ),
             writeFileDescriptor: nil
@@ -203,7 +212,7 @@ extension InputProtocol {
             return try fdInput.createPipe()
         }
         // Base implementation
-        return try CreatedPipe(closeWhenDone: true)
+        return try CreatedPipe(closeWhenDone: true, purpose: .input)
     }
 }
 
@@ -212,9 +221,9 @@ extension InputProtocol {
 /// A writer that writes to the standard input of the subprocess.
 public final actor StandardInputWriter: Sendable {
 
-    internal var diskIO: TrackedPlatformDiskIO
+    internal var diskIO: IOChannel
 
-    init(diskIO: consuming TrackedPlatformDiskIO) {
+    init(diskIO: consuming IOChannel) {
         self.diskIO = diskIO
     }
 
@@ -224,7 +233,7 @@ public final actor StandardInputWriter: Sendable {
     public func write(
         _ array: [UInt8]
     ) async throws -> Int {
-        return try await self.diskIO.write(array)
+        return try await AsyncIO.shared.write(array, to: self.diskIO)
     }
 
     /// Write a `RawSpan` to the standard input of the subprocess.
@@ -232,7 +241,7 @@ public final actor StandardInputWriter: Sendable {
     /// - Returns number of bytes written
     #if SubprocessSpan
     public func write(_ span: borrowing RawSpan) async throws -> Int {
-        return try await self.diskIO.write(span)
+        return try await AsyncIO.shared.write(span, to: self.diskIO)
     }
     #endif
 
