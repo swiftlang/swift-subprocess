@@ -311,7 +311,7 @@ int _subprocess_spawn(
 #define __GLIBC_PREREQ(maj, min) 0
 #endif
 
-static int _pidfd_open(pid_t pid) {
+int _pidfd_open(pid_t pid) {
     return syscall(SYS_pidfd_open, pid, 0);
 }
 
@@ -334,25 +334,6 @@ static int _clone3(int *pidfd) {
     };
 
     return syscall(SYS_clone3, &args, sizeof(args));
-}
-
-static int _linux_kernel_version_at_least(
-    int required_major,
-    int required_minor
-) {
-    struct utsname buf;
-    if (uname(&buf) != 0) {
-        return 0;  // Cannot determine kernel version
-    }
-
-    int major = 0, minor = 0;
-    if (sscanf(buf.release, "%d.%d", &major, &minor) < 2) {
-        return 0;
-    }
-
-    if (major > required_major) return 1;
-    if (major == required_major && minor >= required_minor) return 1;
-    return 0;
 }
 
 int _subprocess_fork_exec(
@@ -423,17 +404,21 @@ int _subprocess_fork_exec(
 
     // Finally, fork / clone
     int _pidfd = -1;
-    pid_t childPid = -1;
-    if (_linux_kernel_version_at_least(5, 3)) {
-        // One Linux 5.3 and above, use the new clone3 syscall
-        // So we can atomically retrieve pidfd
-        childPid = _clone3(&_pidfd);
-    } else {
-        // On older linux versions, fall back to fork()
+    // First attempt to use clone3, only fall back to fork if clone3 is not available
+    pid_t childPid = _clone3(&_pidfd);
+    if (childPid < 0) {
+        if (errno == ENOSYS) {
+            // clone3 is not implemented. Use fork instead
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated"
-        childPid = fork();
+            childPid = fork();
 #pragma GCC diagnostic pop
+        } else {
+            // Report all other errors
+            close(pipefd[0]);
+            close(pipefd[1]);
+            return errno;
+        }
     }
 
     if (childPid < 0) {
@@ -557,7 +542,7 @@ int _subprocess_fork_exec(
     } else {
         // On Linux 5.3 and lower, we have to fetch pidfd separately
         // Newer Linux supports clone3 which returns pidfd directly
-        if (_linux_kernel_version_at_least(5, 3) == 0) {
+        if (_pidfd < 0) {
             _pidfd = _pidfd_open(childPid);
             if (_pidfd < 0) {
                 return errno;
