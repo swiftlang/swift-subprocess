@@ -82,10 +82,11 @@ int _shims_snprintf(
     char * _Nonnull str2
 );
 
+int _pidfd_open(pid_t pid);
 int _pidfd_send_signal(int pidfd, int signal);
 
 // P_PIDFD is only defined on Linux Kernel 5.4 and above
-// Define our dummy value if it's not available
+// Define our value if it's not available
 #ifndef P_PIDFD
 #define P_PIDFD 3
 #endif

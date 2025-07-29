@@ -304,7 +304,7 @@ internal func monitorProcessTermination(
                 // pidfd is only supported on Linux kernel 5.4 and above
                 // On older releases, use signalfd so we do not need
                 // to register anything with epoll
-                if _isLinuxKernelAtLeast(major: 5, minor: 4) {
+                if processIdentifier.processFileDescriptor > 0 {
                     // Register processFileDescriptor with epoll
                     var event = epoll_event(
                         events: EPOLLIN.rawValue,
@@ -418,8 +418,10 @@ private extension siginfo_t {
     }
 }
 
-// Okay to be unlocked global mutable because this thread is only created once
+// Okay to be unlocked global mutable because this value is only set once like dispatch_once
 private nonisolated(unsafe) var _signalPipe: (readEnd: CInt, writeEnd: CInt) = (readEnd: -1, writeEnd: -1)
+// Okay to be unlocked global mutable because this value is only set once like dispatch_once
+private nonisolated(unsafe) var _waitProcessFileDescriptorSupported = false
 private let _processMonitorState: Mutex<ProcessMonitorState> = .init(.notStarted)
 
 private func shutdown() {
@@ -518,7 +520,7 @@ private func monitorThreadFunc(args: UnsafeMutableRawPointer?) -> UnsafeMutableR
             }
 
             // P_PIDFD requires Linux Kernel 5.4 and above
-            if _isLinuxKernelAtLeast(major: 5, minor: 4) {
+            if _waitProcessFileDescriptorSupported {
                 _blockAndWaitForProcessFileDescriptor(targetFileDescriptor, context: context)
             } else {
                 _reapAllKnownChildProcesses(targetFileDescriptor, context: context)
@@ -569,9 +571,9 @@ private let setup: () = {
         return
     }
 
-    // On Linux kernel lower than 5.4 we have to rely on signal handler
+    // If the current kernel does not support pidfd, fallback to signal handler
     // Create the self-pipe that signal handler writes to
-    if !_isLinuxKernelAtLeast(major: 5, minor: 4) {
+    if !_isWaitProcessFileDescriptorSupported() {
         var pipeCreationError: SubprocessError? = nil
         do {
             let (readEnd, writeEnd) = try FileDescriptor.pipe()
@@ -608,6 +610,9 @@ private let setup: () = {
             _reportFailureWithErrno(errno)
             return
         }
+    } else {
+        // Mark waitid(P_PIDFD) as supported
+        _waitProcessFileDescriptorSupported = true
     }
     let monitorThreadContext = MonitorThreadContext(
         epollFileDescriptor: epollFileDescriptor,
@@ -755,36 +760,25 @@ private func _reapAllKnownChildProcesses(_ signalFd: CInt, context: MonitorThrea
     }
 }
 
-private func _isLinuxKernelAtLeast(major: Int, minor: Int) -> Bool {
-    var buffer = utsname()
-    guard uname(&buffer) == 0 else {
+internal func _isWaitProcessFileDescriptorSupported() -> Bool {
+    // waitid(P_PIDFD) is only supported on Linux kernel 5.4 and above
+    // Prob whether the current system supports it by calling it with self pidfd
+    // and checking for EINVAL (waitid sets errno to EINVAL if it does not
+    // recognize the id type).
+    var siginfo = siginfo_t()
+    let selfPidfd = _pidfd_open(getpid())
+    if selfPidfd < 0 {
+        // If we can not retrieve pidfd, the system does not support waitid(P_PIDFD)
         return false
     }
-    let releaseString = withUnsafeBytes(of: &buffer.release) { ptr in
-        let buffer = ptr.bindMemory(to: CChar.self)
-        return String(cString: buffer.baseAddress!)
-    }
-
-    // utsname release follows the format
-    // major.minor.patch-extra
-    guard let mainVersion = releaseString.split(separator: "-").first else {
-        return false
-    }
-
-    let versionComponents = mainVersion.split(separator: ".")
-
-    guard let currentMajor = Int(versionComponents[0]),
-          let currentMinor = Int(versionComponents[1]) else {
-        return false
-    }
-
-    if currentMajor > major {
-        return true
-    } else if currentMajor == major {
-        return currentMinor >= minor
-    } else {
-        return false
-    }
+    /// The following call will fail either with
+    /// - ECHILD: in this case we know P_PIDFD is supported and waitid correctly
+    ///     reported that we don't have a child with the same selfPidfd;
+    /// - EINVAL: in this case we know P_PIDFD is not supported because it does not
+    ///     recognize the `P_PIDFD` type
+    waitid(idtype_t(UInt32(P_PIDFD)), id_t(selfPidfd), &siginfo, WEXITED | WNOWAIT)
+    return errno == ECHILD
 }
+
 
 #endif  // canImport(Glibc) || canImport(Android) || canImport(Musl)
