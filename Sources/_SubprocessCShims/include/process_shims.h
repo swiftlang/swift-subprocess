@@ -23,10 +23,17 @@
 
 #if TARGET_OS_LINUX
 #include <sys/epoll.h>
-#include <sys/wait.h>
-#include <sys/eventfd.h>
 #include <sys/signalfd.h>
 #endif // TARGET_OS_LINUX
+
+#if TARGET_OS_FREEBSD
+#include <sys/procdesc.h>
+#endif
+
+#if TARGET_OS_LINUX || TARGET_OS_FREEBSD
+#include <sys/eventfd.h>
+#include <sys/wait.h>
+#endif // TARGET_OS_LINUX || TARGET_OS_FREEBSD
 
 #if __has_include(<mach/vm_page_size.h>)
 vm_size_t _subprocess_vm_size(void);
@@ -72,7 +79,9 @@ void _subprocess_lock_environ(void);
 void _subprocess_unlock_environ(void);
 char * _Nullable * _Nullable _subprocess_get_environ(void);
 
-#if TARGET_OS_LINUX
+int _subprocess_pdkill(int pidfd, int signal);
+
+#if TARGET_OS_UNIX && !TARGET_OS_FREEBSD
 int _shims_snprintf(
     char * _Nonnull str,
     int len,
@@ -80,9 +89,10 @@ int _shims_snprintf(
     char * _Nonnull str1,
     char * _Nonnull str2
 );
+#endif
 
+#if TARGET_OS_LINUX
 int _pidfd_open(pid_t pid);
-int _pidfd_send_signal(int pidfd, int signal);
 
 // P_PIDFD is only defined on Linux Kernel 5.4 and above
 // Define our value if it's not available

@@ -11,7 +11,7 @@
 
 /// Linux AsyncIO implementation based on epoll
 
-#if canImport(Glibc) || canImport(Android) || canImport(Musl)
+#if os(Linux) || os(Android)
 
 #if canImport(System)
 @preconcurrency import System
@@ -266,6 +266,11 @@ final class AsyncIO: Sendable {
                     targetEvent = EPOLL_EVENTS(EPOLLOUT)
                 }
 
+                // Save the continuation (before calling epoll_ctl, so we don't miss any data)
+                _registration.withLock { storage in
+                    storage[fileDescriptor.rawValue] = continuation
+                }
+
                 var event = epoll_event(
                     events: targetEvent.rawValue,
                     data: epoll_data(fd: fileDescriptor.rawValue)
@@ -277,6 +282,10 @@ final class AsyncIO: Sendable {
                     &event
                 )
                 if rc != 0 {
+                    _registration.withLock { storage in
+                        storage.removeValue(forKey: fileDescriptor.rawValue)
+                    }
+
                     let capturedError = errno
                     let error = SubprocessError(
                         code: .init(.asyncIOFailed(
@@ -286,10 +295,6 @@ final class AsyncIO: Sendable {
                     )
                     continuation.finish(throwing: error)
                     return
-                }
-                // Now save the continuation
-                _registration.withLock { storage in
-                    storage[fileDescriptor.rawValue] = continuation
                 }
             case .failure(let setupError):
                 continuation.finish(throwing: setupError)

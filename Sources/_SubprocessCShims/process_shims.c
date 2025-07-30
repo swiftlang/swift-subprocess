@@ -42,6 +42,10 @@
 #include <linux/close_range.h>
 #endif
 
+#include <sys/syscall.h>
+#include <sys/utsname.h>
+#include <sys/wait.h>
+
 #if __has_include(<crt_externs.h>)
 #include <crt_externs.h>
 #elif defined(_WIN32)
@@ -262,12 +266,10 @@ int _subprocess_spawn(
 
 #endif // TARGET_OS_MAC
 
-// MARK: - Linux (fork/exec + posix_spawn fallback)
-#if TARGET_OS_LINUX || TARGET_OS_BSD
-#ifndef __GLIBC_PREREQ
-#define __GLIBC_PREREQ(maj, min) 0
-#endif
+// MARK: - Linux/BSD (fork/exec + posix_spawn fallback)
+#if TARGET_OS_UNIX && !TARGET_OS_MAC
 
+#if TARGET_OS_LINUX
 #ifndef SYS_pidfd_open
 #define SYS_pidfd_open 434
 #endif
@@ -337,6 +339,29 @@ struct linux_dirent64 {
 static int _getdents64(int fd, struct linux_dirent64 *dirp, size_t nbytes) {
     return syscall(SYS_getdents64, fd, dirp, nbytes);
 }
+#endif
+
+static pid_t _subprocess_pdfork(int *fdp) {
+#if TARGET_OS_LINUX
+    return _clone3(fdp); // CLONE_PIDFD always sets close-on-exec on the fd
+#elif TARGET_OS_FREEBSD
+    return pdfork(fdp, PD_CLOEXEC);
+#else
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+int _subprocess_pdkill(int pidfd, int signal) {
+#if TARGET_OS_LINUX
+    return _pidfd_send_signal(pidfd, signal);
+#elif TARGET_OS_FREEBSD
+    return pdkill(pidfd, signal);
+#else
+    errno = ENOSYS;
+    return -1;
+#endif
+}
 
 static pthread_mutex_t _subprocess_fork_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -379,6 +404,7 @@ static int _subprocess_make_critical_mask(sigset_t *old_mask) {
 # define _SUBPROCESS_SIG_MAX (sizeof(sigset_t) * CHAR_BIT + 1)
 #endif
 
+#if !TARGET_OS_FREEBSD
 int _shims_snprintf(
     char * _Nonnull str,
     int len,
@@ -388,6 +414,7 @@ int _shims_snprintf(
 ) {
     return snprintf(str, len, format, str1, str2);
 }
+#endif
 
 static int _positive_int_parse(const char *str) {
     char *end;
@@ -403,6 +430,7 @@ static int _positive_int_parse(const char *str) {
     return (int)value;
 }
 
+#if defined(__linux__)
 // Linux-specific version that uses syscalls directly and doesn't allocate heap memory.
 // Safe to use after vfork() and before execve()
 static int _highest_possibly_open_fd_dir_linux(const char *fd_dir) {
@@ -451,6 +479,7 @@ static int _highest_possibly_open_fd_dir_linux(const char *fd_dir) {
     close(dir_fd);
     return highest_fd_so_far;
 }
+#endif
 
 // This function is only used on systems with Linux kernel 5.9 or lower.
 // On newer systems, `close_range` is used instead.
@@ -533,11 +562,11 @@ int _subprocess_fork_exec(
 
     // Finally, fork / clone
     int _pidfd = -1;
-    // First attempt to use clone3, only fall back to fork if clone3 is not available
-    pid_t childPid = _clone3(&_pidfd);
+    // First attempt to create a process file descriptor on supported platforms, only fall back to fork if those are not available
+    pid_t childPid = _subprocess_pdfork(&_pidfd);
     if (childPid < 0) {
         if (errno == ENOSYS) {
-            // clone3 is not implemented. Use fork instead
+            // process file descriptor is not implemented. Use fork instead
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated"
             childPid = fork();
@@ -683,11 +712,13 @@ int _subprocess_fork_exec(
     waitid(P_PID, childPid, &info, WEXITED); \
     return capturedError
 
+#if TARGET_OS_LINUX
         // On Linux 5.3 and lower, we have to fetch pidfd separately
         // Newer Linux supports clone3 which returns pidfd directly
         if (_pidfd < 0) {
             _pidfd = _pidfd_open(childPid);
         }
+#endif
 
         // Parent process
         close(pipefd[1]);  // Close unused write end
@@ -738,7 +769,7 @@ int _subprocess_fork_exec(
     }
 }
 
-#endif // TARGET_OS_LINUX
+#endif // TARGET_OS_UNIX && !TARGET_OS_MAC
 
 #pragma mark - Environment Locking
 

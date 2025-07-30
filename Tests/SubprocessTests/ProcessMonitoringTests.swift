@@ -19,8 +19,8 @@
 import Darwin
 #elseif canImport(Glibc)
 import Glibc
-#elseif canImport(Bionic)
-import Bionic
+#elseif canImport(Android)
+import Android
 #elseif canImport(Musl)
 import Musl
 #elseif canImport(WinSDK)
@@ -76,7 +76,7 @@ struct SubprocessProcessMonitoringTests {
     private func devNullInputPipe() throws -> CreatedPipe {
         #if os(Windows)
         let devnullFd: FileDescriptor = try .openDevNull(withAccessMode: .writeOnly)
-        let devnull = HANDLE(bitPattern: _get_osfhandle(devnullFd.rawValue))!
+        let devnull = try #require(HANDLE(bitPattern: _get_osfhandle(devnullFd.rawValue)))
         #else
         let devnull: FileDescriptor = try .openDevNull(withAccessMode: .readOnly)
         #endif
@@ -89,7 +89,7 @@ struct SubprocessProcessMonitoringTests {
     private func devNullOutputPipe() throws -> CreatedPipe {
         #if os(Windows)
         let devnullFd: FileDescriptor = try .openDevNull(withAccessMode: .writeOnly)
-        let devnull = HANDLE(bitPattern: _get_osfhandle(devnullFd.rawValue))!
+        let devnull = try #require(HANDLE(bitPattern: _get_osfhandle(devnullFd.rawValue)))
         #else
         let devnull: FileDescriptor = try .openDevNull(withAccessMode: .writeOnly)
         #endif
@@ -206,7 +206,7 @@ extension SubprocessProcessMonitoringTests {
         let processIdentifier = ProcessIdentifier(
             value: .max, processDescriptor: INVALID_HANDLE_VALUE, threadHandle: INVALID_HANDLE_VALUE
         )
-        #elseif os(Linux) || os (FreeBSD)
+        #elseif os(Linux) || os(Android) || os(FreeBSD)
         let expectedError = SubprocessError(
             code: .init(.failedToMonitorProcess),
             underlyingError: .init(rawValue: ECHILD)

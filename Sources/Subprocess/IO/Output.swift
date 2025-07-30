@@ -148,7 +148,7 @@ public struct BytesOutput: OutputProtocol {
     internal func captureOutput(
         from diskIO: consuming IOChannel
     ) async throws -> [UInt8] {
-        #if canImport(Darwin)
+        #if SUBPROCESS_ASYNCIO_DISPATCH
         var result: DispatchData? = nil
         #else
         var result: [UInt8]? = nil
@@ -173,7 +173,7 @@ public struct BytesOutput: OutputProtocol {
                 underlyingError: nil
             )
         }
-        #if canImport(Darwin)
+        #if SUBPROCESS_ASYNCIO_DISPATCH
         return result?.array() ?? []
         #else
         return result ?? []
@@ -302,7 +302,7 @@ extension OutputProtocol {
             return try await bytesOutput.captureOutput(from: diskIO) as! Self.OutputType
         }
 
-        #if canImport(Darwin)
+        #if SUBPROCESS_ASYNCIO_DISPATCH
         var result: DispatchData? = nil
         #else
         var result: [UInt8]? = nil
@@ -328,7 +328,7 @@ extension OutputProtocol {
             )
         }
 
-        #if canImport(Darwin)
+        #if SUBPROCESS_ASYNCIO_DISPATCH
         return try self.output(from: result ?? .empty)
         #else
         return try self.output(from: result ?? [])
@@ -353,7 +353,7 @@ extension OutputProtocol where OutputType == Void {
 
 #if SubprocessSpan
 extension OutputProtocol {
-    #if canImport(Darwin)
+    #if SUBPROCESS_ASYNCIO_DISPATCH
     internal func output(from data: DispatchData) throws -> OutputType {
         guard !data.isEmpty else {
             let empty = UnsafeRawBufferPointer(start: nil, count: 0)
@@ -380,7 +380,7 @@ extension OutputProtocol {
             return try self.output(from: span)
         }
     }
-    #endif // canImport(Darwin)
+    #endif // SUBPROCESS_ASYNCIO_DISPATCH
 }
 #endif
 
