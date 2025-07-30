@@ -753,7 +753,7 @@ public func runDetached(
             errorPipe: try processError.createPipe()
         ).execution
     }
-    execution.release()
+    execution.processIdentifier.close()
     return execution.processIdentifier
 }
 

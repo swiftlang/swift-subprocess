@@ -23,7 +23,9 @@
 
 #if TARGET_OS_LINUX
 #include <sys/epoll.h>
+#include <sys/wait.h>
 #include <sys/eventfd.h>
+#include <sys/signalfd.h>
 #endif // TARGET_OS_LINUX
 
 #if __has_include(<mach/vm_page_size.h>)
@@ -47,6 +49,7 @@ int _subprocess_spawn(
 
 int _subprocess_fork_exec(
     pid_t * _Nonnull pid,
+    int * _Nonnull pidfd,
     const char * _Nonnull exec_path,
     const char * _Nullable working_directory,
     const int file_descriptors[_Nonnull],
@@ -78,6 +81,16 @@ int _shims_snprintf(
     char * _Nonnull str1,
     char * _Nonnull str2
 );
+
+int _pidfd_open(pid_t pid);
+int _pidfd_send_signal(int pidfd, int signal);
+
+// P_PIDFD is only defined on Linux Kernel 5.4 and above
+// Define our value if it's not available
+#ifndef P_PIDFD
+#define P_PIDFD 3
+#endif
+
 #endif
 
 #endif // !TARGET_OS_WINDOWS
