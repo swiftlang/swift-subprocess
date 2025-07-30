@@ -15,9 +15,11 @@
 // For posix_spawn_file_actions_addchdir_np
 #define _GNU_SOURCE 1
 // For pidfd_open
-#include <sys/syscall.h>
-#include <sys/utsname.h>
 #include <linux/sched.h>
+#endif
+
+#if TARGET_OS_FREEBSD
+#include <sys/procdesc.h>
 #endif
 
 #include "include/process_shims.h"
@@ -36,6 +38,10 @@
 #include <pthread.h>
 
 #include <stdio.h>
+
+#include <sys/syscall.h>
+#include <sys/utsname.h>
+#include <sys/wait.h>
 
 #if __has_include(<crt_externs.h>)
 #include <crt_externs.h>
@@ -83,7 +89,7 @@ int _shims_snprintf(
     return snprintf(str, len, format, str1, str2);
 }
 
-int _pidfd_send_signal(int pidfd, int signal) {
+static int _pidfd_send_signal(int pidfd, int signal) {
     return syscall(SYS_pidfd_send_signal, pidfd, signal, NULL, 0);
 }
 
@@ -305,12 +311,10 @@ int _subprocess_spawn(
 
 #endif // TARGET_OS_MAC
 
-// MARK: - Linux (fork/exec + posix_spawn fallback)
-#if TARGET_OS_LINUX || TARGET_OS_BSD
-#ifndef __GLIBC_PREREQ
-#define __GLIBC_PREREQ(maj, min) 0
-#endif
+// MARK: - Linux/BSD (fork/exec + posix_spawn fallback)
+#if TARGET_OS_UNIX && !TARGET_OS_MAC
 
+#if TARGET_OS_LINUX
 int _pidfd_open(pid_t pid) {
     return syscall(SYS_pidfd_open, pid, 0);
 }
@@ -334,6 +338,29 @@ static int _clone3(int *pidfd) {
     };
 
     return syscall(SYS_clone3, &args, sizeof(args));
+}
+#endif
+
+static pid_t _subprocess_pdfork(int *fdp) {
+#if TARGET_OS_LINUX
+    return _clone3(fdp); // CLONE_PIDFD always sets close-on-exec on the fd
+#elif TARGET_OS_FREEBSD
+    return pdfork(fdp, PD_CLOEXEC);
+#else
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+int _subprocess_pdkill(int pidfd, int signal) {
+#if TARGET_OS_LINUX
+    return _pidfd_send_signal(pidfd, signal);
+#elif TARGET_OS_FREEBSD
+    return pdkill(pidfd, signal);
+#else
+    errno = ENOSYS;
+    return -1;
+#endif
 }
 
 int _subprocess_fork_exec(
@@ -404,11 +431,11 @@ int _subprocess_fork_exec(
 
     // Finally, fork / clone
     int _pidfd = -1;
-    // First attempt to use clone3, only fall back to fork if clone3 is not available
-    pid_t childPid = _clone3(&_pidfd);
+    // First attempt to create a process file descriptor on supported platforms, only fall back to fork if those are not available
+    pid_t childPid = _subprocess_pdfork(&_pidfd);
     if (childPid < 0) {
         if (errno == ENOSYS) {
-            // clone3 is not implemented. Use fork instead
+            // process file descriptor is not implemented. Use fork instead
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated"
             childPid = fork();
@@ -540,6 +567,7 @@ int _subprocess_fork_exec(
         // If we reached this point, something went wrong
         write_error_and_exit;
     } else {
+#if TARGET_OS_LINUX
         // On Linux 5.3 and lower, we have to fetch pidfd separately
         // Newer Linux supports clone3 which returns pidfd directly
         if (_pidfd < 0) {
@@ -548,6 +576,7 @@ int _subprocess_fork_exec(
                 return errno;
             }
         }
+#endif
 
         // Parent process
         close(pipefd[1]);  // Close unused write end
@@ -599,7 +628,7 @@ int _subprocess_fork_exec(
     }
 }
 
-#endif // TARGET_OS_LINUX
+#endif // TARGET_OS_UNIX && !TARGET_OS_MAC
 
 #endif // !TARGET_OS_WINDOWS
 

@@ -73,6 +73,8 @@ void _subprocess_lock_environ(void);
 void _subprocess_unlock_environ(void);
 char * _Nullable * _Nullable _subprocess_get_environ(void);
 
+int _subprocess_pdkill(int pidfd, int signal);
+
 #if TARGET_OS_LINUX
 int _shims_snprintf(
     char * _Nonnull str,
@@ -83,7 +85,6 @@ int _shims_snprintf(
 );
 
 int _pidfd_open(pid_t pid);
-int _pidfd_send_signal(int pidfd, int signal);
 
 // P_PIDFD is only defined on Linux Kernel 5.4 and above
 // Define our value if it's not available

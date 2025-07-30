@@ -23,7 +23,7 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
     public typealias Failure = any Swift.Error
     public typealias Element = Buffer
 
-    #if canImport(Darwin)
+    #if SUBPROCESS_ASYNCIO_DISPATCH
     internal typealias DiskIO = DispatchIO
     #elseif canImport(WinSDK)
     internal typealias DiskIO = HANDLE
@@ -55,7 +55,7 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
             )
             guard let data else {
                 // We finished reading. Close the file descriptor now
-                #if canImport(Darwin)
+                #if SUBPROCESS_ASYNCIO_DISPATCH
                 try _safelyClose(.dispatchIO(self.diskIO))
                 #elseif canImport(WinSDK)
                 try _safelyClose(.handle(self.diskIO))
@@ -137,7 +137,7 @@ extension AsyncBufferSequence {
                         self.eofReached = true
                         return nil
                     }
-                    #if canImport(Darwin)
+                    #if SUBPROCESS_ASYNCIO_DISPATCH
                     // Unfortunately here we _have to_ copy the bytes out because
                     // DispatchIO (rightfully) reuses buffer, which means `buffer.data`
                     // has the same address on all iterations, therefore we can't directly

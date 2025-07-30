@@ -17,7 +17,7 @@
 extension AsyncBufferSequence {
     /// A immutable collection of bytes
     public struct Buffer: Sendable {
-        #if canImport(Darwin)
+        #if SUBPROCESS_ASYNCIO_DISPATCH
         // We need to keep the backingData alive while Slice is alive
         internal let backingData: DispatchData
         internal let data: DispatchData.Region
@@ -45,7 +45,7 @@ extension AsyncBufferSequence {
         internal static func createFrom(_ data: [UInt8]) -> [Buffer] {
             return [.init(data: data)]
         }
-        #endif // canImport(Darwin)
+        #endif // SUBPROCESS_ASYNCIO_DISPATCH
     }
 }
 
@@ -92,7 +92,7 @@ extension AsyncBufferSequence.Buffer {
 
 // MARK: - Hashable, Equatable
 extension AsyncBufferSequence.Buffer: Equatable, Hashable {
-    #if canImport(Darwin)
+    #if SUBPROCESS_ASYNCIO_DISPATCH
     public static func == (lhs: AsyncBufferSequence.Buffer, rhs: AsyncBufferSequence.Buffer) -> Bool {
         return lhs.data == rhs.data
     }
@@ -104,7 +104,7 @@ extension AsyncBufferSequence.Buffer: Equatable, Hashable {
     // else Compiler generated conformances
 }
 
-#if canImport(Darwin)
+#if SUBPROCESS_ASYNCIO_DISPATCH
 extension DispatchData.Region {
     static func == (lhs: DispatchData.Region, rhs: DispatchData.Region) -> Bool {
         return lhs.withUnsafeBytes { lhsBytes in
@@ -120,5 +120,45 @@ extension DispatchData.Region {
         }
     }
 }
-#endif
+#if !canImport(Darwin)
+extension DispatchData {
+    typealias Region = _ContiguousBufferView
 
+    var regions: [Region] {
+        contiguousBufferViews
+    }
+
+    /// Unfortunately `DispatchData.Region` is not available on Linux, hence our own wrapper
+    internal struct _ContiguousBufferView: @unchecked Sendable, RandomAccessCollection {
+        typealias Element = UInt8
+
+        internal let bytes: UnsafeBufferPointer<UInt8>
+
+        internal var startIndex: Int { self.bytes.startIndex }
+        internal var endIndex: Int { self.bytes.endIndex }
+
+        internal init(bytes: UnsafeBufferPointer<UInt8>) {
+            self.bytes = bytes
+        }
+
+        internal func withUnsafeBytes<ResultType>(_ body: (UnsafeRawBufferPointer) throws -> ResultType) rethrows -> ResultType {
+            return try body(UnsafeRawBufferPointer(self.bytes))
+        }
+
+        subscript(position: Int) -> UInt8 {
+            _read {
+                yield self.bytes[position]
+            }
+        }
+    }
+
+    internal var contiguousBufferViews: [_ContiguousBufferView] {
+        var slices = [_ContiguousBufferView]()
+        enumerateBytes { (bytes, index, stop) in
+            slices.append(_ContiguousBufferView(bytes: bytes))
+        }
+        return slices
+    }
+}
+#endif
+#endif

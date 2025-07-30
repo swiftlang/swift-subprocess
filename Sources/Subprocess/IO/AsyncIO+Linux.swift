@@ -11,7 +11,7 @@
 
 /// Linux AsyncIO implementation based on epoll
 
-#if canImport(Glibc) || canImport(Android) || canImport(Musl)
+#if os(Linux) || os(Android)
 
 #if canImport(System)
 @preconcurrency import System

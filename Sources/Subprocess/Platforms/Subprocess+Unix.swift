@@ -110,13 +110,13 @@ extension Execution {
         }
         let pid = shouldSendToProcessGroup ? -(processIdentifier.value) : processIdentifier.value
 
-        #if os(Linux) || os(Android)
-        // On linux, use pidfd_send_signal if possible
+        #if os(Linux) || os(Android) || os(FreeBSD)
+        // On platforms with process descriptors, use _subprocess_pdkill if possible
         if shouldSendToProcessGroup {
-            // pidfd_send_signal does not support sending signal to process group
+            // _subprocess_pdkill does not support sending signal to process group
             try _kill(pid, signal: signal)
         } else {
-            guard _pidfd_send_signal(
+            guard _subprocess_pdkill(
                 processIdentifier.processFileDescriptor,
                 signal.rawValue
             ) == 0 else {
@@ -379,5 +379,334 @@ extension FileDescriptor {
 }
 
 internal typealias PlatformFileDescriptor = CInt
+
+// MARK: - Spawning
+
+#if !canImport(Darwin)
+extension Configuration {
+    internal func spawn(
+        withInput inputPipe: consuming CreatedPipe,
+        outputPipe: consuming CreatedPipe,
+        errorPipe: consuming CreatedPipe
+    ) throws -> SpawnResult {
+        #if os(Linux) || os(Android)
+        // Ensure the waiter thread is running.
+        _setupMonitorSignalHandler()
+        #endif
+
+        // Instead of checking if every possible executable path
+        // is valid, spawn each directly and catch ENOENT
+        let possiblePaths = self.executable.possibleExecutablePaths(
+            withPathValue: self.environment.pathValue()
+        )
+        var inputPipeBox: CreatedPipe? = consume inputPipe
+        var outputPipeBox: CreatedPipe? = consume outputPipe
+        var errorPipeBox: CreatedPipe? = consume errorPipe
+
+        return try self.preSpawn { args throws -> SpawnResult in
+            let (env, uidPtr, gidPtr, supplementaryGroups) = args
+
+            var _inputPipe = inputPipeBox.take()!
+            var _outputPipe = outputPipeBox.take()!
+            var _errorPipe = errorPipeBox.take()!
+
+            let inputReadFileDescriptor: IODescriptor? = _inputPipe.readFileDescriptor()
+            let inputWriteFileDescriptor: IODescriptor? = _inputPipe.writeFileDescriptor()
+            let outputReadFileDescriptor: IODescriptor? = _outputPipe.readFileDescriptor()
+            let outputWriteFileDescriptor: IODescriptor? = _outputPipe.writeFileDescriptor()
+            let errorReadFileDescriptor: IODescriptor? = _errorPipe.readFileDescriptor()
+            let errorWriteFileDescriptor: IODescriptor? = _errorPipe.writeFileDescriptor()
+
+            for possibleExecutablePath in possiblePaths {
+                var processGroupIDPtr: UnsafeMutablePointer<gid_t>? = nil
+                if let processGroupID = self.platformOptions.processGroupID {
+                    processGroupIDPtr = .allocate(capacity: 1)
+                    processGroupIDPtr?.pointee = gid_t(processGroupID)
+                }
+                // Setup Arguments
+                let argv: [UnsafeMutablePointer<CChar>?] = self.arguments.createArgs(
+                    withExecutablePath: possibleExecutablePath
+                )
+                defer {
+                    for ptr in argv { ptr?.deallocate() }
+                }
+                // Setup input
+                let fileDescriptors: [CInt] = [
+                    inputReadFileDescriptor?.platformDescriptor() ?? -1,
+                    inputWriteFileDescriptor?.platformDescriptor() ?? -1,
+                    outputWriteFileDescriptor?.platformDescriptor() ?? -1,
+                    outputReadFileDescriptor?.platformDescriptor() ?? -1,
+                    errorWriteFileDescriptor?.platformDescriptor() ?? -1,
+                    errorReadFileDescriptor?.platformDescriptor() ?? -1,
+                ]
+
+                // Spawn
+                var pid: pid_t = 0
+                var processFileDescriptor: PlatformFileDescriptor = -1
+                let spawnError: CInt = possibleExecutablePath.withCString { exePath in
+                    return (self.workingDirectory?.string).withOptionalCString { workingDir in
+                        return supplementaryGroups.withOptionalUnsafeBufferPointer { sgroups in
+                            return fileDescriptors.withUnsafeBufferPointer { fds in
+                                return _subprocess_fork_exec(
+                                    &pid,
+                                    &processFileDescriptor,
+                                    exePath,
+                                    workingDir,
+                                    fds.baseAddress!,
+                                    argv,
+                                    env,
+                                    uidPtr,
+                                    gidPtr,
+                                    processGroupIDPtr,
+                                    CInt(supplementaryGroups?.count ?? 0),
+                                    sgroups?.baseAddress,
+                                    self.platformOptions.createSession ? 1 : 0,
+                                    self.platformOptions.preSpawnProcessConfigurator
+                                )
+                            }
+                        }
+                    }
+                }
+                // Spawn error
+                if spawnError != 0 {
+                    if spawnError == ENOENT || spawnError == EACCES {
+                        // Move on to another possible path
+                        continue
+                    }
+                    // Throw all other errors
+                    try self.safelyCloseMultiple(
+                        inputRead: inputReadFileDescriptor,
+                        inputWrite: inputWriteFileDescriptor,
+                        outputRead: outputReadFileDescriptor,
+                        outputWrite: outputWriteFileDescriptor,
+                        errorRead: errorReadFileDescriptor,
+                        errorWrite: errorWriteFileDescriptor
+                    )
+                    throw SubprocessError(
+                        code: .init(.spawnFailed),
+                        underlyingError: .init(rawValue: spawnError)
+                    )
+                }
+                // After spawn finishes, close all child side fds
+                try self.safelyCloseMultiple(
+                    inputRead: inputReadFileDescriptor,
+                    inputWrite: nil,
+                    outputRead: nil,
+                    outputWrite: outputWriteFileDescriptor,
+                    errorRead: nil,
+                    errorWrite: errorWriteFileDescriptor
+                )
+                let execution = Execution(
+                    processIdentifier: .init(
+                        value: pid,
+                        processFileDescriptor: processFileDescriptor
+                    )
+                )
+                return SpawnResult(
+                    execution: execution,
+                    inputWriteEnd: inputWriteFileDescriptor?.createIOChannel(),
+                    outputReadEnd: outputReadFileDescriptor?.createIOChannel(),
+                    errorReadEnd: errorReadFileDescriptor?.createIOChannel()
+                )
+            }
+
+            // If we reach this point, it means either the executable path
+            // or working directory is not valid. Since posix_spawn does not
+            // provide which one is not valid, here we make a best effort guess
+            // by checking whether the working directory is valid. This technically
+            // still causes TOUTOC issue, but it's the best we can do for error recovery.
+            try self.safelyCloseMultiple(
+                inputRead: inputReadFileDescriptor,
+                inputWrite: inputWriteFileDescriptor,
+                outputRead: outputReadFileDescriptor,
+                outputWrite: outputWriteFileDescriptor,
+                errorRead: errorReadFileDescriptor,
+                errorWrite: errorWriteFileDescriptor
+            )
+            if let workingDirectory = self.workingDirectory?.string {
+                guard Configuration.pathAccessible(workingDirectory, mode: F_OK) else {
+                    throw SubprocessError(
+                        code: .init(.failedToChangeWorkingDirectory(workingDirectory)),
+                        underlyingError: .init(rawValue: ENOENT)
+                    )
+                }
+            }
+            throw SubprocessError(
+                code: .init(.executableNotFound(self.executable.description)),
+                underlyingError: .init(rawValue: ENOENT)
+            )
+        }
+    }
+}
+
+// MARK:  - ProcessIdentifier
+
+/// A platform independent identifier for a Subprocess.
+public struct ProcessIdentifier: Sendable, Hashable {
+    /// The platform specific process identifier value
+    public let value: pid_t
+
+    #if os(Linux)
+    public let processFileDescriptor: CInt
+    #else
+    internal let processFileDescriptor: CInt
+    #endif
+
+    internal init(value: pid_t, processFileDescriptor: PlatformFileDescriptor) {
+        self.value = value
+        self.processFileDescriptor = processFileDescriptor
+    }
+
+    internal func close() {
+        if self.processFileDescriptor > 0 {
+            _SubprocessCShims.close(self.processFileDescriptor)
+        }
+    }
+}
+
+extension ProcessIdentifier: CustomStringConvertible, CustomDebugStringConvertible {
+    public var description: String { "\(self.value)" }
+
+    public var debugDescription: String { "\(self.value)" }
+}
+
+// MARK: - Platform Specific Options
+
+/// The collection of platform-specific settings
+/// to configure the subprocess when running
+public struct PlatformOptions: Sendable {
+    // Set user ID for the subprocess
+    public var userID: uid_t? = nil
+    /// Set the real and effective group ID and the saved
+    /// set-group-ID of the subprocess, equivalent to calling
+    /// `setgid()` on the child process.
+    /// Group ID is used to control permissions, particularly
+    /// for file access.
+    public var groupID: gid_t? = nil
+    // Set list of supplementary group IDs for the subprocess
+    public var supplementaryGroups: [gid_t]? = nil
+    /// Set the process group for the subprocess, equivalent to
+    /// calling `setpgid()` on the child process.
+    /// Process group ID is used to group related processes for
+    /// controlling signals.
+    public var processGroupID: pid_t? = nil
+    // Creates a session and sets the process group ID
+    // i.e. Detach from the terminal.
+    public var createSession: Bool = false
+    /// An ordered list of steps in order to tear down the child
+    /// process in case the parent task is cancelled before
+    /// the child proces terminates.
+    /// Always ends in sending a `.kill` signal at the end.
+    public var teardownSequence: [TeardownStep] = []
+    /// A closure to configure platform-specific
+    /// spawning constructs. This closure enables direct
+    /// configuration or override of underlying platform-specific
+    /// spawn settings that `Subprocess` utilizes internally,
+    /// in cases where Subprocess does not provide higher-level
+    /// APIs for such modifications.
+    ///
+    /// On Unix platforms (except Darwin), Subprocess uses `fork/exec` as the
+    /// underlying spawning mechanism. This closure is called
+    /// after `fork()` but before `exec()`. You may use it to
+    /// call any necessary process setup functions.
+    public var preSpawnProcessConfigurator: (@convention(c) @Sendable () -> Void)? = nil
+
+    public init() {}
+}
+
+extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible {
+    internal func description(withIndent indent: Int) -> String {
+        let indent = String(repeating: " ", count: indent * 4)
+        return """
+            PlatformOptions(
+            \(indent)    userID: \(String(describing: userID)),
+            \(indent)    groupID: \(String(describing: groupID)),
+            \(indent)    supplementaryGroups: \(String(describing: supplementaryGroups)),
+            \(indent)    processGroupID: \(String(describing: processGroupID)),
+            \(indent)    createSession: \(createSession),
+            \(indent)    preSpawnProcessConfigurator: \(self.preSpawnProcessConfigurator == nil ? "not set" : "set")
+            \(indent))
+            """
+    }
+
+    public var description: String {
+        return self.description(withIndent: 0)
+    }
+
+    public var debugDescription: String {
+        return self.description(withIndent: 0)
+    }
+}
+
+// Special keys used in Error's user dictionary
+extension String {
+    static let debugDescriptionErrorKey = "DebugDescription"
+}
+
+#if !os(Linux)
+// MARK: - Process Monitoring
+@Sendable
+internal func monitorProcessTermination(
+    for processIdentifier: ProcessIdentifier
+) async throws -> TerminationStatus {
+    try await withPlatformThread {
+        try waitid(pid: processIdentifier.value)
+    }
+}
+
+internal func withPlatformThread<T: Sendable>(_ body: @Sendable @escaping () throws -> T) async throws -> T {
+    return try await withCheckedThrowingContinuation { continuation in
+        do {
+            try pthread_create {
+                continuation.resume(with: Result { try body() })
+            }
+        } catch {
+            continuation.resume(throwing: error)
+        }
+    }
+}
+
+internal func pthread_create(_ body: @Sendable @escaping () -> ()) throws {
+    final class Context {
+        let body: @Sendable () -> ()
+        init(body: @Sendable @escaping () -> Void) {
+            self.body = body
+        }
+    }
+    var thread: pthread_t?
+    let rc = pthread_create(
+        &thread,
+        nil,
+        { context -> UnsafeMutableRawPointer? in
+            (Unmanaged<AnyObject>.fromOpaque(context!).takeRetainedValue() as! Context).body()
+            return nil
+        },
+        Unmanaged.passRetained(Context(body: body)).toOpaque()
+    )
+    if rc != 0 {
+        throw SubprocessError.UnderlyingError(rawValue: rc)
+    }
+}
+
+@available(*, noasync)
+internal func waitid(pid: pid_t) throws -> TerminationStatus {
+    while true {
+        var exitStatusCode: Int32 = -1
+        if waitpid(pid, &exitStatusCode, WEXITED) != -1 {
+            switch (_was_process_signaled(exitStatusCode) != 0, _was_process_exited(exitStatusCode) != 0) {
+            case (true, false):
+                return .unhandledException(_get_signal_code(exitStatusCode))
+            case (false, true):
+                return .exited(_get_exit_code(exitStatusCode))
+            default:
+                fatalError("Unexpected exit status: \(exitStatusCode)")
+            }
+        } else if errno != EINTR {
+            throw SubprocessError.UnderlyingError(rawValue: errno)
+        }
+    }
+}
+#endif
+#endif
 
 #endif  // canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl)

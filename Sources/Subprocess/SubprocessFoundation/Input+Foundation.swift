@@ -129,7 +129,7 @@ extension StandardInputWriter {
 }
 
 
-#if canImport(Darwin)
+#if SUBPROCESS_ASYNCIO_DISPATCH
 extension AsyncIO {
     internal func write(
         _ data: Data,
@@ -168,6 +168,6 @@ extension AsyncIO {
         return try await self._write(data, to: diskIO)
     }
 }
-#endif // canImport(Darwin)
+#endif // SUBPROCESS_ASYNCIO_DISPATCH
 
 #endif  // SubprocessFoundation

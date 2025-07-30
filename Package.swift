@@ -54,6 +54,7 @@ let package = Package(
             path: "Sources/Subprocess",
             exclude: [ "CMakeLists.txt" ],
             swiftSettings: [
+                .define("SUBPROCESS_ASYNCIO_DISPATCH", .when(platforms: [.macOS, .custom("freebsd"), .openbsd])),
                 .enableExperimentalFeature("StrictConcurrency"),
                 .enableExperimentalFeature("NonescapableTypes"),
                 .enableExperimentalFeature("LifetimeDependence"),
