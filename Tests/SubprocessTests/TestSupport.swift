@@ -30,6 +30,15 @@ internal func randomString(length: Int, lettersOnly: Bool = false) -> String {
     return String((0..<length).map { _ in letters.randomElement()! })
 }
 
+internal func randomData(count: Int) -> [UInt8] {
+    return Array(unsafeUninitializedCapacity: count) { buffer, initializedCount in
+        for i in 0 ..< count {
+            buffer[i] = UInt8.random(in: 0...255)
+        }
+        initializedCount = count
+    }
+}
+
 internal func directory(_ lhs: String, isSameAs rhs: String) -> Bool {
     guard lhs != rhs else {
         return true

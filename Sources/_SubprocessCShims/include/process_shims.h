@@ -84,6 +84,8 @@ int _shims_snprintf(
 
 #if TARGET_OS_WINDOWS
 
+#include <Windows.h>
+
 #ifndef _WINDEF_
 typedef unsigned long DWORD;
 typedef int BOOL;
@@ -91,6 +93,12 @@ typedef int BOOL;
 
 BOOL _subprocess_windows_send_vm_close(DWORD pid);
 unsigned int _subprocess_windows_get_errno(void);
+
+/// Get the value of `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`.
+///
+/// This function is provided because `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` is a
+/// complex macro and cannot be imported directly into Swift.
+DWORD_PTR _subprocess_PROC_THREAD_ATTRIBUTE_HANDLE_LIST(void);
 
 #endif
 

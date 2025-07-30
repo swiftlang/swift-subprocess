@@ -120,9 +120,10 @@ extension Execution {
     ) throws {
         let pid = shouldSendToProcessGroup ? -(processIdentifier.value) : processIdentifier.value
         guard kill(pid, signal.rawValue) == 0 else {
+            let capturedError = errno
             throw SubprocessError(
                 code: .init(.failedToSendSignal(signal.rawValue)),
-                underlyingError: .init(rawValue: errno)
+                underlyingError: .init(rawValue: capturedError)
             )
         }
     }
@@ -360,13 +361,6 @@ extension FileDescriptor {
         writeEnd: FileDescriptor
     ) {
         try pipe()
-    }
-
-    internal static func openDevNull(
-        withAccessMode mode: FileDescriptor.AccessMode
-    ) throws -> FileDescriptor {
-        let devnull: FileDescriptor = try .open("/dev/null", mode)
-        return devnull
     }
 
     internal var platformDescriptor: PlatformFileDescriptor {
