@@ -366,13 +366,6 @@ extension FileDescriptor {
         try pipe()
     }
 
-    internal static func openDevNull(
-        withAccessMode mode: FileDescriptor.AccessMode
-    ) throws -> FileDescriptor {
-        let devnull: FileDescriptor = try .open("/dev/null", mode)
-        return devnull
-    }
-
     internal var platformDescriptor: PlatformFileDescriptor {
         return self.rawValue
     }

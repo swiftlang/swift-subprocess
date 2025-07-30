@@ -138,6 +138,10 @@ extension Execution {
         let finalSequence = sequence + [TeardownStep(storage: .kill)]
         for step in finalSequence {
             let stepCompletion: TeardownStepCompletion
+            guard self.isStillAlive() else {
+                // Early return since the process has already exited
+                return
+            }
 
             switch step.storage {
             case .gracefulShutDown(let allowedDuration):
@@ -193,6 +197,19 @@ extension Execution {
                 break
             }
         }
+    }
+
+    private func isStillAlive() -> Bool {
+        // Non-blockingly check whether the current execution has already exited
+        // Note here we do NOT want to reap the exit status because we are still
+        // running monitorProcessTermination()
+        #if os(Windows)
+        var exitCode: DWORD = 0
+        GetExitCodeProcess(self.processIdentifier.processDescriptor, &exitCode)
+        return exitCode == STILL_ACTIVE
+        #else
+        return kill(self.processIdentifier.value, 0) == 0
+        #endif
     }
 }
 

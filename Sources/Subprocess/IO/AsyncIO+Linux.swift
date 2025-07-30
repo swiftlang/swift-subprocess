@@ -68,8 +68,9 @@ final class AsyncIO: Sendable {
     static let shared: AsyncIO = AsyncIO()
 
     private let state: Result<State, SubprocessError>
+    private let shutdownFlag: Atomic<UInt8> = Atomic(0)
 
-    private init() {
+    internal init() {
         // Create main epoll fd
         let epollFileDescriptor = epoll_create1(CInt(EPOLL_CLOEXEC))
         guard epollFileDescriptor >= 0 else {
@@ -200,11 +201,15 @@ final class AsyncIO: Sendable {
         }
     }
 
-    private func shutdown() {
+    internal func shutdown() {
         guard case .success(let currentState) = self.state else {
             return
         }
 
+        guard self.shutdownFlag.add(1, ordering: .sequentiallyConsistent).newValue == 1 else {
+            // We already closed this AsyncIO
+            return
+        }
         var one: UInt64 = 1
         // Wake up the thread for shutdown
         _ = _subprocess_write(currentState.shutdownFileDescriptor, &one, MemoryLayout<UInt64>.stride)
@@ -221,7 +226,6 @@ final class AsyncIO: Sendable {
             fatalError("Failed to close epollfd: \(String(cString: strerror(closeError)))")
         }
     }
-
 
     private func registerFileDescriptor(
         _ fileDescriptor: FileDescriptor,
@@ -273,11 +277,12 @@ final class AsyncIO: Sendable {
                     &event
                 )
                 if rc != 0 {
+                    let capturedError = errno
                     let error = SubprocessError(
                         code: .init(.asyncIOFailed(
                             "failed to add \(fileDescriptor.rawValue) to epoll list")
                         ),
-                        underlyingError: .init(rawValue: errno)
+                        underlyingError: .init(rawValue: capturedError)
                     )
                     continuation.finish(throwing: error)
                     return
@@ -340,6 +345,9 @@ extension AsyncIO {
         from fileDescriptor: FileDescriptor,
         upTo maxLength: Int
     ) async throws -> [UInt8]? {
+        guard maxLength > 0 else {
+            return nil
+        }
         // If we are reading until EOF, start with readBufferSize
         // and gradually increase buffer size
         let bufferLength = maxLength == .max ? readBufferSize : maxLength
@@ -403,6 +411,7 @@ extension AsyncIO {
                 }
             }
         }
+        resultBuffer.removeLast(resultBuffer.count - readLength)
         return resultBuffer
     }
 
@@ -417,6 +426,9 @@ extension AsyncIO {
         _ bytes: Bytes,
         to diskIO: borrowing IOChannel
     ) async throws -> Int {
+        guard bytes.count > 0 else {
+            return 0
+        }
         let fileDescriptor = diskIO.channel
         let signalStream = self.registerFileDescriptor(fileDescriptor, for: .write)
         var writtenLength: Int = 0
@@ -460,6 +472,9 @@ extension AsyncIO {
         _ span: borrowing RawSpan,
         to diskIO: borrowing IOChannel
     ) async throws -> Int {
+        guard span.byteCount > 0 else {
+            return 0
+        }
         let fileDescriptor = diskIO.channel
         let signalStream = self.registerFileDescriptor(fileDescriptor, for: .write)
         var writtenLength: Int = 0
