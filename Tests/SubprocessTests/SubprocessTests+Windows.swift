@@ -39,7 +39,7 @@ extension SubprocessWindowsTests {
         let result = try await Subprocess.run(
             .name("cmd.exe"),
             arguments: ["/c", "echo", message],
-            output: .string,
+            output: .string(limit: 64),
             error: .discarded
         )
 
@@ -52,7 +52,7 @@ extension SubprocessWindowsTests {
 
     @Test func testExecutableNamedCannotResolve() async throws {
         do {
-            _ = try await Subprocess.run(.name("do-not-exist"))
+            _ = try await Subprocess.run(.name("do-not-exist"), output: .discarded)
             Issue.record("Expected to throw")
         } catch {
             guard let subprocessError = error as? SubprocessError else {
@@ -69,7 +69,7 @@ extension SubprocessWindowsTests {
         let result = try await Subprocess.run(
             self.cmdExe,
             arguments: ["/c", "cd"],
-            output: .string
+            output: .string(limit: .max)
         )
         #expect(result.terminationStatus.isSuccess)
         #expect(
@@ -83,7 +83,7 @@ extension SubprocessWindowsTests {
             // Since we are using the path directly,
             // we expect the error to be thrown by the underlying
             // CreateProcessW
-            _ = try await Subprocess.run(.path("X:\\do-not-exist"))
+            _ = try await Subprocess.run(.path("X:\\do-not-exist"), output: .discarded)
             Issue.record("Expected to throw POSIXError")
         } catch {
             guard let subprocessError = error as? SubprocessError,
@@ -109,7 +109,7 @@ extension SubprocessWindowsTests {
         let result = try await Subprocess.run(
             self.cmdExe,
             arguments: .init(args),
-            output: .string
+            output: .string(limit: 32)
         )
         #expect(result.terminationStatus.isSuccess)
         #expect(
@@ -126,7 +126,7 @@ extension SubprocessWindowsTests {
             self.cmdExe,
             arguments: ["/c", "echo %Path%"],
             environment: .inherit,
-            output: .string
+            output: .string(limit: .max)
         )
         // As a sanity check, make sure there's
         // `C:\Windows\system32` in PATH
@@ -142,7 +142,7 @@ extension SubprocessWindowsTests {
             environment: .inherit.updating([
                 "HOMEPATH": "/my/new/home"
             ]),
-            output: .string
+            output: .string(limit: 32)
         )
         #expect(result.terminationStatus.isSuccess)
         #expect(
@@ -162,7 +162,7 @@ extension SubprocessWindowsTests {
                 "Path": "C:\\Windows\\system32;C:\\Windows",
                 "ComSpec": "C:\\Windows\\System32\\cmd.exe",
             ]),
-            output: .string
+            output: .string(limit: .max)
         )
         #expect(result.terminationStatus.isSuccess)
         // Make sure the newly launched process does
@@ -182,7 +182,7 @@ extension SubprocessWindowsTests {
             self.cmdExe,
             arguments: ["/c", "cd"],
             workingDirectory: nil,
-            output: .string
+            output: .string(limit: .max)
         )
         #expect(result.terminationStatus.isSuccess)
         // There shouldn't be any other environment variables besides
@@ -201,7 +201,7 @@ extension SubprocessWindowsTests {
             self.cmdExe,
             arguments: ["/c", "cd"],
             workingDirectory: workingDirectory,
-            output: .string
+            output: .string(limit: .max)
         )
         #expect(result.terminationStatus.isSuccess)
         // There shouldn't be any other environment variables besides
@@ -221,7 +221,7 @@ extension SubprocessWindowsTests {
             self.cmdExe,
             arguments: ["/c", "more"],
             input: .none,
-            output: .data
+            output: .data(limit: 16)
         )
         #expect(catResult.terminationStatus.isSuccess)
         // We should have read exactly 0 bytes
@@ -370,7 +370,7 @@ extension SubprocessWindowsTests {
         let echoResult = try await Subprocess.run(
             self.cmdExe,
             arguments: ["/c", "echo \(expected)"],
-            output: .string
+            output: .string(limit: 35)
         )
         #expect(echoResult.terminationStatus.isSuccess)
         let output = try #require(
@@ -379,20 +379,23 @@ extension SubprocessWindowsTests {
         #expect(output == expected)
     }
 
-    @Test func testCollectedOutputWithLimit() async throws {
-        let limit = 2
-        let expected = randomString(length: 32)
-        let echoResult = try await Subprocess.run(
-            self.cmdExe,
-            arguments: ["/c", "echo \(expected)"],
-            output: .string(limit: limit, encoding: UTF8.self)
-        )
-        #expect(echoResult.terminationStatus.isSuccess)
-        let output = try #require(
-            echoResult.standardOutput
-        ).trimmingCharacters(in: .whitespacesAndNewlines)
-        let targetRange = expected.startIndex..<expected.index(expected.startIndex, offsetBy: limit)
-        #expect(String(expected[targetRange]) == output)
+    @Test func testCollectedOutputExceedsLimit() async throws {
+        do {
+            let expected = randomString(length: 32)
+            _ = try await Subprocess.run(
+                self.cmdExe,
+                arguments: ["/c", "echo \(expected)"],
+                // Extra for new line
+                output: .string(limit: 2, encoding: UTF8.self)
+            )
+            Issue.record("Expected to throw")
+        } catch {
+            guard let subprocessError = error as? SubprocessError else {
+                Issue.record("Expected SubprocessError, got \(error)")
+                return
+            }
+            #expect(subprocessError.code == .init(.outputBufferLimitExceeded(2)))
+        }
     }
 
     @Test func testCollectedOutputFileDescriptor() async throws {
@@ -468,7 +471,7 @@ extension SubprocessWindowsTests {
                 .path("C:\\Windows\\System32\\whoami.exe"),
                 workingDirectory: workingDirectory,
                 platformOptions: platformOptions,
-                output: .string
+                output: .string(limit: .max)
             )
 
             try await withKnownIssue {
@@ -509,7 +512,7 @@ extension SubprocessWindowsTests {
                 "-File", windowsTester.string,
                 "-mode", "get-console-window",
             ],
-            output: .string
+            output: .string(limit: .max)
         )
         #expect(sameConsoleResult.terminationStatus.isSuccess)
         let sameConsoleValue = try #require(
@@ -529,7 +532,7 @@ extension SubprocessWindowsTests {
                 "-mode", "get-console-window",
             ],
             platformOptions: platformOptions,
-            output: .string
+            output: .string(limit: .max)
         )
         #expect(differentConsoleResult.terminationStatus.isSuccess)
         let differentConsoleValue = try #require(
@@ -551,7 +554,7 @@ extension SubprocessWindowsTests {
                 "-mode", "get-console-window",
             ],
             platformOptions: platformOptions,
-            output: .string
+            output: .string(limit: .max)
         )
         #expect(detachConsoleResult.terminationStatus.isSuccess)
         let detachConsoleValue = try #require(
@@ -575,7 +578,7 @@ extension SubprocessWindowsTests {
                 "-mode", "get-console-window",
             ],
             platformOptions: platformOptions,
-            output: .string
+            output: .string(limit: .max)
         )
         #expect(newConsoleResult.terminationStatus.isSuccess)
         let newConsoleValue = try #require(
@@ -605,7 +608,7 @@ extension SubprocessWindowsTests {
                 "-Command", "$consoleTitle = [console]::Title; Write-Host $consoleTitle",
             ],
             platformOptions: platformOptions,
-            output: .string
+            output: .string(limit: 32)
         )
         #expect(changeTitleResult.terminationStatus.isSuccess)
         let newTitle = try #require(
@@ -654,7 +657,7 @@ extension SubprocessWindowsTests {
                     "-mode", "is-process-suspended",
                     "-processID", "\(subprocess.processIdentifier.value)",
                 ],
-                output: .string
+                output: .string(limit: .max)
             )
             #expect(checkResult.terminationStatus.isSuccess)
             var isSuspended = try #require(
@@ -671,7 +674,7 @@ extension SubprocessWindowsTests {
                     "-mode", "is-process-suspended",
                     "-processID", "\(subprocess.processIdentifier.value)",
                 ],
-                output: .string
+                output: .string(limit: .max)
             )
             #expect(checkResult.terminationStatus.isSuccess)
             isSuspended = try #require(

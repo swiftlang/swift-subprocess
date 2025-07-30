@@ -43,13 +43,8 @@ public struct DataOutput: OutputProtocol {
 
 extension OutputProtocol where Self == DataOutput {
     /// Create a `Subprocess` output that collects output as `Data`
-    /// up to 128kb.
-    public static var data: Self {
-        return .data(limit: 128 * 1024)
-    }
-
-    /// Create a `Subprocess` output that collects output as `Data`
-    /// with given max number of bytes to collect.
+    /// with given buffer limit in bytes. Subprocess throws an error
+    /// if the child process emits more bytes than the limit.
     public static func data(limit: Int) -> Self {
         return .init(limit: limit)
     }

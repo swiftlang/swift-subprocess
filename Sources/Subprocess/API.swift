@@ -41,7 +41,7 @@ public func run<
     workingDirectory: FilePath? = nil,
     platformOptions: PlatformOptions = PlatformOptions(),
     input: Input = .none,
-    output: Output = .string,
+    output: Output,
     error: Error = .discarded
 ) async throws -> CollectedResult<Output, Error> {
     let configuration = Configuration(
@@ -84,7 +84,7 @@ public func run<
     workingDirectory: FilePath? = nil,
     platformOptions: PlatformOptions = PlatformOptions(),
     input: borrowing Span<InputElement>,
-    output: Output = .string,
+    output: Output,
     error: Error = .discarded
 ) async throws -> CollectedResult<Output, Error> {
     typealias RunResult = (
@@ -483,7 +483,7 @@ public func run<
 >(
     _ configuration: Configuration,
     input: Input = .none,
-    output: Output = .string,
+    output: Output,
     error: Error = .discarded
 ) async throws -> CollectedResult<Output, Error> {
     typealias RunResult = (

@@ -42,6 +42,7 @@ extension SubprocessError {
             case failedToMonitorProcess
             case streamOutputExceedsLimit(Int)
             case asyncIOFailed(String)
+            case outputBufferLimitExceeded(Int)
             // Signal
             case failedToSendSignal(Int32)
             // Windows Only
@@ -70,18 +71,20 @@ extension SubprocessError {
                 return 6
             case .asyncIOFailed(_):
                 return 7
-            case .failedToSendSignal(_):
+            case .outputBufferLimitExceeded(_):
                 return 8
-            case .failedToTerminate:
+            case .failedToSendSignal(_):
                 return 9
-            case .failedToSuspend:
+            case .failedToTerminate:
                 return 10
-            case .failedToResume:
+            case .failedToSuspend:
                 return 11
-            case .failedToCreatePipe:
+            case .failedToResume:
                 return 12
-            case .invalidWindowsPath(_):
+            case .failedToCreatePipe:
                 return 13
+            case .invalidWindowsPath(_):
+                return 14
             }
         }
 
@@ -113,6 +116,8 @@ extension SubprocessError: CustomStringConvertible, CustomDebugStringConvertible
             return "Failed to create output from current buffer because the output limit (\(limit)) was reached."
         case .asyncIOFailed(let reason):
             return "An error occurred within the AsyncIO subsystem: \(reason). Underlying error: \(self.underlyingError!)"
+        case .outputBufferLimitExceeded(let limit):
+            return "Output exceeds the limit of \(limit) bytes."
         case .failedToSendSignal(let signal):
             return "Failed to send signal \(signal) to the child process."
         case .failedToTerminate:

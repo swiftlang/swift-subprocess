@@ -51,7 +51,8 @@ extension SubprocessUnixTests {
         let message = "Hello, world!"
         let result = try await Subprocess.run(
             .name("echo"),
-            arguments: [message]
+            arguments: [message],
+            output: .string(limit: 32)
         )
         #expect(result.terminationStatus.isSuccess)
         // rdar://138670128
@@ -62,7 +63,7 @@ extension SubprocessUnixTests {
 
     @Test func testExecutableNamedCannotResolve() async {
         do {
-            _ = try await Subprocess.run(.name("do-not-exist"))
+            _ = try await Subprocess.run(.name("do-not-exist"), output: .discarded)
             Issue.record("Expected to throw")
         } catch {
             guard let subprocessError: SubprocessError = error as? SubprocessError else {
@@ -75,7 +76,7 @@ extension SubprocessUnixTests {
 
     @Test func testExecutableAtPath() async throws {
         let expected = FileManager.default.currentDirectoryPath
-        let result = try await Subprocess.run(.path("/bin/pwd"), output: .string)
+        let result = try await Subprocess.run(.path("/bin/pwd"), output: .string(limit: .max))
         #expect(result.terminationStatus.isSuccess)
         // rdar://138670128
         let maybePath = result.standardOutput?
@@ -86,7 +87,7 @@ extension SubprocessUnixTests {
 
     @Test func testExecutableAtPathCannotResolve() async {
         do {
-            _ = try await Subprocess.run(.path("/usr/bin/do-not-exist"))
+            _ = try await Subprocess.run(.path("/usr/bin/do-not-exist"), output: .discarded)
             Issue.record("Expected to throw SubprocessError")
         } catch {
             guard let subprocessError: SubprocessError = error as? SubprocessError else {
@@ -104,7 +105,7 @@ extension SubprocessUnixTests {
         let result = try await Subprocess.run(
             .path("/bin/sh"),
             arguments: ["-c", "echo Hello World!"],
-            output: .string
+            output: .string(limit: 32)
         )
         #expect(result.terminationStatus.isSuccess)
         // rdar://138670128
@@ -122,7 +123,7 @@ extension SubprocessUnixTests {
                 executablePathOverride: "apple",
                 remainingValues: ["-c", "echo $0"]
             ),
-            output: .string
+            output: .string(limit: 32)
         )
         #expect(result.terminationStatus.isSuccess)
         // rdar://138670128
@@ -141,7 +142,7 @@ extension SubprocessUnixTests {
                 executablePathOverride: nil,
                 remainingValues: [arguments]
             ),
-            output: .string
+            output: .string(limit: 32)
         )
         #expect(result.terminationStatus.isSuccess)
         // rdar://138670128
@@ -160,7 +161,7 @@ extension SubprocessUnixTests {
             .path("/bin/sh"),
             arguments: ["-c", "printenv PATH"],
             environment: .inherit,
-            output: .string
+            output: .string(limit: .max)
         )
         #expect(result.terminationStatus.isSuccess)
         // As a sanity check, make sure there's `/bin` in PATH
@@ -178,7 +179,7 @@ extension SubprocessUnixTests {
             environment: .inherit.updating([
                 "HOME": "/my/new/home"
             ]),
-            output: .string
+            output: .string(limit: 32)
         )
         #expect(result.terminationStatus.isSuccess)
         // rdar://138670128
@@ -195,7 +196,7 @@ extension SubprocessUnixTests {
             environment: .custom([
                 "PATH": "/bin:/usr/bin"
             ]),
-            output: .string
+            output: .string(limit: 32)
         )
         #expect(result.terminationStatus.isSuccess)
         // There shouldn't be any other environment variables besides
@@ -217,7 +218,7 @@ extension SubprocessUnixTests {
         let result = try await Subprocess.run(
             .path("/bin/pwd"),
             workingDirectory: nil,
-            output: .string
+            output: .string(limit: .max)
         )
         #expect(result.terminationStatus.isSuccess)
         // There shouldn't be any other environment variables besides
@@ -236,7 +237,7 @@ extension SubprocessUnixTests {
         let result = try await Subprocess.run(
             .path("/bin/pwd"),
             workingDirectory: workingDirectory,
-            output: .string
+            output: .string(limit: .max)
         )
         #expect(result.terminationStatus.isSuccess)
         // There shouldn't be any other environment variables besides
@@ -266,7 +267,7 @@ extension SubprocessUnixTests {
         let catResult = try await Subprocess.run(
             .path("/bin/cat"),
             input: .none,
-            output: .string
+            output: .string(limit: 16)
         )
         #expect(catResult.terminationStatus.isSuccess)
         // We should have read exactly 0 bytes
@@ -277,7 +278,8 @@ extension SubprocessUnixTests {
         let content = randomString(length: 64)
         let catResult = try await Subprocess.run(
             .path("/bin/cat"),
-            input: .string(content, using: UTF8.self)
+            input: .string(content, using: UTF8.self),
+            output: .string(limit: 64)
         )
         #expect(catResult.terminationStatus.isSuccess)
         // Output should match the input content
@@ -437,33 +439,31 @@ extension SubprocessUnixTests {
     #endif
 
     @Test func testCollectedOutput() async throws {
-        let expected = randomString(length: 32)
+        let expected = try Data(contentsOf: URL(filePath: theMysteriousIsland.string))
         let echoResult = try await Subprocess.run(
-            .path("/bin/echo"),
-            arguments: [expected],
-            output: .string
+            .path("/bin/cat"),
+            arguments: [theMysteriousIsland.string],
+            output: .data(limit: .max)
         )
         #expect(echoResult.terminationStatus.isSuccess)
-        let output = try #require(
-            echoResult.standardOutput
-        ).trimmingCharacters(in: .whitespacesAndNewlines)
-        #expect(output == expected)
+        #expect(echoResult.standardOutput == expected)
     }
 
-    @Test func testCollectedOutputWithLimit() async throws {
-        let limit = 4
-        let expected = randomString(length: 32)
-        let echoResult = try await Subprocess.run(
-            .path("/bin/echo"),
-            arguments: [expected],
-            output: .string(limit: limit, encoding: UTF8.self)
-        )
-        #expect(echoResult.terminationStatus.isSuccess)
-        let output = try #require(
-            echoResult.standardOutput
-        ).trimmingCharacters(in: .whitespacesAndNewlines)
-        let targetRange = expected.startIndex..<expected.index(expected.startIndex, offsetBy: limit)
-        #expect(String(expected[targetRange]) == output)
+    @Test func testCollectedOutputExceedsLimit() async throws {
+        do {
+            _ = try await Subprocess.run(
+                .path("/bin/cat"),
+                arguments: [theMysteriousIsland.string],
+                output: .string(limit: 16),
+            )
+            Issue.record("Expected to throw")
+        } catch {
+            guard let subprocessError = error as? SubprocessError else {
+                Issue.record("Expected SubprocessError, got \(error)")
+                return
+            }
+            #expect(subprocessError.code == .init(.outputBufferLimitExceeded(16)))
+        }
     }
 
     @Test func testCollectedOutputFileDescriptor() async throws {
@@ -597,6 +597,7 @@ extension SubprocessUnixTests {
         let catResult = try await Subprocess.run(
             .path("/bin/sh"),
             arguments: ["-c", "cat \(theMysteriousIsland.string) 1>&2"],
+            output: .discarded,
             error: .data(limit: 2048 * 1024)
         )
         #expect(catResult.terminationStatus.isSuccess)
@@ -671,7 +672,8 @@ extension SubprocessUnixTests {
             .name("swift"),
             arguments: [getgroupsSwift.string],
             platformOptions: platformOptions,
-            output: .string
+            output: .string(limit: .max),
+            error: .string(limit: .max),
         )
         #expect(idResult.terminationStatus.isSuccess)
         let ids = try #require(
@@ -699,7 +701,7 @@ extension SubprocessUnixTests {
             .path("/bin/sh"),
             arguments: ["-c", "ps -o pid,pgid -p $$"],
             platformOptions: platformOptions,
-            output: .string
+            output: .string(limit: .max)
         )
         #expect(psResult.terminationStatus.isSuccess)
         let resultValue = try #require(
@@ -726,7 +728,7 @@ extension SubprocessUnixTests {
             .path("/bin/sh"),
             arguments: ["-c", "ps -o pid,pgid,tpgid -p $$"],
             platformOptions: platformOptions,
-            output: .string
+            output: .string(limit: .max)
         )
         try assertNewSessionCreated(with: psResult)
     }
@@ -815,7 +817,8 @@ extension SubprocessUnixTests {
         for signal in signalsToTest {
             let result = try await Subprocess.run(
                 .path("/bin/sh"),
-                arguments: ["-c", "kill -\(signal) $$"]
+                arguments: ["-c", "kill -\(signal) $$"],
+                output: .discarded
             )
             #expect(result.terminationStatus == .unhandledException(signal))
         }
@@ -829,7 +832,8 @@ extension SubprocessUnixTests {
             group.addTask {
                 return try await Subprocess.run(
                     .path("/bin/sh"),
-                    arguments: ["-c", "trap 'echo no' TERM; while true; do sleep 1; done"]
+                    arguments: ["-c", "trap 'echo no' TERM; while true; do sleep 1; done"],
+                    output: .string(limit: .max)
                 ).terminationStatus
             }
             group.addTask {
@@ -979,7 +983,7 @@ extension SubprocessUnixTests {
             .path("/usr/bin/id"),
             arguments: [argument],
             platformOptions: platformOptions,
-            output: .string
+            output: .string(limit: 32)
         )
         #expect(idResult.terminationStatus.isSuccess)
         let id = try #require(idResult.standardOutput)
@@ -1052,7 +1056,7 @@ extension SubprocessUnixTests {
         let limitResult = try await Subprocess.run(
             .path("/bin/sh"),
             arguments: ["-c", "ulimit -n"],
-            output: .string
+            output: .string(limit: 32)
         )
         guard
             let limitString = limitResult
@@ -1081,8 +1085,8 @@ extension SubprocessUnixTests {
                         arguments: [
                             "-sc", #"echo "$1" && echo "$1" >&2"#, "--", String(repeating: "X", count: byteCount),
                         ],
-                        output: .data,
-                        error: .data
+                        output: .data(limit: .max),
+                        error: .data(limit: .max)
                     )
                     guard r.terminationStatus.isSuccess else {
                         Issue.record("Unexpected exit \(r.terminationStatus) from \(r.processIdentifier)")
@@ -1111,8 +1115,8 @@ extension SubprocessUnixTests {
                         arguments: [
                             "-sc", #"echo "$1" && echo "$1" >&2"#, "--", String(repeating: "X", count: 100_000),
                         ],
-                        output: .data,
-                        error: .data
+                        output: .data(limit: .max),
+                        error: .data(limit: .max)
                     )
                     #expect(r.terminationStatus == .exited(0))
                     #expect(r.standardOutput.count == 100_001, "Standard output actual \(r.standardOutput)")
@@ -1136,7 +1140,8 @@ extension SubprocessUnixTests {
                 group.addTask {
                     return try await Subprocess.run(
                         .path("/bin/sleep"),
-                        arguments: ["100000"]
+                        arguments: ["100000"],
+                        output: .string(limit: .max)
                     ).terminationStatus
                 }
                 group.addTask {
