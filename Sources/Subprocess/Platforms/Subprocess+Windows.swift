@@ -154,7 +154,7 @@ extension Configuration {
                 errorWrite: errorWriteFileDescriptor
             )
         } catch {
-            // If spawn() throws, monitorProcessTermination or runDetached
+            // If spawn() throws, monitorProcessTermination
             // won't have an opportunity to call release, so do it here to avoid leaking the handles.
             execution.release()
             throw error
@@ -298,7 +298,7 @@ extension Configuration {
                 errorWrite: errorWriteFileDescriptor
             )
         } catch {
-            // If spawn() throws, monitorProcessTermination or runDetached
+            // If spawn() throws, monitorProcessTermination
             // won't have an opportunity to call release, so do it here to avoid leaking the handles.
             execution.release()
             throw error

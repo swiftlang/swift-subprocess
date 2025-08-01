@@ -776,25 +776,6 @@ extension SubprocessUnixTests {
 
 // MARK: - Misc
 extension SubprocessUnixTests {
-    @Test func testRunDetached() async throws {
-        let (readFd, writeFd) = try FileDescriptor.pipe()
-        let pid = try runDetached(
-            .path("/bin/sh"),
-            arguments: ["-c", "echo $$"],
-            output: writeFd
-        )
-        var status: Int32 = 0
-        waitpid(pid.value, &status, 0)
-        #expect(_was_process_exited(status) > 0)
-        try writeFd.close()
-        let data = try await readFd.readUntilEOF(upToLength: 10)
-        let resultPID = try #require(
-            String(data: Data(data), encoding: .utf8)
-        ).trimmingCharacters(in: .whitespacesAndNewlines)
-        #expect("\(pid.value)" == resultPID)
-        try readFd.close()
-    }
-
     @Test func testTerminateProcess() async throws {
         let stuckResult = try await Subprocess.run(
             // This will intentionally hang

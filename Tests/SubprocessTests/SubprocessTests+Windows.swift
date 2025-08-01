@@ -688,45 +688,6 @@ extension SubprocessWindowsTests {
         }
         #expect(stuckProcess.terminationStatus.isSuccess)
     }
-
-    @Test func testRunDetached() async throws {
-        let (readFd, writeFd) = try FileDescriptor.ssp_pipe()
-        SetHandleInformation(
-            readFd.platformDescriptor,
-            DWORD(HANDLE_FLAG_INHERIT),
-            0
-        )
-        let pid = try Subprocess.runDetached(
-            .name("powershell.exe"),
-            arguments: [
-                "-Command", "Write-Host $PID",
-            ],
-            output: writeFd
-        )
-        try writeFd.close()
-        // Wait for process to finish
-        guard
-            let processHandle = OpenProcess(
-                DWORD(PROCESS_QUERY_INFORMATION | SYNCHRONIZE),
-                false,
-                pid.value
-            )
-        else {
-            Issue.record("Failed to get process handle")
-            return
-        }
-
-        // Wait for the process to finish
-        WaitForSingleObject(processHandle, INFINITE)
-
-        // Up to 10 characters because Windows process IDs are DWORDs (UInt32), whose max value is 10 digits.
-        let data = try await readFd.readUntilEOF(upToLength: 10)
-        let resultPID = try #require(
-            String(data: data, encoding: .utf8)
-        ).trimmingCharacters(in: .whitespacesAndNewlines)
-        #expect("\(pid.value)" == resultPID)
-        try readFd.close()
-    }
 }
 
 // MARK: - User Utils
