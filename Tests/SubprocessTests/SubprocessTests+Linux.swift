@@ -11,8 +11,9 @@
 
 #if os(Linux) || os(Android)
 
-#if canImport(Bionic)
-import Bionic
+#if canImport(Android)
+import Android
+import Foundation
 #elseif canImport(Glibc)
 import Glibc
 #elseif canImport(Musl)
