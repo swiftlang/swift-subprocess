@@ -58,21 +58,17 @@ public struct DiscardedOutput: OutputProtocol {
     public typealias OutputType = Void
 
     internal func createPipe() throws -> CreatedPipe {
+
         #if os(Windows)
-        // On Windows, instead of binding to dev null,
-        // we don't set the input handle in the `STARTUPINFOW`
-        // to signal no output
-        return CreatedPipe(
-            readFileDescriptor: nil,
-            writeFileDescriptor: nil
-        )
+        let devnullFd: FileDescriptor = try .openDevNull(withAccessMode: .writeOnly)
+        let devnull = HANDLE(bitPattern: _get_osfhandle(devnullFd.rawValue))!
         #else
-        let devnull: FileDescriptor = try .openDevNull(withAccessMode: .readOnly)
+        let devnull: FileDescriptor = try .openDevNull(withAccessMode: .writeOnly)
+        #endif
         return CreatedPipe(
             readFileDescriptor: nil,
             writeFileDescriptor: .init(devnull, closeWhenDone: true)
         )
-        #endif
     }
 
     internal init() {}
@@ -289,6 +285,7 @@ extension OutputProtocol {
         from diskIO: consuming IOChannel?
     ) async throws -> OutputType {
         if OutputType.self == Void.self {
+            try diskIO?.safelyClose()
             return () as! OutputType
         }
         // `diskIO` is only `nil` for any types that conform to `OutputProtocol`
@@ -330,6 +327,7 @@ extension OutputProtocol {
                 underlyingError: nil
             )
         }
+
         #if canImport(Darwin)
         return try self.output(from: result ?? .empty)
         #else
@@ -398,5 +396,18 @@ extension DispatchData {
             }
         }
         return result ?? []
+    }
+}
+
+extension FileDescriptor {
+    internal static func openDevNull(
+        withAccessMode mode: FileDescriptor.AccessMode
+    ) throws -> FileDescriptor {
+        #if os(Windows)
+        let devnull: FileDescriptor = try .open("NUL", mode)
+        #else
+        let devnull: FileDescriptor = try .open("/dev/null", mode)
+        #endif
+        return devnull
     }
 }

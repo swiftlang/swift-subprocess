@@ -51,10 +51,10 @@ final class AsyncIO: @unchecked Sendable {
     static let shared = AsyncIO()
 
     private let ioCompletionPort: Result<HANDLE, SubprocessError>
-
     private let monitorThread: Result<HANDLE, SubprocessError>
+    private let shutdownFlag: Atomic<UInt8> = Atomic(0)
 
-    private init() {
+    internal init() {
         var maybeSetupError: SubprocessError? = nil
         // Create the the completion port
         guard let port = CreateIoCompletionPort(
@@ -78,10 +78,11 @@ final class AsyncIO: @unchecked Sendable {
         /// > thread management rather than CreateThread and ExitThread
         let threadHandleValue = _beginthreadex(nil, 0, { args in
             func reportError(_ error: SubprocessError) {
-                _registration.withLock { store in
-                    for continuation in store.values {
-                        continuation.finish(throwing: error)
-                    }
+                let continuations = _registration.withLock { store in
+                    return store.values
+                }
+                for continuation in continuations {
+                    continuation.finish(throwing: error)
                 }
             }
 
@@ -110,11 +111,13 @@ final class AsyncIO: @unchecked Sendable {
                         // in the store. Windows does not offer an API to remove a
                         // HANDLE from an IOCP port, therefore we leave the registration
                         // to signify the HANDLE has already been resisted.
-                        _registration.withLock { store in
+                        let continuation = _registration.withLock { store -> SignalStream.Continuation? in
                             if let continuation = store[targetFileDescriptor] {
-                                continuation.finish()
+                                return continuation
                             }
+                            return nil
                         }
+                        continuation?.finish()
                         continue
                     } else {
                         let error = SubprocessError(
@@ -159,12 +162,17 @@ final class AsyncIO: @unchecked Sendable {
         }
     }
 
-    private func shutdown() {
-        // Post status to shutdown HANDLE
+    internal func shutdown() {
         guard case .success(let ioPort) = ioCompletionPort,
               case .success(let monitorThreadHandle) = monitorThread else {
             return
         }
+        // Make sure we don't shutdown the same instance twice
+        guard self.shutdownFlag.add(1, ordering: .relaxed).newValue == 1 else {
+            // We already closed this AsyncIO
+            return
+        }
+        // Post status to shutdown HANDLE
         PostQueuedCompletionStatus(
             ioPort,         // CompletionPort
             0,              // Number of bytes transferred.
@@ -245,6 +253,9 @@ final class AsyncIO: @unchecked Sendable {
         from handle: HANDLE,
         upTo maxLength: Int
     ) async throws -> [UInt8]? {
+        guard maxLength > 0 else {
+            return nil
+        }
         // If we are reading until EOF, start with readBufferSize
         // and gradually increase buffer size
         let bufferLength = maxLength == .max ? readBufferSize : maxLength
@@ -284,8 +295,12 @@ final class AsyncIO: @unchecked Sendable {
                 // Make sure we only get `ERROR_IO_PENDING` or `ERROR_BROKEN_PIPE`
                 let lastError = GetLastError()
                 if lastError == ERROR_BROKEN_PIPE {
-                    // We reached EOF
-                    return nil
+                    // We reached EOF. Return whatever's left
+                    guard readLength > 0 else {
+                        return nil
+                    }
+                    resultBuffer.removeLast(resultBuffer.count - readLength)
+                    return resultBuffer
                 }
                 guard lastError == ERROR_IO_PENDING else {
                     let error = SubprocessError(
@@ -337,6 +352,9 @@ final class AsyncIO: @unchecked Sendable {
         _ span: borrowing RawSpan,
         to diskIO: borrowing IOChannel
     ) async throws -> Int {
+        guard span.byteCount > 0 else {
+            return 0
+        }
         let handle = diskIO.channel
         var signalStream = self.registerHandle(diskIO.channel).makeAsyncIterator()
         var writtenLength: Int = 0
@@ -389,6 +407,9 @@ final class AsyncIO: @unchecked Sendable {
         _ bytes: Bytes,
         to diskIO: borrowing IOChannel
     ) async throws -> Int {
+        guard bytes.count > 0 else {
+            return 0
+        }
         let handle = diskIO.channel
         var signalStream = self.registerHandle(diskIO.channel).makeAsyncIterator()
         var writtenLength: Int = 0
