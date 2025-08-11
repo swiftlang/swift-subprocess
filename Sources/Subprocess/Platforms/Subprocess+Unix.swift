@@ -90,24 +90,6 @@ public struct Signal: Hashable, Sendable {
     public static var windowSizeChange: Self { .init(rawValue: SIGWINCH) }
 }
 
-// MARK: - ProcessIdentifier
-
-/// A platform independent identifier for a Subprocess.
-public struct ProcessIdentifier: Sendable, Hashable, Codable {
-    /// The platform specific process identifier value
-    public let value: pid_t
-
-    public init(value: pid_t) {
-        self.value = value
-    }
-}
-
-extension ProcessIdentifier: CustomStringConvertible, CustomDebugStringConvertible {
-    public var description: String { "\(self.value)" }
-
-    public var debugDescription: String { "\(self.value)" }
-}
-
 extension Execution {
     /// Send the given signal to the child process.
     /// - Parameters:
@@ -118,13 +100,35 @@ extension Execution {
         signal: Signal,
         toProcessGroup shouldSendToProcessGroup: Bool = false
     ) throws {
-        let pid = shouldSendToProcessGroup ? -(processIdentifier.value) : processIdentifier.value
-        guard kill(pid, signal.rawValue) == 0 else {
-            throw SubprocessError(
-                code: .init(.failedToSendSignal(signal.rawValue)),
-                underlyingError: .init(rawValue: errno)
-            )
+        func _kill(_ pid: pid_t, signal: Signal) throws {
+            guard kill(pid, signal.rawValue) == 0 else {
+                throw SubprocessError(
+                    code: .init(.failedToSendSignal(signal.rawValue)),
+                    underlyingError: .init(rawValue: errno)
+                )
+            }
         }
+        let pid = shouldSendToProcessGroup ? -(processIdentifier.value) : processIdentifier.value
+
+        #if os(Linux) || os(Android)
+        // On linux, use pidfd_send_signal if possible
+        if shouldSendToProcessGroup {
+            // pidfd_send_signal does not support sending signal to process group
+            try _kill(pid, signal: signal)
+        } else {
+            guard _pidfd_send_signal(
+                processIdentifier.processDescriptor,
+                signal.rawValue
+            ) == 0 else {
+                throw SubprocessError(
+                    code: .init(.failedToSendSignal(signal.rawValue)),
+                    underlyingError: .init(rawValue: errno)
+                )
+            }
+        }
+        #else
+        try _kill(pid, signal: signal)
+        #endif
     }
 }
 

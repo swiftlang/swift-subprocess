@@ -88,12 +88,14 @@ extension Configuration {
 
                 // Spawn
                 var pid: pid_t = 0
+                var processDescriptor: PlatformFileDescriptor = -1
                 let spawnError: CInt = possibleExecutablePath.withCString { exePath in
                     return (self.workingDirectory?.string).withOptionalCString { workingDir in
                         return supplementaryGroups.withOptionalUnsafeBufferPointer { sgroups in
                             return fileDescriptors.withUnsafeBufferPointer { fds in
                                 return _subprocess_fork_exec(
                                     &pid,
+                                    &processDescriptor,
                                     exePath,
                                     workingDir,
                                     fds.baseAddress!,
@@ -140,9 +142,11 @@ extension Configuration {
                     errorRead: nil,
                     errorWrite: errorWriteFileDescriptor
                 )
-
                 let execution = Execution(
-                    processIdentifier: .init(value: pid)
+                    processIdentifier: .init(
+                        value: pid,
+                        processDescriptor: processDescriptor
+                    )
                 )
                 return SpawnResult(
                     execution: execution,
@@ -179,6 +183,32 @@ extension Configuration {
             )
         }
     }
+}
+
+// MARK:  - ProcessIdentifier
+
+/// A platform independent identifier for a Subprocess.
+public struct ProcessIdentifier: Sendable, Hashable {
+    /// The platform specific process identifier value
+    public let value: pid_t
+    internal let processDescriptor: PlatformFileDescriptor
+
+    internal init(value: pid_t, processDescriptor: PlatformFileDescriptor) {
+        self.value = value
+        self.processDescriptor = processDescriptor
+    }
+
+    internal func close() {
+        if self.processDescriptor > 0 {
+            _SubprocessCShims.close(self.processDescriptor)
+        }
+    }
+}
+
+extension ProcessIdentifier: CustomStringConvertible, CustomDebugStringConvertible {
+    public var description: String { "\(self.value)" }
+
+    public var debugDescription: String { "\(self.value)" }
 }
 
 // MARK: - Platform Specific Options
@@ -257,63 +287,115 @@ extension String {
 // MARK: - Process Monitoring
 @Sendable
 internal func monitorProcessTermination(
-    forExecution execution: Execution
+    for processIdentifier: ProcessIdentifier
 ) async throws -> TerminationStatus {
     return try await withCheckedThrowingContinuation { continuation in
-        _childProcessContinuations.withLock { continuations in
-            // We don't need to worry about a race condition here because waitid()
-            // does not clear the wait/zombie state of the child process. If it sees
-            // the child process has terminated and manages to acquire the lock before
-            // we add this continuation to the dictionary, then it will simply loop
-            // and report the status again.
-            let oldContinuation = continuations.updateValue(continuation, forKey: execution.processIdentifier.value)
-            precondition(oldContinuation == nil)
+        let status = _processMonitorState.withLock { state -> Result<TerminationStatus, SubprocessError>? in
+            switch state {
+            case .notStarted:
+                let error = SubprocessError(
+                    code: .init(.failedToMonitorProcess),
+                    underlyingError: nil
+                )
+                return .failure(error)
+            case .failed(let error):
+                return .failure(error)
+            case .started(let storage):
+                // pidfd is only supported on Linux kernel 5.4 and above
+                // On older releases, use signalfd so we do not need
+                // to register anything with epoll
+                if processIdentifier.processDescriptor > 0 {
+                    // Register processDescriptor with epoll
+                    var event = epoll_event(
+                        events: EPOLLIN.rawValue,
+                        data: epoll_data(fd: processIdentifier.processDescriptor)
+                    )
+                    let rc = epoll_ctl(
+                        storage.epollFileDescriptor,
+                        EPOLL_CTL_ADD,
+                        processIdentifier.processDescriptor,
+                        &event
+                    )
+                    if rc != 0 {
+                        let epollErrno = errno
+                        let error = SubprocessError(
+                            code: .init(.failedToMonitorProcess),
+                            underlyingError: .init(rawValue: epollErrno)
+                        )
+                        return .failure(error)
+                    }
+                    // Now save the registration
+                    var newState = storage
+                    newState.continuations[processIdentifier.processDescriptor] = continuation
+                    state = .started(newState)
+                    // No state to resume
+                    return nil
+                } else {
+                    // Fallback to using signal handler directly on older Linux kernels
+                    // Since Linux coalesce signals, it's possible by the time we request
+                    // monitoring the process has already exited. Check to make sure that
+                    // is not the case and only save continuation then.
+                    var siginfo = siginfo_t()
+                    // Use NOHANG here because the child process might still be running
+                    if 0 == waitid(P_PID, id_t(processIdentifier.value), &siginfo, WEXITED | WNOHANG) {
+                        // If si_pid and si_signo are both 0, the child is still running since we used WNOHANG
+                        if siginfo.si_pid == 0 && siginfo.si_signo == 0 {
+                            // Save this continuation to be called by signal hander
+                            var newState = storage
+                            newState.continuations[processIdentifier.processDescriptor] = continuation
+                            state = .started(newState)
+                            return nil
+                        }
 
-            // Wake up the waiter thread if it is waiting for more child processes.
-            _ = pthread_cond_signal(_waitThreadNoChildrenCondition)
+                        switch siginfo.si_code {
+                        case .init(CLD_EXITED):
+                            return .success(.exited(siginfo.si_status))
+                        case .init(CLD_KILLED), .init(CLD_DUMPED):
+                            return .success(.unhandledException(siginfo.si_status))
+                        default:
+                            fatalError("Unexpected exit status: \(siginfo.si_code)")
+                        }
+                    } else {
+                        let waitidError = errno
+                        let error = SubprocessError(
+                            code: .init(.failedToMonitorProcess),
+                            underlyingError: .init(rawValue: waitidError)
+                        )
+                        return .failure(error)
+                    }
+                }
+            }
+        }
+
+        if let status {
+            continuation.resume(with: status)
         }
     }
 }
 
-// Small helper to provide thread-safe access to the child process to continuations map as well as a condition variable to suspend the calling thread when there are no subprocesses to wait for. Note that Mutex cannot be used here because we need the semantics of pthread_cond_wait, which requires passing the pthread_mutex_t instance as a parameter, something the Mutex API does not provide access to.
-private final class ChildProcessContinuations: Sendable {
-    typealias MutexType = pthread_mutex_t
-
-    private nonisolated(unsafe) var continuations = [pid_t: CheckedContinuation<TerminationStatus, any Error>]()
-    private nonisolated(unsafe) let mutex = UnsafeMutablePointer<MutexType>.allocate(capacity: 1)
-
-    init() {
-        pthread_mutex_init(mutex, nil)
+private enum ProcessMonitorState {
+    struct Storage {
+        let epollFileDescriptor: CInt
+        let shutdownFileDescriptor: CInt
+        let monitorThread: pthread_t
+        var continuations: [PlatformFileDescriptor : CheckedContinuation<TerminationStatus, any Error>]
     }
 
-    func withLock<R>(_ body: (inout [pid_t: CheckedContinuation<TerminationStatus, any Error>]) throws -> R) rethrows -> R {
-        try withUnsafeUnderlyingLock { _, continuations in
-            try body(&continuations)
-        }
-    }
+    case notStarted
+    case started(Storage)
+    case failed(SubprocessError)
+}
 
-    func withUnsafeUnderlyingLock<R>(_ body: (UnsafeMutablePointer<MutexType>, inout [pid_t: CheckedContinuation<TerminationStatus, any Error>]) throws -> R) rethrows -> R {
-        pthread_mutex_lock(mutex)
-        defer {
-            pthread_mutex_unlock(mutex)
-        }
-        return try body(mutex, &continuations)
+private final class MonitorThreadContext {
+    let epollFileDescriptor: CInt
+    let shutdownFileDescriptor: CInt
+
+    init(epollFileDescriptor: CInt, shutdownFileDescriptor: CInt) {
+        self.epollFileDescriptor = epollFileDescriptor
+        self.shutdownFileDescriptor = shutdownFileDescriptor
     }
 }
 
-private let _childProcessContinuations = ChildProcessContinuations()
-
-private nonisolated(unsafe) let _waitThreadNoChildrenCondition = {
-    #if os(FreeBSD) || os(OpenBSD)
-    let result = UnsafeMutablePointer<pthread_cond_t?>.allocate(capacity: 1)
-    #else
-    let result = UnsafeMutablePointer<pthread_cond_t>.allocate(capacity: 1)
-    #endif
-    _ = pthread_cond_init(result, nil)
-    return result
-}()
-
-#if !os(FreeBSD) && !os(OpenBSD)
 private extension siginfo_t {
     var si_status: Int32 {
         #if canImport(Glibc)
@@ -335,80 +417,368 @@ private extension siginfo_t {
         #endif
     }
 }
-#endif
+
+// Okay to be unlocked global mutable because this value is only set once like dispatch_once
+private nonisolated(unsafe) var _signalPipe: (readEnd: CInt, writeEnd: CInt) = (readEnd: -1, writeEnd: -1)
+// Okay to be unlocked global mutable because this value is only set once like dispatch_once
+private nonisolated(unsafe) var _waitprocessDescriptorSupported = false
+private let _processMonitorState: Mutex<ProcessMonitorState> = .init(.notStarted)
+
+private func shutdown() {
+    let storage = _processMonitorState.withLock { state -> ProcessMonitorState.Storage? in
+        switch state {
+        case .failed(_), .notStarted:
+            return nil
+        case .started(let storage):
+            return storage
+        }
+    }
+
+    guard let storage else {
+        return
+    }
+
+    var one: UInt64 = 1
+    // Wake up the thread for shutdown
+    _ = _SubprocessCShims.write(storage.shutdownFileDescriptor, &one, MemoryLayout<UInt64>.size)
+    // Cleanup the monitor thread
+    pthread_join(storage.monitorThread, nil)
+}
+
+
+/// See the following page for the complete list of `async-signal-safe` functions
+/// https://man7.org/linux/man-pages/man7/signal-safety.7.html
+/// Only these functions can be used in the signal handler below
+private func signalHandler(
+    _ signalNumber: CInt,
+    _ signalInfo: UnsafeMutablePointer<siginfo_t>?,
+    _ context: UnsafeMutableRawPointer?
+) {
+    let savedErrno = errno
+    var one: UInt8 = 1
+    _SubprocessCShims.write(_signalPipe.writeEnd, &one, 1)
+    errno = savedErrno
+}
+
+private func monitorThreadFunc(args: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
+    let unmanaged = Unmanaged<MonitorThreadContext>.fromOpaque(args!)
+    let context = unmanaged.takeRetainedValue()
+
+    var events: [epoll_event] = Array(
+        repeating: epoll_event(events: 0, data: epoll_data(fd: 0)),
+        count: 256
+    )
+    var waitMask = sigset_t();
+    sigemptyset(&waitMask);
+    sigaddset(&waitMask, SIGCHLD);
+    // Enter the monitor loop
+    monitorLoop: while true {
+        let eventCount = epoll_pwait(
+            context.epollFileDescriptor,
+            &events,
+            CInt(events.count),
+            -1,
+            &waitMask
+        )
+        if eventCount < 0 {
+            let pwaitErrno = errno
+            if pwaitErrno == EINTR || pwaitErrno == EAGAIN {
+                continue // interrupted by signal; try again
+            }
+            // Report other errors
+            let error = SubprocessError(
+                code: .init(.failedToMonitorProcess),
+                underlyingError: .init(rawValue: pwaitErrno)
+            )
+            let continuations = _processMonitorState.withLock { state -> [CheckedContinuation<TerminationStatus, any Error>] in
+                let result: [CheckedContinuation<TerminationStatus, any Error>]
+                if case .started(let storage) = state {
+                    result = Array(storage.continuations.values)
+                } else {
+                    result = []
+                }
+                state = .failed(error)
+                return result
+            }
+            // Report error to all existing continuations
+            for continuation in continuations {
+                continuation.resume(throwing: error)
+            }
+            break monitorLoop
+        }
+
+        for index in 0 ..< Int(eventCount) {
+            let event = events[index]
+            let targetFileDescriptor = event.data.fd
+
+            // Breakout the monitor loop if we received shutdown
+            // from the shutdownFD
+            if targetFileDescriptor == context.shutdownFileDescriptor {
+                var buf: UInt64 = 0
+                _ = _SubprocessCShims.read(context.shutdownFileDescriptor, &buf, MemoryLayout<UInt64>.size)
+                break monitorLoop
+            }
+
+            // P_PIDFD requires Linux Kernel 5.4 and above
+            if _waitprocessDescriptorSupported {
+                _blockAndWaitForprocessDescriptor(targetFileDescriptor, context: context)
+            } else {
+                _reapAllKnownChildProcesses(targetFileDescriptor, context: context)
+            }
+        }
+    }
+
+    return nil
+}
 
 private let setup: () = {
-    // Create the thread. It will run immediately; because it runs in an infinite
-    // loop, we aren't worried about detaching or joining it.
-    #if os(FreeBSD) || os(OpenBSD)
-    var thread: pthread_t?
-    #else
-    var thread = pthread_t()
-    #endif
-    _ = pthread_create(
-        &thread,
-        nil,
-        { _ -> UnsafeMutableRawPointer? in
-            // Run an infinite loop that waits for child processes to terminate and
-            // captures their exit statuses.
-            while true {
-                // Listen for child process exit events. WNOWAIT means we don't perturb the
-                // state of a terminated (zombie) child process, allowing us to fetch the
-                // continuation (if available) before reaping.
-                var siginfo = siginfo_t()
-                errno = 0
-                if waitid(P_ALL, id_t(0), &siginfo, WEXITED | WNOWAIT) == 0 {
-                    let pid = siginfo.si_pid
+    func _reportFailureWithErrno(_ number: CInt) {
+        let error = SubprocessError(
+            code: .init(.failedToMonitorProcess),
+            underlyingError: .init(rawValue: number)
+        )
+        _processMonitorState.withLock { state in
+            state = .failed(error)
+        }
+    }
 
-                    // If we had a continuation for this PID, allow the process to be reaped
-                    // and pass the resulting exit condition back to the calling task. If
-                    // there is no continuation, then either it hasn't been stored yet or
-                    // this child process is not tracked by the waiter thread.
-                    guard pid != 0, let c = _childProcessContinuations.withLock({ $0.removeValue(forKey: pid) }) else {
-                        continue
-                    }
+    // Create the epollfd for monitoring
+    let epollFileDescriptor = epoll_create1(CInt(EPOLL_CLOEXEC))
+    guard epollFileDescriptor >= 0 else {
+        _reportFailureWithErrno(errno)
+        return
+    }
+    // Create shutdownFileDescriptor
+    let shutdownFileDescriptor = eventfd(0, CInt(EFD_NONBLOCK | EFD_CLOEXEC))
+    guard shutdownFileDescriptor >= 0 else {
+        _reportFailureWithErrno(errno)
+        return
+    }
 
-                    c.resume(with: Result {
-                        // Here waitid should not block because `pid` has already terminated at this point.
-                        while true {
-                            var siginfo = siginfo_t()
-                            errno = 0
-                            if waitid(P_PID, numericCast(pid), &siginfo, WEXITED) == 0 {
-                                var status: TerminationStatus? = nil
-                                switch siginfo.si_code {
-                                case .init(CLD_EXITED):
-                                    return .exited(siginfo.si_status)
-                                case .init(CLD_KILLED), .init(CLD_DUMPED):
-                                    return .unhandledException(siginfo.si_status)
-                                default:
-                                    fatalError("Unexpected exit status: \(siginfo.si_code)")
-                                }
-                            } else if errno != EINTR {
-                                throw SubprocessError.UnderlyingError(rawValue: errno)
-                            }
-                        }
-                    })
-                } else if errno == ECHILD {
-                    // We got ECHILD. If there are no continuations added right now, we should
-                    // suspend this thread on the no-children condition until it's awoken by a
-                    // newly-scheduled waiter process. (If this condition is spuriously
-                    // woken, we'll just loop again, which is fine.) Note that we read errno
-                    // outside the lock in case acquiring the lock perturbs it.
-                    _childProcessContinuations.withUnsafeUnderlyingLock { lock, childProcessContinuations in
-                        if childProcessContinuations.isEmpty {
-                            _ = pthread_cond_wait(_waitThreadNoChildrenCondition, lock)
-                        }
-                    }
-                }
-            }
-        },
-        nil
+    // Register shutdownFileDescriptor with epoll
+    var event = epoll_event(
+        events: EPOLLIN.rawValue,
+        data: epoll_data(fd: shutdownFileDescriptor)
     )
+    var rc = epoll_ctl(
+        epollFileDescriptor,
+        EPOLL_CTL_ADD,
+        shutdownFileDescriptor,
+        &event
+    )
+    guard rc == 0 else {
+        _reportFailureWithErrno(errno)
+        return
+    }
+
+    // If the current kernel does not support pidfd, fallback to signal handler
+    // Create the self-pipe that signal handler writes to
+    if !_isWaitprocessDescriptorSupported() {
+        var pipeCreationError: SubprocessError? = nil
+        do {
+            let (readEnd, writeEnd) = try FileDescriptor.pipe()
+            _signalPipe = (readEnd.rawValue, writeEnd.rawValue)
+        } catch {
+            var underlying: SubprocessError.UnderlyingError? = nil
+            if let err = error as? Errno {
+                underlying = .init(rawValue: err.rawValue)
+            }
+            pipeCreationError = SubprocessError(
+                code: .init(.failedToMonitorProcess),
+                underlyingError: underlying
+            )
+        }
+        if let pipeCreationError {
+            _processMonitorState.withLock { state in
+                state = .failed(pipeCreationError)
+            }
+            return
+        }
+        // Register the read end with epoll so we can get updates
+        // about it. The write end is written by the signal hander
+        var event = epoll_event(
+            events: EPOLLIN.rawValue,
+            data: epoll_data(fd: _signalPipe.readEnd)
+        )
+        rc = epoll_ctl(
+            epollFileDescriptor,
+            EPOLL_CTL_ADD,
+            _signalPipe.readEnd,
+            &event
+        )
+        guard rc == 0 else {
+            _reportFailureWithErrno(errno)
+            return
+        }
+    } else {
+        // Mark waitid(P_PIDFD) as supported
+        _waitprocessDescriptorSupported = true
+    }
+    let monitorThreadContext = MonitorThreadContext(
+        epollFileDescriptor: epollFileDescriptor,
+        shutdownFileDescriptor: shutdownFileDescriptor
+    )
+    let unmanagedContext = Unmanaged.passRetained(monitorThreadContext)
+    // Create the monitor thread
+    var thread = pthread_t()
+    pthread_create(&thread, nil, monitorThreadFunc, unmanagedContext.toOpaque())
+
+    let storage = ProcessMonitorState.Storage(
+        epollFileDescriptor: epollFileDescriptor,
+        shutdownFileDescriptor: shutdownFileDescriptor,
+        monitorThread: thread,
+        continuations: [:]
+    )
+
+    _processMonitorState.withLock { state in
+        state = .started(storage)
+    }
+
+    atexit {
+        shutdown()
+    }
 }()
+
 
 private func _setupMonitorSignalHandler() {
     // Only executed once
     setup
 }
+
+private func _blockAndWaitForprocessDescriptor(_ pidfd: CInt, context: MonitorThreadContext) {
+    var terminationStatus: Result<TerminationStatus, SubprocessError>
+
+    var siginfo = siginfo_t()
+    if 0 == waitid(idtype_t(UInt32(P_PIDFD)), id_t(pidfd), &siginfo, WEXITED) {
+        switch siginfo.si_code {
+        case .init(CLD_EXITED):
+            terminationStatus = .success(.exited(siginfo.si_status))
+        case .init(CLD_KILLED), .init(CLD_DUMPED):
+            terminationStatus = .success(.unhandledException(siginfo.si_status))
+        default:
+            fatalError("Unexpected exit status: \(siginfo.si_code)")
+        }
+    } else {
+        let waitidErrno = errno
+        terminationStatus = .failure(SubprocessError(
+            code: .init(.failedToMonitorProcess),
+            underlyingError: .init(rawValue: waitidErrno))
+        )
+    }
+
+    // Remove this pidfd from epoll to prevent further notifications
+    let rc = epoll_ctl(
+        context.epollFileDescriptor,
+        EPOLL_CTL_DEL,
+        pidfd,
+        nil
+    )
+    if rc != 0 {
+        let epollErrno = errno
+        terminationStatus = .failure(SubprocessError(
+            code: .init(.failedToMonitorProcess),
+            underlyingError: .init(rawValue: epollErrno)
+        ))
+    }
+    // Notify the continuation
+    let continuation = _processMonitorState.withLock { state -> CheckedContinuation<TerminationStatus, any Error>? in
+        guard case .started(let storage) = state,
+              let continuation = storage.continuations[pidfd] else {
+            return nil
+        }
+        // Remove registration
+        var newStorage = storage
+        newStorage.continuations.removeValue(forKey: pidfd)
+        state = .started(newStorage)
+        return continuation
+    }
+    continuation?.resume(with: terminationStatus)
+}
+
+// On older kernel, fallback to using signal handlers
+private typealias ResultContinuation = (
+    result: Result<TerminationStatus, SubprocessError>,
+    continuation: CheckedContinuation<TerminationStatus, any Error>
+)
+private func _reapAllKnownChildProcesses(_ signalFd: CInt, context: MonitorThreadContext) {
+    guard signalFd == _signalPipe.readEnd else {
+        return
+    }
+
+    // Drain the signalFd
+    var buffer: UInt8 = 0
+    while _SubprocessCShims.read(signalFd, &buffer, 1) > 0 { /* noop, drain the pipe  */ }
+
+    let resumingContinuations: [ResultContinuation] = _processMonitorState.withLock { state in
+        guard case .started(let storage) = state else {
+            return []
+        }
+        var updatedContinuations = storage.continuations
+        var results: [ResultContinuation] = []
+        // Since Linux coalesce signals, we need to loop through all known child process
+        // to check if they exited.
+        for knownChildPID in storage.continuations.keys {
+            let terminationStatus: Result<TerminationStatus, SubprocessError>
+            var siginfo = siginfo_t()
+            // Use `WNOHANG` here so waitid isn't blocking because we expect some
+            // child processes might be still running
+            if 0 == waitid(P_PID, id_t(knownChildPID), &siginfo, WEXITED | WNOHANG) {
+                // If si_pid and si_signo, the child is still running since we used WNOHANG
+                if siginfo.si_pid == 0 && siginfo.si_signo == 0 {
+                    // Move on to the next child
+                    continue
+                }
+
+                switch siginfo.si_code {
+                case .init(CLD_EXITED):
+                    terminationStatus = .success(.exited(siginfo.si_status))
+                case .init(CLD_KILLED), .init(CLD_DUMPED):
+                    terminationStatus = .success(.unhandledException(siginfo.si_status))
+                default:
+                    fatalError("Unexpected exit status: \(siginfo.si_code)")
+                }
+            } else {
+                let waitidErrno = errno
+                terminationStatus = .failure(SubprocessError(
+                    code: .init(.failedToMonitorProcess),
+                    underlyingError: .init(rawValue: waitidErrno))
+                )
+            }
+            results.append((result: terminationStatus, continuation: storage.continuations[knownChildPID]!))
+            // Now we have the exit code, remove saved continuations
+            updatedContinuations.removeValue(forKey: knownChildPID)
+        }
+        var updatedStorage = storage
+        updatedStorage.continuations = updatedContinuations
+        state = .started(updatedStorage)
+
+        return results
+    }
+    // Resume continuations
+    for c in resumingContinuations {
+        c.continuation.resume(with: c.result)
+    }
+}
+
+internal func _isWaitprocessDescriptorSupported() -> Bool {
+    // waitid(P_PIDFD) is only supported on Linux kernel 5.4 and above
+    // Prob whether the current system supports it by calling it with self pidfd
+    // and checking for EINVAL (waitid sets errno to EINVAL if it does not
+    // recognize the id type).
+    var siginfo = siginfo_t()
+    let selfPidfd = _pidfd_open(getpid())
+    if selfPidfd < 0 {
+        // If we can not retrieve pidfd, the system does not support waitid(P_PIDFD)
+        return false
+    }
+    /// The following call will fail either with
+    /// - ECHILD: in this case we know P_PIDFD is supported and waitid correctly
+    ///     reported that we don't have a child with the same selfPidfd;
+    /// - EINVAL: in this case we know P_PIDFD is not supported because it does not
+    ///     recognize the `P_PIDFD` type
+    waitid(idtype_t(UInt32(P_PIDFD)), id_t(selfPidfd), &siginfo, WEXITED | WNOWAIT)
+    return errno == ECHILD
+}
+
 
 #endif  // canImport(Glibc) || canImport(Android) || canImport(Musl)
