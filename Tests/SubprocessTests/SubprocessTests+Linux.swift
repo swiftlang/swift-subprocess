@@ -114,6 +114,22 @@ struct SubprocessLinuxTests {
             #expect(result.terminationStatus == .unhandledException(SIGTERM))
         }
     }
+
+    @Test func testUniqueProcessIdentifier() async throws {
+        _ = try await Subprocess.run(
+            .path("/bin/echo"),
+            output: .discarded,
+            error: .discarded
+        ) { subprocess in
+            if subprocess.processIdentifier.processDescriptor > 0 {
+                var statinfo = stat()
+                try #require(fstat(subprocess.processIdentifier.processDescriptor, &statinfo) == 0)
+                
+                // In kernel 6.9+, st_ino globally uniquely identifies the process
+                #expect(statinfo.st_ino > 0)
+            }
+        }
+    }
 }
 
 fileprivate enum ProcessState: String {

@@ -677,9 +677,8 @@ extension Environment {
 public struct ProcessIdentifier: Sendable, Hashable {
     /// Windows specific process identifier value
     public let value: DWORD
-    internal nonisolated(unsafe) let processDescriptor: HANDLE
-    internal nonisolated(unsafe) let threadHandle: HANDLE
-
+    public nonisolated(unsafe) let processDescriptor: HANDLE
+    public nonisolated(unsafe) let threadHandle: HANDLE
 
     internal init(value: DWORD, processDescriptor: HANDLE, threadHandle: HANDLE) {
         self.value = value
