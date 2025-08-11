@@ -117,7 +117,7 @@ extension Execution {
             try _kill(pid, signal: signal)
         } else {
             guard _pidfd_send_signal(
-                processIdentifier.processFileDescriptor,
+                processIdentifier.processDescriptor,
                 signal.rawValue
             ) == 0 else {
                 throw SubprocessError(

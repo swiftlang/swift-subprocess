@@ -88,14 +88,14 @@ extension Configuration {
 
                 // Spawn
                 var pid: pid_t = 0
-                var processFileDescriptor: PlatformFileDescriptor = -1
+                var processDescriptor: PlatformFileDescriptor = -1
                 let spawnError: CInt = possibleExecutablePath.withCString { exePath in
                     return (self.workingDirectory?.string).withOptionalCString { workingDir in
                         return supplementaryGroups.withOptionalUnsafeBufferPointer { sgroups in
                             return fileDescriptors.withUnsafeBufferPointer { fds in
                                 return _subprocess_fork_exec(
                                     &pid,
-                                    &processFileDescriptor,
+                                    &processDescriptor,
                                     exePath,
                                     workingDir,
                                     fds.baseAddress!,
@@ -145,7 +145,7 @@ extension Configuration {
                 let execution = Execution(
                     processIdentifier: .init(
                         value: pid,
-                        processFileDescriptor: processFileDescriptor
+                        processDescriptor: processDescriptor
                     )
                 )
                 return SpawnResult(
@@ -191,16 +191,16 @@ extension Configuration {
 public struct ProcessIdentifier: Sendable, Hashable {
     /// The platform specific process identifier value
     public let value: pid_t
-    internal let processFileDescriptor: PlatformFileDescriptor
+    internal let processDescriptor: PlatformFileDescriptor
 
-    internal init(value: pid_t, processFileDescriptor: PlatformFileDescriptor) {
+    internal init(value: pid_t, processDescriptor: PlatformFileDescriptor) {
         self.value = value
-        self.processFileDescriptor = processFileDescriptor
+        self.processDescriptor = processDescriptor
     }
 
     internal func close() {
-        if self.processFileDescriptor > 0 {
-            _SubprocessCShims.close(self.processFileDescriptor)
+        if self.processDescriptor > 0 {
+            _SubprocessCShims.close(self.processDescriptor)
         }
     }
 }
@@ -304,16 +304,16 @@ internal func monitorProcessTermination(
                 // pidfd is only supported on Linux kernel 5.4 and above
                 // On older releases, use signalfd so we do not need
                 // to register anything with epoll
-                if processIdentifier.processFileDescriptor > 0 {
-                    // Register processFileDescriptor with epoll
+                if processIdentifier.processDescriptor > 0 {
+                    // Register processDescriptor with epoll
                     var event = epoll_event(
                         events: EPOLLIN.rawValue,
-                        data: epoll_data(fd: processIdentifier.processFileDescriptor)
+                        data: epoll_data(fd: processIdentifier.processDescriptor)
                     )
                     let rc = epoll_ctl(
                         storage.epollFileDescriptor,
                         EPOLL_CTL_ADD,
-                        processIdentifier.processFileDescriptor,
+                        processIdentifier.processDescriptor,
                         &event
                     )
                     if rc != 0 {
@@ -326,7 +326,7 @@ internal func monitorProcessTermination(
                     }
                     // Now save the registration
                     var newState = storage
-                    newState.continuations[processIdentifier.processFileDescriptor] = continuation
+                    newState.continuations[processIdentifier.processDescriptor] = continuation
                     state = .started(newState)
                     // No state to resume
                     return nil
@@ -342,7 +342,7 @@ internal func monitorProcessTermination(
                         if siginfo.si_pid == 0 && siginfo.si_signo == 0 {
                             // Save this continuation to be called by signal hander
                             var newState = storage
-                            newState.continuations[processIdentifier.processFileDescriptor] = continuation
+                            newState.continuations[processIdentifier.processDescriptor] = continuation
                             state = .started(newState)
                             return nil
                         }
@@ -421,7 +421,7 @@ private extension siginfo_t {
 // Okay to be unlocked global mutable because this value is only set once like dispatch_once
 private nonisolated(unsafe) var _signalPipe: (readEnd: CInt, writeEnd: CInt) = (readEnd: -1, writeEnd: -1)
 // Okay to be unlocked global mutable because this value is only set once like dispatch_once
-private nonisolated(unsafe) var _waitProcessFileDescriptorSupported = false
+private nonisolated(unsafe) var _waitprocessDescriptorSupported = false
 private let _processMonitorState: Mutex<ProcessMonitorState> = .init(.notStarted)
 
 private func shutdown() {
@@ -520,8 +520,8 @@ private func monitorThreadFunc(args: UnsafeMutableRawPointer?) -> UnsafeMutableR
             }
 
             // P_PIDFD requires Linux Kernel 5.4 and above
-            if _waitProcessFileDescriptorSupported {
-                _blockAndWaitForProcessFileDescriptor(targetFileDescriptor, context: context)
+            if _waitprocessDescriptorSupported {
+                _blockAndWaitForprocessDescriptor(targetFileDescriptor, context: context)
             } else {
                 _reapAllKnownChildProcesses(targetFileDescriptor, context: context)
             }
@@ -573,7 +573,7 @@ private let setup: () = {
 
     // If the current kernel does not support pidfd, fallback to signal handler
     // Create the self-pipe that signal handler writes to
-    if !_isWaitProcessFileDescriptorSupported() {
+    if !_isWaitprocessDescriptorSupported() {
         var pipeCreationError: SubprocessError? = nil
         do {
             let (readEnd, writeEnd) = try FileDescriptor.pipe()
@@ -612,7 +612,7 @@ private let setup: () = {
         }
     } else {
         // Mark waitid(P_PIDFD) as supported
-        _waitProcessFileDescriptorSupported = true
+        _waitprocessDescriptorSupported = true
     }
     let monitorThreadContext = MonitorThreadContext(
         epollFileDescriptor: epollFileDescriptor,
@@ -645,7 +645,7 @@ private func _setupMonitorSignalHandler() {
     setup
 }
 
-private func _blockAndWaitForProcessFileDescriptor(_ pidfd: CInt, context: MonitorThreadContext) {
+private func _blockAndWaitForprocessDescriptor(_ pidfd: CInt, context: MonitorThreadContext) {
     var terminationStatus: Result<TerminationStatus, SubprocessError>
 
     var siginfo = siginfo_t()
@@ -760,7 +760,7 @@ private func _reapAllKnownChildProcesses(_ signalFd: CInt, context: MonitorThrea
     }
 }
 
-internal func _isWaitProcessFileDescriptorSupported() -> Bool {
+internal func _isWaitprocessDescriptorSupported() -> Bool {
     // waitid(P_PIDFD) is only supported on Linux kernel 5.4 and above
     // Prob whether the current system supports it by calling it with self pidfd
     // and checking for EINVAL (waitid sets errno to EINVAL if it does not

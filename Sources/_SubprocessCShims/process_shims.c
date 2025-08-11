@@ -540,12 +540,18 @@ int _subprocess_fork_exec(
         // If we reached this point, something went wrong
         write_error_and_exit;
     } else {
+#define reap_child_process_and_return_errno int capturedError = errno; \
+    close(pipefd[0]); \
+    siginfo_t info; \
+    waitid(P_PID, childPid, &info, WEXITED); \
+    return capturedError
+
         // On Linux 5.3 and lower, we have to fetch pidfd separately
         // Newer Linux supports clone3 which returns pidfd directly
         if (_pidfd < 0) {
             _pidfd = _pidfd_open(childPid);
             if (_pidfd < 0) {
-                return errno;
+                reap_child_process_and_return_errno;
             }
         }
 
@@ -555,8 +561,7 @@ int _subprocess_fork_exec(
         // Restore old signmask
         rc = pthread_sigmask(SIG_SETMASK, &old_sigmask, NULL);
         if (rc != 0) {
-            close(pipefd[0]);
-            return errno;
+            reap_child_process_and_return_errno;
         }
 
         // Unlock

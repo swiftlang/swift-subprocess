@@ -136,7 +136,7 @@ extension Configuration {
 
         let pid = ProcessIdentifier(
             value: processInfo.dwProcessId,
-            processHandle: processInfo.hProcess,
+            processDescriptor: processInfo.hProcess,
             threadHandle: processInfo.hThread
         )
         let execution = Execution(
@@ -280,7 +280,7 @@ extension Configuration {
 
         let pid = ProcessIdentifier(
             value: processInfo.dwProcessId,
-            processHandle: processInfo.hProcess,
+            processDescriptor: processInfo.hProcess,
             threadHandle: processInfo.hThread
         )
         let execution = Execution(
@@ -487,7 +487,7 @@ internal func monitorProcessTermination(
         guard
             RegisterWaitForSingleObject(
                 &waitHandle,
-                processIdentifier.processHandle,
+                processIdentifier.processDescriptor,
                 callback,
                 context,
                 INFINITE,
@@ -505,7 +505,7 @@ internal func monitorProcessTermination(
     }
 
     var status: DWORD = 0
-    guard GetExitCodeProcess(processIdentifier.processHandle, &status) else {
+    guard GetExitCodeProcess(processIdentifier.processDescriptor, &status) else {
         // The child process terminated but we couldn't get its status back.
         // Assume generic failure.
         return .exited(1)
@@ -523,7 +523,7 @@ extension Execution {
     /// Terminate the current subprocess with the given exit code
     /// - Parameter exitCode: The exit code to use for the subprocess.
     public func terminate(withExitCode exitCode: DWORD) throws {
-        guard TerminateProcess(self.processIdentifier.processHandle, exitCode) else {
+        guard TerminateProcess(self.processIdentifier.processDescriptor, exitCode) else {
             throw SubprocessError(
                 code: .init(.failedToTerminate),
                 underlyingError: .init(rawValue: GetLastError())
@@ -547,7 +547,7 @@ extension Execution {
                 underlyingError: .init(rawValue: GetLastError())
             )
         }
-        guard NTSuspendProcess(self.processIdentifier.processHandle) >= 0 else {
+        guard NTSuspendProcess(self.processIdentifier.processDescriptor) >= 0 else {
             throw SubprocessError(
                 code: .init(.failedToSuspend),
                 underlyingError: .init(rawValue: GetLastError())
@@ -571,7 +571,7 @@ extension Execution {
                 underlyingError: .init(rawValue: GetLastError())
             )
         }
-        guard NTResumeProcess(self.processIdentifier.processHandle) >= 0 else {
+        guard NTResumeProcess(self.processIdentifier.processDescriptor) >= 0 else {
             throw SubprocessError(
                 code: .init(.failedToResume),
                 underlyingError: .init(rawValue: GetLastError())
@@ -677,13 +677,13 @@ extension Environment {
 public struct ProcessIdentifier: Sendable, Hashable {
     /// Windows specific process identifier value
     public let value: DWORD
-    internal nonisolated(unsafe) let processHandle: HANDLE
+    internal nonisolated(unsafe) let processDescriptor: HANDLE
     internal nonisolated(unsafe) let threadHandle: HANDLE
 
 
-    internal init(value: DWORD, processHandle: HANDLE, threadHandle: HANDLE) {
+    internal init(value: DWORD, processDescriptor: HANDLE, threadHandle: HANDLE) {
         self.value = value
-        self.processHandle = processHandle
+        self.processDescriptor = processDescriptor
         self.threadHandle = threadHandle
     }
 
@@ -691,7 +691,7 @@ public struct ProcessIdentifier: Sendable, Hashable {
         guard CloseHandle(self.threadHandle) else {
             fatalError("Failed to close thread HANDLE: \(SubprocessError.UnderlyingError(rawValue: GetLastError()))")
         }
-        guard CloseHandle(self.processHandle) else {
+        guard CloseHandle(self.processDescriptor) else {
             fatalError("Failed to close process HANDLE: \(SubprocessError.UnderlyingError(rawValue: GetLastError()))")
         }
     }
