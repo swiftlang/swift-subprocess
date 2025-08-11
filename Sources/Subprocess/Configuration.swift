@@ -864,7 +864,7 @@ internal struct CreatedPipe: ~Copyable {
                 return CreateNamedPipeW(
                     pipeNameW,
                     openMode,
-                    DWORD(PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT),
+                    DWORD(PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS),
                     1, // Max instance,
                     DWORD(readBufferSize),
                     DWORD(readBufferSize),
