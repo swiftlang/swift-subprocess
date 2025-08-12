@@ -19,10 +19,19 @@
 
 #if canImport(Glibc)
 import Glibc
+let _subprocess_read = Glibc.read
+let _subprocess_write = Glibc.write
+let _subprocess_close = Glibc.close
 #elseif canImport(Android)
 import Android
+let _subprocess_read = Android.read
+let _subprocess_write = Android.write
+let _subprocess_close = Android.close
 #elseif canImport(Musl)
 import Musl
+let _subprocess_read = Musl.read
+let _subprocess_write = Musl.write
+let _subprocess_close = Musl.close
 #endif
 
 internal import Dispatch
@@ -31,6 +40,42 @@ import Synchronization
 import _SubprocessCShims
 
 // Linux specific implementations
+#if canImport(Glibc)
+extension EPOLL_EVENTS {
+    init(_ other: EPOLL_EVENTS) {
+        self = other
+    }
+}
+#elseif canImport(Bionic)
+typealias EPOLL_EVENTS = CInt
+
+extension UInt32 {
+    // for EPOLLIN/EPOLLOUT
+    var rawValue: UInt32 {
+        self
+    }
+}
+
+extension Int32 {
+    var rawValue: UInt32 {
+        UInt32(bitPattern: self)
+    }
+}
+#elseif canImport(Musl)
+extension EPOLL_EVENTS {
+    init(_ rawValue: Int32) {
+        self.init(UInt32(bitPattern: rawValue))
+    }
+}
+
+extension Int32 {
+    // for EPOLLIN/EPOLLOUT
+    var rawValue: UInt32 {
+        UInt32(bitPattern: self)
+    }
+}
+#endif
+
 extension Configuration {
     internal func spawn(
         withInput inputPipe: consuming CreatedPipe,
@@ -200,7 +245,7 @@ public struct ProcessIdentifier: Sendable, Hashable {
 
     internal func close() {
         if self.processDescriptor > 0 {
-            _SubprocessCShims.close(self.processDescriptor)
+            _ = _subprocess_close(self.processDescriptor)
         }
     }
 }
@@ -373,6 +418,10 @@ internal func monitorProcessTermination(
     }
 }
 
+#if canImport(Musl)
+extension pthread_t: @retroactive @unchecked Sendable { }
+#endif
+
 private enum ProcessMonitorState {
     struct Storage {
         let epollFileDescriptor: CInt
@@ -386,7 +435,7 @@ private enum ProcessMonitorState {
     case failed(SubprocessError)
 }
 
-private final class MonitorThreadContext {
+private struct MonitorThreadContext: Sendable {
     let epollFileDescriptor: CInt
     let shutdownFileDescriptor: CInt
 
@@ -440,7 +489,7 @@ private func shutdown() {
 
     var one: UInt64 = 1
     // Wake up the thread for shutdown
-    _ = _SubprocessCShims.write(storage.shutdownFileDescriptor, &one, MemoryLayout<UInt64>.size)
+    _ = _subprocess_write(storage.shutdownFileDescriptor, &one, MemoryLayout<UInt64>.size)
     // Cleanup the monitor thread
     pthread_join(storage.monitorThread, nil)
 }
@@ -456,14 +505,11 @@ private func signalHandler(
 ) {
     let savedErrno = errno
     var one: UInt8 = 1
-    _SubprocessCShims.write(_signalPipe.writeEnd, &one, 1)
+    _ = _subprocess_write(_signalPipe.writeEnd, &one, 1)
     errno = savedErrno
 }
 
-private func monitorThreadFunc(args: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
-    let unmanaged = Unmanaged<MonitorThreadContext>.fromOpaque(args!)
-    let context = unmanaged.takeRetainedValue()
-
+private func monitorThreadFunc(context: MonitorThreadContext) {
     var events: [epoll_event] = Array(
         repeating: epoll_event(events: 0, data: epoll_data(fd: 0)),
         count: 256
@@ -515,7 +561,7 @@ private func monitorThreadFunc(args: UnsafeMutableRawPointer?) -> UnsafeMutableR
             // from the shutdownFD
             if targetFileDescriptor == context.shutdownFileDescriptor {
                 var buf: UInt64 = 0
-                _ = _SubprocessCShims.read(context.shutdownFileDescriptor, &buf, MemoryLayout<UInt64>.size)
+                _ = _subprocess_read(context.shutdownFileDescriptor, &buf, MemoryLayout<UInt64>.size)
                 break monitorLoop
             }
 
@@ -527,8 +573,6 @@ private func monitorThreadFunc(args: UnsafeMutableRawPointer?) -> UnsafeMutableR
             }
         }
     }
-
-    return nil
 }
 
 private let setup: () = {
@@ -618,10 +662,24 @@ private let setup: () = {
         epollFileDescriptor: epollFileDescriptor,
         shutdownFileDescriptor: shutdownFileDescriptor
     )
-    let unmanagedContext = Unmanaged.passRetained(monitorThreadContext)
     // Create the monitor thread
-    var thread = pthread_t()
-    pthread_create(&thread, nil, monitorThreadFunc, unmanagedContext.toOpaque())
+    let thread: pthread_t
+    switch Result(catching: { () throws(SubprocessError.UnderlyingError) -> pthread_t in
+        try pthread_create {
+            monitorThreadFunc(context: monitorThreadContext)
+        }
+    }) {
+    case let .success(t):
+        thread = t
+    case let .failure(error):
+        _processMonitorState.withLock { state in
+            state = .failed(SubprocessError(
+                code: .init(.failedToMonitorProcess),
+                underlyingError: error
+            ))
+        }
+        return
+    }
 
     let storage = ProcessMonitorState.Storage(
         epollFileDescriptor: epollFileDescriptor,
@@ -707,7 +765,7 @@ private func _reapAllKnownChildProcesses(_ signalFd: CInt, context: MonitorThrea
 
     // Drain the signalFd
     var buffer: UInt8 = 0
-    while _SubprocessCShims.read(signalFd, &buffer, 1) > 0 { /* noop, drain the pipe  */ }
+    while _subprocess_read(signalFd, &buffer, 1) > 0 { /* noop, drain the pipe  */ }
 
     let resumingContinuations: [ResultContinuation] = _processMonitorState.withLock { state in
         guard case .started(let storage) = state else {
@@ -780,5 +838,43 @@ internal func _isWaitprocessDescriptorSupported() -> Bool {
     return errno == ECHILD
 }
 
+internal func pthread_create(_ body: @Sendable @escaping () -> ()) throws(SubprocessError.UnderlyingError) -> pthread_t {
+    final class Context {
+        let body: @Sendable () -> ()
+        init(body: @Sendable @escaping () -> Void) {
+            self.body = body
+        }
+    }
+    #if canImport(Glibc) || canImport(Musl)
+    func proc(_ context: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
+        (Unmanaged<AnyObject>.fromOpaque(context!).takeRetainedValue() as! Context).body()
+        return nil
+    }
+    #elseif canImport(Bionic)
+    func proc(_ context: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer {
+        (Unmanaged<AnyObject>.fromOpaque(context).takeRetainedValue() as! Context).body()
+        return context
+    }
+    #endif
+    #if canImport(Glibc) || canImport(Bionic)
+    var thread = pthread_t()
+    #else
+    var thread: pthread_t?
+    #endif
+    let rc = pthread_create(
+        &thread,
+        nil,
+        proc,
+        Unmanaged.passRetained(Context(body: body)).toOpaque()
+    )
+    if rc != 0 {
+        throw SubprocessError.UnderlyingError(rawValue: rc)
+    }
+    #if canImport(Glibc) || canImport(Bionic)
+    return thread
+    #else
+    return thread!
+    #endif
+}
 
 #endif  // canImport(Glibc) || canImport(Android) || canImport(Musl)

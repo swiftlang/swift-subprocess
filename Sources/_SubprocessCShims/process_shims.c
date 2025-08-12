@@ -17,7 +17,7 @@
 // For pidfd_open
 #include <sys/syscall.h>
 #include <sys/utsname.h>
-#include <linux/sched.h>
+#include <sched.h>
 #endif
 
 #include "include/process_shims.h"
@@ -316,13 +316,28 @@ int _pidfd_open(pid_t pid) {
 }
 
 // SYS_clone3 is only defined on Linux Kernel 5.3 and above
-// Define our dummy value if it's not available
+// Define our dummy value if it's not available (as is the case with Musl libc)
 #ifndef SYS_clone3
-#define SYS_clone3 0xFFFF
+#define SYS_clone3 435
 #endif
 
+// Can't use clone_args from sched.h because only Glibc defines it; Musl does not (and there's no macro to detect Musl)
+struct _subprocess_clone_args {
+    uint64_t flags;
+    uint64_t pidfd;
+    uint64_t child_tid;
+    uint64_t parent_tid;
+    uint64_t exit_signal;
+    uint64_t stack;
+    uint64_t stack_size;
+    uint64_t tls;
+    uint64_t set_tid;
+    uint64_t set_tid_size;
+    uint64_t cgroup;
+};
+
 static int _clone3(int *pidfd) {
-    struct clone_args args = {
+    struct _subprocess_clone_args args = {
         .flags = CLONE_PIDFD,       // Get a pidfd referring to child
         .pidfd = (uintptr_t)pidfd,  // Int pointer for the pidfd (int pidfd = -1;)
         .exit_signal = SIGCHLD,     // Ensure parent gets SIGCHLD

@@ -180,7 +180,7 @@ extension Environment {
             /// length = `key` + `=` + `value` + `\null`
             let totalLength = keyContainer.count + 1 + valueContainer.count + 1
             let fullString: UnsafeMutablePointer<CChar> = .allocate(capacity: totalLength)
-            #if os(Linux)
+            #if os(Linux) || os(Android)
             _ = _shims_snprintf(fullString, CInt(totalLength), "%s=%s", rawByteKey, rawByteValue)
             #else
             _ = snprintf(ptr: fullString, totalLength, "%s=%s", rawByteKey, rawByteValue)

@@ -26,6 +26,8 @@ jobs:
       windows_swift_versions: '["6.1", "nightly-main"]'
       enable_macos_checks: true
       macos_xcode_versions: '["16.3"]'
+      enable_linux_static_sdk_build: true
+      linux_static_sdk_versions: '["6.1", "nightly-6.2"]'
 
   soundness:
     name: Soundness

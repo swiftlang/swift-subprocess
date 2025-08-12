@@ -23,6 +23,7 @@
 import Glibc
 #elseif canImport(Android)
 import Android
+import posix_filesystem.sys_epoll
 #elseif canImport(Musl)
 import Musl
 #endif
@@ -40,7 +41,7 @@ final class AsyncIO: Sendable {
 
     typealias OutputStream = AsyncThrowingStream<AsyncBufferSequence.Buffer, any Error>
 
-    private final class MonitorThreadContext {
+    private struct MonitorThreadContext: Sendable {
         let epollFileDescriptor: CInt
         let shutdownFileDescriptor: CInt
 
@@ -95,7 +96,7 @@ final class AsyncIO: Sendable {
             events: EPOLLIN.rawValue,
             data: epoll_data(fd: shutdownFileDescriptor)
         )
-        var rc = epoll_ctl(
+        let rc = epoll_ctl(
             epollFileDescriptor,
             EPOLL_CTL_ADD,
             shutdownFileDescriptor,
@@ -117,76 +118,71 @@ final class AsyncIO: Sendable {
             epollFileDescriptor: epollFileDescriptor,
             shutdownFileDescriptor: shutdownFileDescriptor
         )
-        let threadContext = Unmanaged.passRetained(context)
-        var thread: pthread_t = pthread_t()
-        rc = pthread_create(&thread, nil, { args in
-            func reportError(_ error: SubprocessError) {
-                _registration.withLock { store in
-                    for continuation in store.values {
-                        continuation.finish(throwing: error)
+        let thread: pthread_t
+        do {
+            thread = try pthread_create {
+                func reportError(_ error: SubprocessError) {
+                    _registration.withLock { store in
+                        for continuation in store.values {
+                            continuation.finish(throwing: error)
+                        }
                     }
                 }
-            }
 
-            let unmanaged = Unmanaged<MonitorThreadContext>.fromOpaque(args!)
-            let context = unmanaged.takeRetainedValue()
-
-            var events: [epoll_event] = Array(
-                repeating: epoll_event(events: 0, data: epoll_data(fd: 0)),
-                count: _epollEventSize
-            )
-
-            // Enter the monitor loop
-            monitorLoop: while true {
-                let eventCount = epoll_wait(
-                    context.epollFileDescriptor,
-                    &events,
-                    CInt(events.count),
-                    -1
+                var events: [epoll_event] = Array(
+                    repeating: epoll_event(events: 0, data: epoll_data(fd: 0)),
+                    count: _epollEventSize
                 )
-                if eventCount < 0 {
-                    if errno == EINTR || errno == EAGAIN {
-                        continue // interrupted by signal; try again
-                    }
-                    // Report other errors
-                    let error = SubprocessError(
-                        code: .init(.asyncIOFailed(
-                            "epoll_wait failed")
-                        ),
-                        underlyingError: .init(rawValue: errno)
-                    )
-                    reportError(error)
-                    break monitorLoop
-                }
 
-                for index in 0 ..< Int(eventCount) {
-                    let event = events[index]
-                    let targetFileDescriptor = event.data.fd
-                    // Breakout the monitor loop if we received shutdown
-                    // from the shutdownFD
-                    if targetFileDescriptor == context.shutdownFileDescriptor {
-                        var buf: UInt64 = 0
-                        _ = _SubprocessCShims.read(context.shutdownFileDescriptor, &buf, MemoryLayout<UInt64>.size)
+                // Enter the monitor loop
+                monitorLoop: while true {
+                    let eventCount = epoll_wait(
+                        context.epollFileDescriptor,
+                        &events,
+                        CInt(events.count),
+                        -1
+                    )
+                    if eventCount < 0 {
+                        if errno == EINTR || errno == EAGAIN {
+                            continue // interrupted by signal; try again
+                        }
+                        // Report other errors
+                        let error = SubprocessError(
+                            code: .init(.asyncIOFailed(
+                                "epoll_wait failed")
+                            ),
+                            underlyingError: .init(rawValue: errno)
+                        )
+                        reportError(error)
                         break monitorLoop
                     }
 
-                    // Notify the continuation
-                    let continuation = _registration.withLock { store -> SignalStream.Continuation? in
-                        if let continuation = store[targetFileDescriptor] {
-                            return continuation
+                    for index in 0 ..< Int(eventCount) {
+                        let event = events[index]
+                        let targetFileDescriptor = event.data.fd
+                        // Breakout the monitor loop if we received shutdown
+                        // from the shutdownFD
+                        if targetFileDescriptor == context.shutdownFileDescriptor {
+                            var buf: UInt64 = 0
+                            _ = _subprocess_read(context.shutdownFileDescriptor, &buf, MemoryLayout<UInt64>.size)
+                            break monitorLoop
                         }
-                        return nil
+
+                        // Notify the continuation
+                        let continuation = _registration.withLock { store -> SignalStream.Continuation? in
+                            if let continuation = store[targetFileDescriptor] {
+                                return continuation
+                            }
+                            return nil
+                        }
+                        continuation?.yield(true)
                     }
-                    continuation?.yield(true)
                 }
             }
-
-            return nil
-        }, threadContext.toOpaque())
-        guard rc == 0 else {
+        } catch let underlyingError {
             let error = SubprocessError(
                 code: .init(.asyncIOFailed("Failed to create monitor thread")),
-                underlyingError: .init(rawValue: rc)
+                underlyingError: underlyingError
             )
             self.state = .failure(error)
             return
@@ -211,14 +207,14 @@ final class AsyncIO: Sendable {
 
         var one: UInt64 = 1
         // Wake up the thread for shutdown
-        _ = _SubprocessCShims.write(currentState.shutdownFileDescriptor, &one, MemoryLayout<UInt64>.stride)
+        _ = _subprocess_write(currentState.shutdownFileDescriptor, &one, MemoryLayout<UInt64>.stride)
         // Cleanup the monitor thread
         pthread_join(currentState.monitorThread, nil)
         var closeError: CInt = 0
-        if _SubprocessCShims.close(currentState.epollFileDescriptor) != 0 {
+        if _subprocess_close(currentState.epollFileDescriptor) != 0 {
             closeError = errno
         }
-        if _SubprocessCShims.close(currentState.shutdownFileDescriptor) != 0 {
+        if _subprocess_close(currentState.shutdownFileDescriptor) != 0 {
             closeError = errno
         }
         if closeError != 0 {
@@ -231,7 +227,7 @@ final class AsyncIO: Sendable {
         _ fileDescriptor: FileDescriptor,
         for event: Event
     ) -> SignalStream {
-        return SignalStream { continuation in
+        return SignalStream { (continuation: SignalStream.Continuation) -> () in
             // If setup failed, nothing much we can do
             switch self.state {
             case .success(let state):
@@ -261,9 +257,9 @@ final class AsyncIO: Sendable {
                 let targetEvent: EPOLL_EVENTS
                 switch event {
                 case .read:
-                    targetEvent = EPOLLIN
+                    targetEvent = EPOLL_EVENTS(EPOLLIN)
                 case .write:
-                    targetEvent = EPOLLOUT
+                    targetEvent = EPOLL_EVENTS(EPOLLOUT)
                 }
 
                 var event = epoll_event(
@@ -369,7 +365,7 @@ extension AsyncIO {
                     let offsetAddress = bufferPointer.baseAddress!.advanced(by: readLength)
 
                     // Read directly into the buffer at the offset
-                    return _SubprocessCShims.read(fileDescriptor.rawValue, offsetAddress, targetCount)
+                    return _subprocess_read(fileDescriptor.rawValue, offsetAddress, targetCount)
                 }
                 if bytesRead > 0 {
                     // Read some data
@@ -435,7 +431,7 @@ extension AsyncIO {
                 let written = bytes.withUnsafeBytes { ptr in
                     let remainingLength = ptr.count - writtenLength
                     let startPtr = ptr.baseAddress!.advanced(by: writtenLength)
-                    return _SubprocessCShims.write(fileDescriptor.rawValue, startPtr, remainingLength)
+                    return _subprocess_write(fileDescriptor.rawValue, startPtr, remainingLength)
                 }
                 if written > 0 {
                     writtenLength += written
@@ -478,7 +474,7 @@ extension AsyncIO {
                 let written = span.withUnsafeBytes { ptr in
                     let remainingLength = ptr.count - writtenLength
                     let startPtr = ptr.baseAddress!.advanced(by: writtenLength)
-                    return _SubprocessCShims.write(fileDescriptor.rawValue, startPtr, remainingLength)
+                    return _subprocess_write(fileDescriptor.rawValue, startPtr, remainingLength)
                 }
                 if written > 0 {
                     writtenLength += written
