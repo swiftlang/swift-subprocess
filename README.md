@@ -230,6 +230,7 @@ The table below describes the current level of support that Subprocess has for v
 | **tvOS** | Not supported |
 | **visionOS** | Not supported |
 | **Ubuntu 22.04** | Supported |
+| **Debian 12** | Supported |
 | **Windows** | Supported |
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
