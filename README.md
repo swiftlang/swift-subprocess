@@ -231,7 +231,7 @@ The table below describes the current level of support that Subprocess has for v
 | **visionOS** | Not supported |
 | **Ubuntu 22.04** | Supported |
 | **Ubuntu 24.04** | Supported |
-| **Red Hat Universal Base Image** | Supported |
+| **Red Hat Universal Base Image 9** | Supported |
 | **Windows** | Supported |
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
