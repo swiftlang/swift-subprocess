@@ -300,6 +300,33 @@ extension Executable {
             return executablePath.string
         }
     }
+
+    internal func possibleExecutablePaths(
+        withPathValue pathValue: String?
+    ) -> Set<String> {
+        switch self.storage {
+        case .executable(let executableName):
+            var results: Set<String> = []
+            // executableName could be a full path
+            results.insert(executableName)
+            // Get $PATH from environment
+            let searchPaths: Set<String>
+            if let pathValue = pathValue {
+                let localSearchPaths = pathValue.split(separator: ":").map { String($0) }
+                searchPaths = Set(localSearchPaths).union(Self.defaultSearchPaths)
+            } else {
+                searchPaths = Self.defaultSearchPaths
+            }
+            for path in searchPaths {
+                results.insert(
+                    FilePath(path).appending(executableName).string
+                )
+            }
+            return results
+        case .path(let executablePath):
+            return Set([executablePath.string])
+        }
+    }
 }
 
 // MARK: - PreSpawn

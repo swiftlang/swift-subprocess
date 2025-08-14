@@ -250,40 +250,6 @@ extension Executable: CustomStringConvertible, CustomDebugStringConvertible {
     }
 }
 
-extension Executable {
-    internal func possibleExecutablePaths(
-        withPathValue pathValue: String?
-    ) -> Set<String> {
-        switch self.storage {
-        case .executable(let executableName):
-            #if os(Windows)
-            // Windows CreateProcessW accepts executable name directly
-            return Set([executableName])
-            #else
-            var results: Set<String> = []
-            // executableName could be a full path
-            results.insert(executableName)
-            // Get $PATH from environment
-            let searchPaths: Set<String>
-            if let pathValue = pathValue {
-                let localSearchPaths = pathValue.split(separator: ":").map { String($0) }
-                searchPaths = Set(localSearchPaths).union(Self.defaultSearchPaths)
-            } else {
-                searchPaths = Self.defaultSearchPaths
-            }
-            for path in searchPaths {
-                results.insert(
-                    FilePath(path).appending(executableName).string
-                )
-            }
-            return results
-            #endif
-        case .path(let executablePath):
-            return Set([executablePath.string])
-        }
-    }
-}
-
 // MARK: - Arguments
 
 /// A collection of arguments to pass to the subprocess.
@@ -304,7 +270,6 @@ public struct Arguments: Sendable, ExpressibleByArrayLiteral, Hashable {
         self.executablePathOverride = nil
     }
 
-    #if !os(Windows)  // Windows does NOT support arg0 override
     /// Create an `Argument` object using the given values, but
     /// override the first Argument value to `executablePathOverride`.
     /// If `executablePathOverride` is nil,
@@ -321,7 +286,7 @@ public struct Arguments: Sendable, ExpressibleByArrayLiteral, Hashable {
             self.executablePathOverride = nil
         }
     }
-
+    #if !os(Windows) // Windows does not support non-unicode arguments
     /// Create an `Argument` object using the given values, but
     /// override the first Argument value to `executablePathOverride`.
     /// If `executablePathOverride` is nil,
@@ -338,12 +303,12 @@ public struct Arguments: Sendable, ExpressibleByArrayLiteral, Hashable {
             self.executablePathOverride = nil
         }
     }
-    #endif
 
     public init(_ array: [[UInt8]]) {
         self.storage = array.map { .rawBytes($0) }
         self.executablePathOverride = nil
     }
+    #endif
 }
 
 extension Arguments: CustomStringConvertible, CustomDebugStringConvertible {

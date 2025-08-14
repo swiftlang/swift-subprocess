@@ -278,7 +278,7 @@ extension SubprocessUnixTests {
                     let grandChildPid = try #require(pid_t(output))
                     // Make sure the grand child `/usr/bin/yes` actually exited
                     // This is unfortunately racy because the pid isn't immediately invalided
-                    // once the exit exits. Allow a few failures and delay to counter this
+                    // once `kill` returns. Allow a few failures and delay to counter this
                     for _ in 0 ..< 10 {
                         let rc = kill(grandChildPid, 0)
                         if rc == 0 {

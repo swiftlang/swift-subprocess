@@ -62,6 +62,7 @@ extension SubprocessIntegrationTests {
         )
         #expect(result.terminationStatus.isSuccess)
         // rdar://138670128
+        // https://github.com/swiftlang/swift/issues/77235
         let output = result.standardOutput?
             .trimmingNewLineAndQuotes()
         // Windows echo includes quotes
@@ -69,22 +70,29 @@ extension SubprocessIntegrationTests {
     }
 
     @Test func testExecutableNamedCannotResolve() async {
-        do {
+        #if os(Windows)
+        let expectedError = SubprocessError(
+            code: .init(.executableNotFound("do-not-exist")),
+            underlyingError: .init(rawValue: DWORD(ERROR_FILE_NOT_FOUND))
+        )
+        #else
+        let expectedError = SubprocessError(
+            code: .init(.executableNotFound("do-not-exist")),
+            underlyingError: .init(rawValue: ENOENT)
+        )
+        #endif
+
+        await #expect(throws: expectedError) {
             _ = try await Subprocess.run(.name("do-not-exist"), output: .discarded)
-            Issue.record("Expected to throw")
-        } catch {
-            guard let subprocessError: SubprocessError = error as? SubprocessError else {
-                Issue.record("Expected SubprocessError, got \(error)")
-                return
-            }
-            #expect(subprocessError.code == .init(.executableNotFound("do-not-exist")))
         }
     }
 
     @Test func testExecutableAtPath() async throws {
         #if os(Windows)
+        let cmdExe = ProcessInfo.processInfo.environment["COMSPEC"] ??
+            #"C:\Windows\System32\cmd.exe"#
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .path(FilePath(cmdExe)),
             arguments: .init(["/c", "cd"])
         )
         #else
@@ -102,6 +110,7 @@ extension SubprocessIntegrationTests {
         )
         #expect(result.terminationStatus.isSuccess)
         // rdar://138670128
+        // https://github.com/swiftlang/swift/issues/77235
         let maybePath = result.standardOutput?
             .trimmingNewLineAndQuotes()
         let path = try #require(maybePath)
@@ -111,18 +120,20 @@ extension SubprocessIntegrationTests {
     @Test func testExecutableAtPathCannotResolve() async {
         #if os(Windows)
         let fakePath = FilePath("D:\\does\\not\\exist")
+        let expectedError = SubprocessError(
+            code: .init(.executableNotFound("D:\\does\\not\\exist")),
+            underlyingError: .init(rawValue: DWORD(ERROR_FILE_NOT_FOUND))
+        )
         #else
         let fakePath = FilePath("/usr/bin/do-not-exist")
+        let expectedError = SubprocessError(
+            code: .init(.executableNotFound("/usr/bin/do-not-exist")),
+            underlyingError: .init(rawValue: ENOENT)
+        )
         #endif
-        do {
+
+        await #expect(throws: expectedError) {
             _ = try await Subprocess.run(.path(fakePath), output: .discarded)
-            Issue.record("Expected to throw SubprocessError")
-        } catch {
-            guard let subprocessError: SubprocessError = error as? SubprocessError else {
-                Issue.record("Expected SubprocessError, got \(error)")
-                return
-            }
-            #expect(subprocessError.code == .init(.executableNotFound(fakePath.string)))
         }
     }
 }
@@ -133,7 +144,7 @@ extension SubprocessIntegrationTests {
         let message = "Hello World!"
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: ["/c", "echo", message]
         )
         #else
@@ -150,6 +161,7 @@ extension SubprocessIntegrationTests {
         )
         #expect(result.terminationStatus.isSuccess)
         // rdar://138670128
+        // https://github.com/swiftlang/swift/issues/77235
         let output = result.standardOutput?
             .trimmingNewLineAndQuotes()
         #expect(
@@ -157,27 +169,41 @@ extension SubprocessIntegrationTests {
         )
     }
 
-    #if !os(Windows)
     // Windows does not support argument 0 override
     // This test will not compile on Windows
     @Test func testArgumentsOverride() async throws {
-        let result = try await Subprocess.run(
-            .path("/bin/sh"),
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("powershell.exe"),
+            arguments: .init(
+                executablePathOverride: "apple",
+                remainingValues: ["-Command", "[Environment]::GetCommandLineArgs()[0]"]
+            )
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
             arguments: .init(
                 executablePathOverride: "apple",
                 remainingValues: ["-c", "echo $0"]
-            ),
-            output: .string(limit: 16)
+            )
+        )
+        #endif
+        let result = try await _run(
+            setup,
+            input: .none,
+            output: .string(limit: 16),
+            error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
         // rdar://138670128
+        // https://github.com/swiftlang/swift/issues/77235
         let output = result.standardOutput?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingNewLineAndQuotes()
         #expect(
             output == "apple"
         )
     }
-    #endif
 
     #if !os(Windows)
     // Windows does not support byte array arguments
@@ -194,6 +220,7 @@ extension SubprocessIntegrationTests {
         )
         #expect(result.terminationStatus.isSuccess)
         // rdar://138670128
+        // https://github.com/swiftlang/swift/issues/77235
         let output = result.standardOutput?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         #expect(
@@ -208,7 +235,7 @@ extension SubprocessIntegrationTests {
     @Test func testEnvironmentInherit() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: ["/c", "echo %Path%"],
             environment: .inherit
         )
@@ -228,23 +255,31 @@ extension SubprocessIntegrationTests {
         #expect(result.terminationStatus.isSuccess)
         let pathValue = try #require(result.standardOutput)
         #if os(Windows)
-        // As a sanity check, make sure there's
-        // `C:\Windows\system32` in PATH
-        // since we inherited the environment variables
-        #expect(pathValue.contains("C:\\Windows\\system32"))
+        let expected = try #require(ProcessInfo.processInfo.environment["Path"])
         #else
-        // As a sanity check, make sure there's `/bin` in PATH
-        // since we inherited the environment variables
-        // rdar://138670128
-        #expect(pathValue.contains("/bin"))
+        let expected = try #require(ProcessInfo.processInfo.environment["PATH"])
         #endif
+
+        let pathList = Set(
+            pathValue.split(separator: ":")
+                .map { String($0).trimmingNewLineAndQuotes() }
+        )
+        let expectedList = Set(
+            expected.split(separator: ":")
+                .map { String($0).trimmingNewLineAndQuotes() }
+        )
+        // rdar://138670128
+        // https://github.com/swiftlang/swift/issues/77235
+        #expect(
+             pathList == expectedList
+        )
     }
 
     @Test func testEnvironmentInheritOverride() async throws {
         #if os(Windows)
         let path = "C:\\My\\New\\Home"
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: ["/c", "echo %HOMEPATH%"],
             environment: .inherit.updating([
                 "HOMEPATH": path
@@ -268,6 +303,7 @@ extension SubprocessIntegrationTests {
         )
         #expect(result.terminationStatus.isSuccess)
         // rdar://138670128
+        // https://github.com/swiftlang/swift/issues/77235
         let output = result.standardOutput?
             .trimmingNewLineAndQuotes()
         #expect(
@@ -282,11 +318,11 @@ extension SubprocessIntegrationTests {
     func testEnvironmentCustom() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: ["/c", "set"],
             environment: .custom([
-                "Path": "C:\\Windows\\system32;C:\\Windows",
-                "ComSpec": "C:\\Windows\\System32\\cmd.exe",
+                "Path": try #require(ProcessInfo.processInfo.environment["Path"]),
+                "ComSpec": try #require(ProcessInfo.processInfo.environment["ComSpec"]),
             ])
         )
         #else
@@ -317,6 +353,7 @@ extension SubprocessIntegrationTests {
         // There shouldn't be any other environment variables besides
         // `PATH` that we set
         // rdar://138670128
+        // https://github.com/swiftlang/swift/issues/77235
         #expect(
             output == "PATH=/bin:/usr/bin"
         )
@@ -331,7 +368,7 @@ extension SubprocessIntegrationTests {
         let workingDirectory = FileManager.default.currentDirectoryPath
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: ["/c", "cd"],
             workingDirectory: nil
         )
@@ -352,6 +389,7 @@ extension SubprocessIntegrationTests {
         // There shouldn't be any other environment variables besides
         // `PATH` that we set
         // rdar://138670128
+        // https://github.com/swiftlang/swift/issues/77235
         let output = result.standardOutput?
             .trimmingNewLineAndQuotes()
         let path = try #require(output)
@@ -364,7 +402,7 @@ extension SubprocessIntegrationTests {
         )
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: ["/c", "cd"],
             workingDirectory: workingDirectory
         )
@@ -407,9 +445,13 @@ extension SubprocessIntegrationTests {
         #if os(Windows)
         let invalidPath: FilePath = FilePath(#"X:\Does\Not\Exist"#)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: ["/c", "cd"],
             workingDirectory: invalidPath
+        )
+        let expectedError = SubprocessError(
+            code: .init(.failedToChangeWorkingDirectory(#"X:\Does\Not\Exist"#)),
+            underlyingError: .init(rawValue: DWORD(ERROR_DIRECTORY))
         )
         #else
         let invalidPath: FilePath = FilePath("/does/not/exist")
@@ -418,17 +460,14 @@ extension SubprocessIntegrationTests {
             arguments: [],
             workingDirectory: invalidPath
         )
+        let expectedError = SubprocessError(
+            code: .init(.failedToChangeWorkingDirectory("/does/not/exist")),
+            underlyingError: .init(rawValue: ENOENT)
+        )
         #endif
 
-        do {
+        await #expect(throws: expectedError) {
             _ = try await _run(setup, input: .none, output: .string(limit: .max), error: .discarded)
-            Issue.record("Expected to throw an error when working directory is invalid")
-        } catch {
-            guard let subprocessError = error as? SubprocessError else {
-                Issue.record("Expecting SubprocessError, got \(error)")
-                return
-            }
-            #expect(subprocessError.code == .init(.failedToChangeWorkingDirectory(invalidPath.string)))
         }
     }
 }
@@ -438,7 +477,7 @@ extension SubprocessIntegrationTests {
     @Test func testNoInput() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: ["/c", "more"]
         )
         #else
@@ -491,7 +530,7 @@ extension SubprocessIntegrationTests {
         let content = randomString(length: 64)
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: ["/c", "more"]
         )
         #else
@@ -517,7 +556,7 @@ extension SubprocessIntegrationTests {
     @Test func testFileDescriptorInput() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: [
                 "/c",
                 "findstr x*",
@@ -552,7 +591,7 @@ extension SubprocessIntegrationTests {
     @Test func testDataInput() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: [
                 "/c",
                 "findstr x*",
@@ -584,7 +623,7 @@ extension SubprocessIntegrationTests {
     @Test func testSpanInput() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: [
                 "/c",
                 "findstr x*",
@@ -616,7 +655,7 @@ extension SubprocessIntegrationTests {
     @Test func testAsyncSequenceInput() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: [
                 "/c",
                 "findstr x*",
@@ -659,7 +698,7 @@ extension SubprocessIntegrationTests {
     @Test func testStandardInputWriterInput() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: [
                 "/c",
                 "findstr x*",
@@ -678,31 +717,19 @@ extension SubprocessIntegrationTests {
             setup,
             error: .discarded
         ) { execution, standardInputWriter, standardOutput in
-            return try await withThrowingTaskGroup(of: Data?.self) { group in
-                group.addTask {
-                    var buffer = Data()
-                    for try await chunk in standardOutput {
-                        let currentChunk = chunk.withUnsafeBytes { Data($0) }
-                        buffer += currentChunk
-                    }
-                    return buffer
+            async let buffer = {
+                var _buffer = Data()
+                for try await chunk in standardOutput {
+                    let currentChunk = chunk.withUnsafeBytes { Data($0) }
+                    _buffer += currentChunk
                 }
+                return _buffer
+            }()
 
-                group.addTask {
-                    _ = try await standardInputWriter.write(Array(expected))
-                    try await standardInputWriter.finish()
-                    return nil
-                }
+            _ = try await standardInputWriter.write(Array(expected))
+            try await standardInputWriter.finish()
 
-                var buffer: Data!
-                while let result = try await group.next() {
-                    if let result: Data = result {
-                        buffer = result
-                    }
-                }
-                return buffer
-            }
-
+            return try await buffer
         }
         #expect(result.terminationStatus.isSuccess)
         #expect(result.value == expected)
@@ -759,7 +786,7 @@ extension SubprocessIntegrationTests {
     @Test func testDiscardedOutput() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: ["/c", "echo hello world"]
         )
         #else
@@ -780,7 +807,7 @@ extension SubprocessIntegrationTests {
     @Test func testStringOutput() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: [
                 "/c",
                 "findstr x*",
@@ -816,7 +843,7 @@ extension SubprocessIntegrationTests {
     @Test func testStringOutputExceedsLimit() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: [
                 "/c",
                 "findstr x*",
@@ -830,27 +857,25 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        do {
+        let expectedError = SubprocessError(
+            code: .init(.outputBufferLimitExceeded(16)),
+            underlyingError: nil
+        )
+
+        await #expect(throws: expectedError) {
             _ = try await _run(
                 setup,
                 input: .none,
                 output: .string(limit: 16),
                 error: .discarded
             )
-            Issue.record("Expected to throw")
-        } catch {
-            guard let subprocessError = error as? SubprocessError else {
-                Issue.record("Expected SubprocessError, got \(error)")
-                return
-            }
-            #expect(subprocessError.code == .init(.outputBufferLimitExceeded(16)))
         }
     }
 
     @Test func testBytesOutput() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: [
                 "/c",
                 "findstr x*",
@@ -880,7 +905,7 @@ extension SubprocessIntegrationTests {
     @Test func testBytesOutputExceedsLimit() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: [
                 "/c",
                 "findstr x*",
@@ -894,20 +919,18 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        do {
+        let expectedError = SubprocessError(
+            code: .init(.outputBufferLimitExceeded(16)),
+            underlyingError: nil
+        )
+
+        await #expect(throws: expectedError) {
             _ = try await _run(
                 setup,
                 input: .none,
                 output: .bytes(limit: 16),
                 error: .discarded
             )
-            Issue.record("Expected to throw")
-        } catch {
-            guard let subprocessError = error as? SubprocessError else {
-                Issue.record("Expected SubprocessError, got \(error)")
-                return
-            }
-            #expect(subprocessError.code == .init(.outputBufferLimitExceeded(16)))
         }
     }
 
@@ -915,7 +938,7 @@ extension SubprocessIntegrationTests {
         let expected = randomString(length: 32)
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: ["/c", "echo \(expected)"]
         )
         #else
@@ -960,7 +983,7 @@ extension SubprocessIntegrationTests {
     @Test func testFileDescriptorOutputAutoClose() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: ["/c", "echo Hello World"]
         )
         #else
@@ -991,15 +1014,8 @@ extension SubprocessIntegrationTests {
         )
         #expect(echoResult.terminationStatus.isSuccess)
         // Make sure the file descriptor is already closed
-        do {
+        #expect(throws: Errno.badFileDescriptor) {
             try outputFile.close()
-            Issue.record("Output file descriptor should be closed automatically")
-        } catch {
-            guard let typedError = error as? Errno else {
-                Issue.record("Wrong type of error thrown")
-                return
-            }
-            #expect(typedError == .badFileDescriptor)
         }
     }
 
@@ -1007,7 +1023,7 @@ extension SubprocessIntegrationTests {
     @Test func testDataOutput() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: [
                 "/c",
                 "findstr x*",
@@ -1037,7 +1053,7 @@ extension SubprocessIntegrationTests {
     @Test func testDataOutputExceedsLimit() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: [
                 "/c",
                 "findstr x*",
@@ -1051,20 +1067,18 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        do {
+        let expectedError = SubprocessError(
+            code: .init(.outputBufferLimitExceeded(16)),
+            underlyingError: nil
+        )
+
+        await #expect(throws: expectedError) {
             _ = try await _run(
                 setup,
                 input: .none,
                 output: .data(limit: 16),
                 error: .discarded
             )
-            Issue.record("Expected to throw")
-        } catch {
-            guard let subprocessError = error as? SubprocessError else {
-                Issue.record("Expected SubprocessError, got \(error)")
-                return
-            }
-            #expect(subprocessError.code == .init(.outputBufferLimitExceeded(16)))
         }
     }
     #endif
@@ -1072,7 +1086,7 @@ extension SubprocessIntegrationTests {
     @Test func testStringErrorOutput() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: [
                 "/c",
                 "findstr x* 1>&2",
@@ -1108,7 +1122,7 @@ extension SubprocessIntegrationTests {
     @Test func testStringErrorOutputExceedsLimit() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: [
                 "/c",
                 "findstr x* \(theMysteriousIsland.string) 1>&2",
@@ -1121,27 +1135,25 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        do {
+        let expectedError = SubprocessError(
+            code: .init(.outputBufferLimitExceeded(16)),
+            underlyingError: nil
+        )
+
+        await #expect(throws: expectedError) {
             _ = try await _run(
                 setup,
                 input: .none,
                 output: .discarded,
                 error: .string(limit: 16)
             )
-            Issue.record("Expected to throw")
-        } catch {
-            guard let subprocessError = error as? SubprocessError else {
-                Issue.record("Expected SubprocessError, got \(error)")
-                return
-            }
-            #expect(subprocessError.code == .init(.outputBufferLimitExceeded(16)))
         }
     }
 
     @Test func testBytesErrorOutput() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: [
                 "/c",
                 "findstr x* 1>&2",
@@ -1171,7 +1183,7 @@ extension SubprocessIntegrationTests {
     @Test func testBytesErrorOutputExceedsLimit() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: [
                 "/c",
                 "findstr x* \(theMysteriousIsland.string) 1>&2",
@@ -1184,20 +1196,18 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        do {
+        let expectedError = SubprocessError(
+            code: .init(.outputBufferLimitExceeded(16)),
+            underlyingError: nil
+        )
+
+        await #expect(throws: expectedError) {
             _ = try await _run(
                 setup,
                 input: .none,
                 output: .discarded,
                 error: .bytes(limit: 16)
             )
-            Issue.record("Expected to throw")
-        } catch {
-            guard let subprocessError = error as? SubprocessError else {
-                Issue.record("Expected SubprocessError, got \(error)")
-                return
-            }
-            #expect(subprocessError.code == .init(.outputBufferLimitExceeded(16)))
         }
     }
 
@@ -1205,7 +1215,7 @@ extension SubprocessIntegrationTests {
         let expected = randomString(length: 32)
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: ["/c", "echo \(expected) 1>&2"]
         )
         #else
@@ -1250,7 +1260,7 @@ extension SubprocessIntegrationTests {
     @Test func testFileDescriptorErrorOutputAutoClose() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: ["/c", "echo Hello World", "1>&2"]
         )
         #else
@@ -1281,22 +1291,15 @@ extension SubprocessIntegrationTests {
         )
         #expect(echoResult.terminationStatus.isSuccess)
         // Make sure the file descriptor is already closed
-        do {
+        #expect(throws: Errno.badFileDescriptor) {
             try outputFile.close()
-            Issue.record("Output file descriptor should be closed automatically")
-        } catch {
-            guard let typedError = error as? Errno else {
-                Issue.record("Wrong type of error thrown")
-                return
-            }
-            #expect(typedError == .badFileDescriptor)
         }
     }
 
     @Test func testFileDescriptorOutputErrorToSameFile() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: ["/c", "echo Hello Stdout & echo Hello Stderr 1>&2"]
         )
         #else
@@ -1338,13 +1341,15 @@ extension SubprocessIntegrationTests {
             String(data: outputData, encoding: .utf8)
         ).trimmingNewLineAndQuotes()
         #expect(echoResult.terminationStatus.isSuccess)
+        #expect(output.contains("Hello Stdout"))
+        #expect(output.contains("Hello Stderr"))
     }
 
     #if SubprocessFoundation
     @Test func testDataErrorOutput() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: [
                 "/c",
                 "findstr x* 1>&2",
@@ -1374,7 +1379,7 @@ extension SubprocessIntegrationTests {
     @Test func testDataErrorOutputExceedsLimit() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: [
                 "/c",
                 "findstr x* \(theMysteriousIsland.string) 1>&2",
@@ -1387,20 +1392,18 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        do {
+        let expectedError = SubprocessError(
+            code: .init(.outputBufferLimitExceeded(16)),
+            underlyingError: nil
+        )
+
+        await #expect(throws: expectedError) {
             _ = try await _run(
                 setup,
                 input: .none,
                 output: .discarded,
                 error: .data(limit: 16)
             )
-            Issue.record("Expected to throw")
-        } catch {
-            guard let subprocessError = error as? SubprocessError else {
-                Issue.record("Expected SubprocessError, got \(error)")
-                return
-            }
-            #expect(subprocessError.code == .init(.outputBufferLimitExceeded(16)))
         }
     }
     #endif
@@ -1408,7 +1411,7 @@ extension SubprocessIntegrationTests {
     @Test func testStreamingErrorOutput() async throws {
 #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: [
                 "/c",
                 "findstr x* 1>&2",
@@ -1427,31 +1430,19 @@ extension SubprocessIntegrationTests {
             setup,
             output: .discarded
         ) { execution, standardInputWriter, standardError in
-            return try await withThrowingTaskGroup(of: Data?.self) { group in
-                group.addTask {
-                    var buffer = Data()
-                    for try await chunk in standardError {
-                        let currentChunk = chunk.withUnsafeBytes { Data($0) }
-                        buffer += currentChunk
-                    }
-                    return buffer
+            async let buffer = {
+                var _buffer = Data()
+                for try await chunk in standardError {
+                    let currentChunk = chunk.withUnsafeBytes { Data($0) }
+                    _buffer += currentChunk
                 }
+                return _buffer
+            }()
 
-                group.addTask {
-                    _ = try await standardInputWriter.write(Array(expected))
-                    try await standardInputWriter.finish()
-                    return nil
-                }
+            _ = try await standardInputWriter.write(Array(expected))
+            try await standardInputWriter.finish()
 
-                var buffer: Data!
-                while let result = try await group.next() {
-                    if let result: Data = result {
-                        buffer = result
-                    }
-                }
-                return buffer
-            }
-
+            return try await buffer
         }
         #expect(result.terminationStatus.isSuccess)
         #expect(result.value == expected)
@@ -1460,7 +1451,7 @@ extension SubprocessIntegrationTests {
     @Test func stressTestWithLittleOutput() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: ["/c", "echo x & echo y 1>&2"]
         )
         #else
@@ -1486,7 +1477,7 @@ extension SubprocessIntegrationTests {
     @Test func stressTestWithLongOutput() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: ["/c", "echo x & echo y 1>&2"]
         )
         #else
@@ -1512,7 +1503,7 @@ extension SubprocessIntegrationTests {
     @Test func testInheritingOutputAndError() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: ["/c", "echo Standard Output Testing & echo Standard Error Testing 1>&2"]
         )
         #else
@@ -1560,7 +1551,7 @@ extension SubprocessIntegrationTests {
     @Test func testCaptureEmptyOutputError() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: ["/c", ""]
         )
         #else
@@ -1586,7 +1577,7 @@ extension SubprocessIntegrationTests {
     @Test func testTerminateProcess() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: ["/c", "timeout /t 99999 >nul"])
         #else
         let setup = TestSetup(
@@ -1723,7 +1714,7 @@ extension SubprocessIntegrationTests {
 
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: [
                 "/c",
                 "findstr x* \(testFilePath._fileSystemPath)",
@@ -1778,7 +1769,6 @@ extension SubprocessIntegrationTests {
         try await withThrowingTaskGroup(of: Void.self) { group in
             for _ in 0 ..< 8 {
                 group.addTask {
-                    // This invocation specifically requires bash semantics; sh (on FreeBSD at least) does not consistently support -s in this way
                     let r = try await _run(
                         setup,
                         input: .string(string),
@@ -1799,7 +1789,7 @@ extension SubprocessIntegrationTests {
 
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: ["/c", "timeout /t 100000 /nobreak"]
         )
         #else
@@ -1850,7 +1840,7 @@ extension SubprocessIntegrationTests {
         for exitCode in UInt8.min ..< UInt8.max {
             #if os(Windows)
             let setup = TestSetup(
-                executable: .path(#"C:\Windows\System32\cmd.exe"#),
+                executable: .name("cmd.exe"),
                 arguments: ["/c", "exit \(exitCode)"]
             )
             #else
@@ -1873,7 +1863,7 @@ extension SubprocessIntegrationTests {
 
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: ["/Q", "/D"],
             environment: .inherit.updating(["PROMPT": "\"\""])
         )
@@ -1989,7 +1979,7 @@ extension SubprocessIntegrationTests {
             group.addTask {
                 #if os(Windows)
                 let setup = TestSetup(
-                    executable: .path(#"C:\Windows\System32\cmd.exe"#),
+                    executable: .name("cmd.exe"),
                     arguments: ["/c", "echo apple"]
                 )
                 // Set write handle to be inheritable only
@@ -2096,7 +2086,7 @@ extension SubprocessIntegrationTests {
     @Test func testLineSequenceNoNewLines() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .path(#"C:\Windows\System32\cmd.exe"#),
+            executable: .name("cmd.exe"),
             arguments: ["/c", "<nul set /p=x & <nul set /p=y 1>&2"]
         )
         #else

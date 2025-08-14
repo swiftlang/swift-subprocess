@@ -42,8 +42,10 @@ extension SubprocessAsyncIOTests {
     @Test func testBasicReadWrite() async throws {
         let testData = randomData(count: 1024)
         try await runReadWriteTest { readIO, readTestBed in
-            let readData = try await readIO.read(from: readTestBed.ioChannel, upTo: .max)
-            #expect(Array(readData!) == testData)
+            let readData = try #require(
+                try await readIO.read(from: readTestBed.ioChannel, upTo: .max)
+            )
+            #expect(Array(readData) == testData)
         } writer: { writeIO, writeTestBed in
             _ = try await writeIO.write(testData, to: writeTestBed.ioChannel)
             try await writeTestBed.finish()
@@ -64,9 +66,10 @@ extension SubprocessAsyncIOTests {
         let chunks = _chunks
         try await runReadWriteTest { readIO, readTestBed in
             for expectedChunk in chunks {
-                let readData = try await readIO.read(from: readTestBed.ioChannel, upTo: expectedChunk.count)
-                #expect(readData != nil)
-                #expect(Array(readData!) == expectedChunk)
+                let readData = try #require(
+                    try await readIO.read(from: readTestBed.ioChannel, upTo: expectedChunk.count)
+                )
+                #expect(Array(readData) == expectedChunk)
             }
 
             // Final read should return nil
@@ -119,8 +122,10 @@ extension SubprocessAsyncIOTests {
     @Test func testLargeReadWrite() async throws {
         let testData = randomData(count: 1024 * 1024)
         try await runReadWriteTest { readIO, readTestBed in
-            let readData = try await readIO.read(from: readTestBed.ioChannel, upTo: .max)
-            #expect(Array(readData!) == testData)
+            let readData = try #require(
+                try await readIO.read(from: readTestBed.ioChannel, upTo: .max)
+            )
+            #expect(Array(readData) == testData)
         } writer: { writeIO, writeTestBed in
             _ = try await writeIO.write(testData, to: writeTestBed.ioChannel)
             try await writeTestBed.finish()
@@ -149,9 +154,9 @@ extension SubprocessAsyncIOTests {
                 Issue.record("Expecting SubprocessError, but got \(error)")
                 return
             }
-            #if canImport(Darwin)
+            #if canImport(Darwin) || os(FreeBSD) || os(OpenBSD)
             #expect(subprocessError.underlyingError == .init(rawValue: ECANCELED))
-            #elseif os(Linux)
+            #elseif os(Linux) || os(Android)
             #expect(subprocessError.underlyingError == .init(rawValue: EBADF))
             #endif
         }
@@ -175,9 +180,9 @@ extension SubprocessAsyncIOTests {
                 Issue.record("Expecting SubprocessError, but got \(error)")
                 return
             }
-            #if canImport(Darwin)
+            #if canImport(Darwin) || os(FreeBSD) || os(OpenBSD)
             #expect(subprocessError.underlyingError == .init(rawValue: ECANCELED))
-            #elseif os(Linux)
+            #elseif os(Linux) || os(Android)
             #expect(subprocessError.underlyingError == .init(rawValue: EBADF))
             #endif
         }
@@ -186,9 +191,10 @@ extension SubprocessAsyncIOTests {
     @Test func testBinaryDataWithNullBytes() async throws {
         let binaryData: [UInt8] = [0x00, 0x01, 0x02, 0x00, 0xFF, 0x00, 0xFE, 0xFD]
         try await runReadWriteTest { readIO, readTestBed in
-            let readData = try await readIO.read(from: readTestBed.ioChannel, upTo: .max)
-            #expect(readData != nil)
-            #expect(Array(readData!) == binaryData)
+            let readData = try #require(
+                try await readIO.read(from: readTestBed.ioChannel, upTo: .max)
+            )
+            #expect(Array(readData) == binaryData)
         } writer: { writeIO, writeTestBed in
             let written = try await writeIO.write(binaryData, to: writeTestBed.ioChannel)
             #expect(written == binaryData.count)
