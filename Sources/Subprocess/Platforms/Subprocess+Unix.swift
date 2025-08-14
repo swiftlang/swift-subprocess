@@ -116,14 +116,24 @@ extension Execution {
             // pidfd_send_signal does not support sending signal to process group
             try _kill(pid, signal: signal)
         } else {
-            guard _pidfd_send_signal(
+            // Try pidfd_send_signal first
+            if _pidfd_send_signal(
                 processIdentifier.processDescriptor,
                 signal.rawValue
-            ) == 0 else {
-                throw SubprocessError(
-                    code: .init(.failedToSendSignal(signal.rawValue)),
-                    underlyingError: .init(rawValue: errno)
-                )
+            ) == 0 {
+                return
+            } else {
+                if errno == ENOSYS {
+                    // pidfd_send_signal is not implemented in this system
+                    // fallback to _kill()
+                    try _kill(pid, signal: signal)
+                } else {
+                    // Throw all other errors
+                    throw SubprocessError(
+                        code: .init(.failedToSendSignal(signal.rawValue)),
+                        underlyingError: .init(rawValue: errno)
+                    )
+                }
             }
         }
         #else

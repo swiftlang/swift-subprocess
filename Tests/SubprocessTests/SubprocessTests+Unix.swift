@@ -952,9 +952,64 @@ extension SubprocessUnixTests {
         }
         try FileManager.default.removeItem(at: testFilePath)
     }
+
+    @Test(.requiresBash) func testDoesNotInheritRandomFileDescriptorsByDefault() async throws {
+        // This tests makes sure POSIX_SPAWN_CLOEXEC_DEFAULT works on all platforms
+        let pipe = try FileDescriptor.ssp_pipe()
+        defer {
+            close(pipe.readEnd.rawValue)
+        }
+        let writeFd = pipe.writeEnd.rawValue
+        let result = try await pipe.writeEnd.closeAfter {
+            return try await Subprocess.run(
+                .path("/bin/bash"),
+                arguments: ["-c", "echo hello from child >&\(writeFd); echo wrote into \(writeFd), echo exit code $?"],
+                output: .string(limit: .max),
+                error: .string(limit: .max)
+            )
+        }
+
+        #expect(result.terminationStatus.isSuccess)
+        #expect(
+            result.standardOutput?.trimmingCharacters(in: .whitespacesAndNewlines) ==
+            "wrote into \(writeFd), echo exit code 1"
+        )
+        // Depending on the platform, standard error should be something like
+        // `/bin/bash: 7: Bad file descriptor
+        #expect(!result.standardError!.isEmpty)
+        let nonInherited = try await pipe.readEnd.readUntilEOF(upToLength: .max)
+        // We should have read nothing because the pipe is not inherited
+        #expect(nonInherited.isEmpty)
+    }
 }
 
 // MARK: - Utils
+extension FileDescriptor {
+    /// Runs a closure and then closes the FileDescriptor, even if an error occurs.
+    ///
+    /// - Parameter body: The closure to run.
+    ///   If the closure throws an error,
+    ///   this method closes the file descriptor before it rethrows that error.
+    ///
+    /// - Returns: The value returned by the closure.
+    ///
+    /// If `body` throws an error
+    /// or an error occurs while closing the file descriptor,
+    /// this method rethrows that error.
+    public func closeAfter<R>(_ body: () async throws -> R) async throws -> R {
+        // No underscore helper, since the closure's throw isn't necessarily typed.
+        let result: R
+        do {
+            result = try await body()
+        } catch {
+            _ = try? self.close() // Squash close error and throw closure's
+            throw error
+        }
+        try self.close()
+        return result
+    }
+}
+
 extension SubprocessUnixTests {
     private func assertID(
         withArgument argument: String,
