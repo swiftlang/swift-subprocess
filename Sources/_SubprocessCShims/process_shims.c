@@ -143,7 +143,8 @@ static int _subprocess_spawn_prefork(
     uid_t * _Nullable uid,
     gid_t * _Nullable gid,
     int number_of_sgroups, const gid_t * _Nullable sgroups,
-    int create_session
+    int create_session,
+    void (* _Nullable configurator)(void)
 ) {
 #define write_error_and_exit int error = errno; \
     write(pipefd[1], &error, sizeof(error));\
@@ -212,6 +213,9 @@ static int _subprocess_spawn_prefork(
 
         // Perform setups
         if (number_of_sgroups > 0 && sgroups != NULL) {
+            // POSIX doesn't define setgroups (only getgroups) and therefore makes no guarantee of async-signal-safety,
+            // but we'll assume in practice it should be async-signal-safe on any reasonable platform based on the fact
+            // that getgroups is async-signal-safe.
             if (setgroups(number_of_sgroups, sgroups) != 0) {
                 write_error_and_exit;
             }
@@ -231,6 +235,11 @@ static int _subprocess_spawn_prefork(
 
         if (create_session != 0) {
             (void)setsid();
+        }
+
+        // Run custom configuratior
+        if (configurator != NULL) {
+            configurator();
         }
 
         // Use posix_spawnas exec
@@ -281,12 +290,14 @@ int _subprocess_spawn(
     uid_t * _Nullable uid,
     gid_t * _Nullable gid,
     int number_of_sgroups, const gid_t * _Nullable sgroups,
-    int create_session
+    int create_session,
+    void (* _Nullable configurator)(void)
 ) {
     int require_pre_fork = uid != NULL ||
         gid != NULL ||
         number_of_sgroups > 0 ||
-        create_session > 0;
+        create_session > 0 ||
+        configurator != NULL;
 
     if (require_pre_fork != 0) {
         int rc = _subprocess_spawn_prefork(
@@ -294,7 +305,7 @@ int _subprocess_spawn(
             exec_path,
             file_actions, spawn_attrs,
             args, env,
-            uid, gid, number_of_sgroups, sgroups, create_session
+            uid, gid, number_of_sgroups, sgroups, create_session, configurator
         );
         return rc;
     }
@@ -490,6 +501,9 @@ int _subprocess_fork_exec(
         }
 
         if (number_of_sgroups > 0 && sgroups != NULL) {
+            // POSIX doesn't define setgroups (only getgroups) and therefore makes no guarantee of async-signal-safety,
+            // but we'll assume in practice it should be async-signal-safe on any reasonable platform based on the fact
+            // that getgroups is async-signal-safe.
             if (setgroups(number_of_sgroups, sgroups) != 0) {
                 write_error_and_exit;
             }
