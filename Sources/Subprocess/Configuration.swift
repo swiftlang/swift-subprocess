@@ -456,7 +456,7 @@ extension Environment: CustomStringConvertible, CustomDebugStringConvertible {
 
 /// An exit status of a subprocess.
 @frozen
-public enum TerminationStatus: Sendable, Hashable, Codable {
+public enum TerminationStatus: Sendable, Hashable {
     #if canImport(WinSDK)
     public typealias Code = DWORD
     #else
