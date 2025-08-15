@@ -73,6 +73,10 @@ int _was_process_suspended(int status) {
 #if TARGET_OS_LINUX
 #include <stdio.h>
 
+#ifndef SYS_pidfd_send_signal
+#define SYS_pidfd_send_signal 424
+#endif 
+
 int _shims_snprintf(
     char * _Nonnull str,
     int len,
@@ -322,6 +326,10 @@ int _subprocess_spawn(
 #define __GLIBC_PREREQ(maj, min) 0
 #endif
 
+#ifndef SYS_pidfd_open
+#define SYS_pidfd_open 434
+#endif
+
 int _pidfd_open(pid_t pid) {
     return syscall(SYS_pidfd_open, pid, 0);
 }
@@ -330,6 +338,10 @@ int _pidfd_open(pid_t pid) {
 // Define our dummy value if it's not available (as is the case with Musl libc)
 #ifndef SYS_clone3
 #define SYS_clone3 435
+#endif
+
+#ifndef CLONE_PIDFD
+#define CLONE_PIDFD 0x00001000
 #endif
 
 // Can't use clone_args from sched.h because only Glibc defines it; Musl does not (and there's no macro to detect Musl)
