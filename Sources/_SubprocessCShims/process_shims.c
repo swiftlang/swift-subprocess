@@ -722,5 +722,9 @@ unsigned int _subprocess_windows_get_errno(void) {
     return errno;
 }
 
+DWORD_PTR _subprocess_PROC_THREAD_ATTRIBUTE_HANDLE_LIST(void) {
+    return PROC_THREAD_ATTRIBUTE_HANDLE_LIST;
+}
+
 #endif
 

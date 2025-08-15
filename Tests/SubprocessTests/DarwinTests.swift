@@ -39,7 +39,10 @@ struct SubprocessDarwinTests {
         #expect(idResult.terminationStatus == .exited(1234567))
     }
 
-    @Test func testSubprocessPlatformOptionsPreExecProcessActionAndProcessConfigurator() async throws {
+    @Test(
+        .disabled("Constantly fails on macOS 26 and Swift 6.2"),
+        .bug("https://github.com/swiftlang/swift-subprocess/issues/148")
+    ) func testSubprocessPlatformOptionsPreExecProcessActionAndProcessConfigurator() async throws {
         let (readFD, writeFD) = try FileDescriptor.pipe()
         try await readFD.closeAfter {
             let childPID = try await writeFD.closeAfter {
@@ -161,6 +164,40 @@ struct SubprocessDarwinTests {
             // Now kill the process
             try subprocess.send(signal: .terminate)
             for try await _ in standardOutput {}
+        }
+    }
+}
+
+extension FileDescriptor {
+    internal func readUntilEOF(upToLength maxLength: Int) async throws -> Data {
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, any Error>) in
+            let dispatchIO = DispatchIO(
+                type: .stream,
+                fileDescriptor: self.rawValue,
+                queue: .global()
+            ) { error in
+                if error != 0 {
+                    continuation.resume(throwing: POSIXError(.init(rawValue: error) ?? .ENODEV))
+                }
+            }
+            var buffer: Data = Data()
+            dispatchIO.read(
+                offset: 0,
+                length: maxLength,
+                queue: .global()
+            ) { done, data, error in
+                guard error == 0 else {
+                    continuation.resume(throwing: POSIXError(.init(rawValue: error) ?? .ENODEV))
+                    return
+                }
+                if let data = data {
+                    buffer += Data(data)
+                }
+                if done {
+                    dispatchIO.close()
+                    continuation.resume(returning: buffer)
+                }
+            }
         }
     }
 }

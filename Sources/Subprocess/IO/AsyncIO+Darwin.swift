@@ -25,7 +25,9 @@ internal import Dispatch
 final class AsyncIO: Sendable {
     static let shared: AsyncIO = AsyncIO()
 
-    private init() {}
+    internal init() {}
+
+    internal func shutdown() { /* noop on Darwin */ }
 
     internal func read(
         from diskIO: borrowing IOChannel,

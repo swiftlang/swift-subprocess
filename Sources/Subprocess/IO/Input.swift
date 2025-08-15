@@ -49,20 +49,15 @@ public protocol InputProtocol: Sendable, ~Copyable {
 public struct NoInput: InputProtocol {
     internal func createPipe() throws -> CreatedPipe {
         #if os(Windows)
-        // On Windows, instead of binding to dev null,
-        // we don't set the input handle in the `STARTUPINFOW`
-        // to signal no input
-        return CreatedPipe(
-            readFileDescriptor: nil,
-            writeFileDescriptor: nil
-        )
+        let devnullFd: FileDescriptor = try .openDevNull(withAccessMode: .writeOnly)
+        let devnull = HANDLE(bitPattern: _get_osfhandle(devnullFd.rawValue))!
         #else
         let devnull: FileDescriptor = try .openDevNull(withAccessMode: .readOnly)
+        #endif
         return CreatedPipe(
             readFileDescriptor: .init(devnull, closeWhenDone: true),
             writeFileDescriptor: nil
         )
-        #endif
     }
 
     public func write(with writer: StandardInputWriter) async throws {
