@@ -592,7 +592,7 @@ internal func monitorProcessTermination(
         }
     }
 
-    try? await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
         // Set up a callback that immediately resumes the continuation and does no
         // other work.
         let context = Unmanaged.passRetained(continuation as AnyObject).toOpaque()

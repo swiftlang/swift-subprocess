@@ -1577,12 +1577,13 @@ extension SubprocessIntegrationTests {
     @Test func testTerminateProcess() async throws {
         #if os(Windows)
         let setup = TestSetup(
-            executable: .name("cmd.exe"),
-            arguments: ["/c", "timeout /t 99999 >nul"])
+            executable: .name("powershell.exe"),
+            arguments: ["-Command", "Start-Sleep -Seconds 9999"]
+        )
         #else
         let setup = TestSetup(
-            executable: .path("/bin/sleep"),
-            arguments: ["infinite"]
+            executable: .path("/usr/bin/tail"),
+            arguments: ["-f", "/dev/null"]
         )
         #endif
         let stuckResult = try await _run(
@@ -1789,13 +1790,13 @@ extension SubprocessIntegrationTests {
 
         #if os(Windows)
         let setup = TestSetup(
-            executable: .name("cmd.exe"),
-            arguments: ["/c", "timeout /t 100000 /nobreak"]
+            executable: .name("powershell.exe"),
+            arguments: ["-Command", "Start-Sleep -Seconds 9999"]
         )
         #else
         let setup = TestSetup(
-            executable: .path("/bin/sleep"),
-            arguments: ["100000"]
+            executable: .path("/usr/bin/tail"),
+            arguments: ["-f", "/dev/null"]
         )
         #endif
         for i in 0 ..< 100 {
@@ -1811,7 +1812,7 @@ extension SubprocessIntegrationTests {
                         setup,
                         platformOptions: platformOptions,
                         input: .none,
-                        output: .string(limit: .max),
+                        output: .discarded,
                         error: .discarded
                     ).terminationStatus
                 }
@@ -2265,5 +2266,31 @@ func _run<Result>(
         workingDirectory: setup.workingDirectory,
         body: body
     )
+}
+
+extension FileDescriptor {
+    /// Runs a closure and then closes the FileDescriptor, even if an error occurs.
+    ///
+    /// - Parameter body: The closure to run.
+    ///   If the closure throws an error,
+    ///   this method closes the file descriptor before it rethrows that error.
+    ///
+    /// - Returns: The value returned by the closure.
+    ///
+    /// If `body` throws an error
+    /// or an error occurs while closing the file descriptor,
+    /// this method rethrows that error.
+    public func closeAfter<R>(_ body: () async throws -> R) async throws -> R {
+        // No underscore helper, since the closure's throw isn't necessarily typed.
+        let result: R
+        do {
+            result = try await body()
+        } catch {
+            _ = try? self.close() // Squash close error and throw closure's
+            throw error
+        }
+        try self.close()
+        return result
+    }
 }
 
