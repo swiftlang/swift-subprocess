@@ -222,18 +222,20 @@ Use it by setting`.bytes(limit:)` for `output` or `error`.
 
 The table below describes the current level of support that Subprocess has for various platforms:
 
-| **Platform** | **Support Status** |
-|---|---|
-| **macOS** | Supported |
-| **iOS** | Not supported |
-| **watchOS** | Not supported |
-| **tvOS** | Not supported |
-| **visionOS** | Not supported |
-| **Ubuntu 22.04** | Supported |
-| **Ubuntu 24.04** | Supported |
-| **Red Hat Universal Base Image 9** | Supported |
-| **Debian 12** | Supported |
-| **Windows** | Supported |
+| **Platform**                       | **Support Status** |
+| ---------------------------------- | ------------------ |
+| **macOS**                          | Supported          |
+| **iOS**                            | Not supported      |
+| **watchOS**                        | Not supported      |
+| **tvOS**                           | Not supported      |
+| **visionOS**                       | Not supported      |
+| **Ubuntu 20.04**                   | Supported          |
+| **Ubuntu 22.04**                   | Supported          |
+| **Ubuntu 24.04**                   | Supported          |
+| **Red Hat Universal Base Image 9** | Supported          |
+| **Debian 12**                      | Supported          |
+| **Amazon Linux 2**                 | Supported          |
+| **Windows**                        | Supported          |
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
