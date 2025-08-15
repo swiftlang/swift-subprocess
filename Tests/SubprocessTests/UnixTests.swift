@@ -458,14 +458,22 @@ extension SubprocessUnixTests {
 
 internal func assertNewSessionCreated<Output: OutputProtocol>(
     with result: CollectedResult<
-        StringOutput<UTF8>,
-        Output
+    StringOutput<UTF8>,
+    Output
     >
 ) throws {
-    #expect(result.terminationStatus.isSuccess)
-    let psValue = try #require(
-        result.standardOutput
+    try assertNewSessionCreated(
+        terminationStatus: result.terminationStatus,
+        output: #require(result.standardOutput)
     )
+}
+
+internal func assertNewSessionCreated(
+    terminationStatus: TerminationStatus,
+    output psValue: String
+) throws {
+    #expect(terminationStatus.isSuccess)
+
     let match = try #require(try #/\s*PID\s*PGID\s*TPGID\s*(?<pid>[\-]?[0-9]+)\s*(?<pgid>[\-]?[0-9]+)\s*(?<tpgid>[\-]?[0-9]+)\s*/#.wholeMatch(in: psValue), "ps output was in an unexpected format:\n\n\(psValue)")
     // If setsid() has been called successfully, we should observe:
     // - pid == pgid

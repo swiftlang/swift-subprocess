@@ -592,7 +592,7 @@ internal func monitorProcessTermination(
         }
     }
 
-    try? await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
         // Set up a callback that immediately resumes the continuation and does no
         // other work.
         let context = Unmanaged.passRetained(continuation as AnyObject).toOpaque()
@@ -804,14 +804,14 @@ extension Executable {
             }
             // 1. The directory from which the application loaded.
             let applicationDirectory = try? fillNullTerminatedWideStringBuffer(
-                initialSize: DWORD(MAX_PATH), maxSize: DWORD(MAX_PATH)
+                initialSize: DWORD(MAX_PATH), maxSize: DWORD(Int16.max)
             ) {
                 return GetModuleFileNameW(nil, $0.baseAddress, DWORD($0.count))
             }
             if let applicationDirectory {
                 insertExecutableAddingExtension(
                     name,
-                    currentPath: applicationDirectory,
+                    currentPath: FilePath(applicationDirectory).removingLastComponent().string,
                     pathExtensions: pathExtensions,
                     storage: &possiblePaths
                 )
@@ -820,7 +820,7 @@ extension Executable {
             let directorySize = GetCurrentDirectoryW(0, nil)
             let currentDirectory = try? fillNullTerminatedWideStringBuffer(
                 initialSize: directorySize >= 0 ? directorySize : DWORD(MAX_PATH),
-                maxSize: DWORD(MAX_PATH)
+                maxSize: DWORD(Int16.max)
             ) {
                 return GetCurrentDirectoryW(DWORD($0.count), $0.baseAddress)
             }
@@ -836,7 +836,7 @@ extension Executable {
             let systemDirectorySize = GetSystemDirectoryW(nil, 0)
             let systemDirectory = try? fillNullTerminatedWideStringBuffer(
                 initialSize: systemDirectorySize >= 0 ? systemDirectorySize : DWORD(MAX_PATH),
-                maxSize: DWORD(MAX_PATH)
+                maxSize: DWORD(Int16.max)
             ) {
                 return GetSystemDirectoryW($0.baseAddress, DWORD($0.count))
             }
@@ -848,29 +848,30 @@ extension Executable {
                     storage: &possiblePaths
                 )
             }
-            // 4. 16 bit Systen Directory
-            // Windows documentation stats that
-            // "No such standard function (similar to GetSystemDirectory)
-            // exists for the 16-bit system folder". Use C:\Windows\System instead
-            let systemDirectory16 = FilePath(#"C:\Windows\System"#)
-            insertExecutableAddingExtension(
-                name,
-                currentPath: systemDirectory16.string,
-                pathExtensions: pathExtensions,
-                storage: &possiblePaths
-            )
-            // 5. The Windows directory
-            let windowsDirectorySize = GetSystemWindowsDirectoryW(nil, 0)
+            // 4. The Windows directory
+            let windowsDirectorySize = GetWindowsDirectoryW(nil, 0)
             let windowsDirectory = try? fillNullTerminatedWideStringBuffer(
                 initialSize: windowsDirectorySize >= 0 ? windowsDirectorySize : DWORD(MAX_PATH),
-                maxSize: DWORD(MAX_PATH)
+                maxSize: DWORD(Int16.max)
             ) {
-                return GetSystemWindowsDirectoryW($0.baseAddress, DWORD($0.count))
+                return GetWindowsDirectoryW($0.baseAddress, DWORD($0.count))
             }
             if let windowsDirectory {
                 insertExecutableAddingExtension(
                     name,
                     currentPath: windowsDirectory,
+                    pathExtensions: pathExtensions,
+                    storage: &possiblePaths
+                )
+
+                // 5. 16 bit Systen Directory
+                // Windows documentation stats that "No such standard function
+                // (similar to GetSystemDirectory) exists for the 16-bit system folder".
+                // Use "\(windowsDirectory)\System" instead
+                let systemDirectory16 = FilePath(windowsDirectory).appending("System")
+                insertExecutableAddingExtension(
+                    name,
+                    currentPath: systemDirectory16.string,
                     pathExtensions: pathExtensions,
                     storage: &possiblePaths
                 )
@@ -896,19 +897,17 @@ extension Executable {
 
 // MARK: - Environment Resolution
 extension Environment {
-    internal static let pathVariableName = "Path"
-
     internal func pathValue() -> String? {
         switch self.config {
         case .inherit(let overrides):
             // If PATH value exists in overrides, use it
-            if let value = overrides[Self.pathVariableName] {
+            if let value = overrides.pathValue() {
                 return value
             }
             // Fall back to current process
-            return Self.currentEnvironmentValues()[Self.pathVariableName]
+            return Self.currentEnvironmentValues().pathValue()
         case .custom(let fullEnvironment):
-            if let value = fullEnvironment[Self.pathVariableName] {
+            if let value = fullEnvironment.pathValue() {
                 return value
             }
             return nil
@@ -992,11 +991,10 @@ extension Configuration {
         }
         // On Windows, the PATH is required in order to locate dlls needed by
         // the process so we should also pass that to the child
-        let pathVariableName = Environment.pathVariableName
-        if env[pathVariableName] == nil,
-            let parentPath = Environment.currentEnvironmentValues()[pathVariableName]
+        if env.pathValue() == nil,
+           let parentPath = Environment.currentEnvironmentValues().pathValue()
         {
-            env[pathVariableName] = parentPath
+            env["Path"] = parentPath
         }
         // The environment string must be terminated by a double
         // null-terminator.  Otherwise, CreateProcess will fail with
@@ -1470,6 +1468,13 @@ internal func fillNullTerminatedWideStringBuffer(
         }
     }
     throw SubprocessError.UnderlyingError(rawValue: DWORD(ERROR_INSUFFICIENT_BUFFER))
+}
+
+// Windows environment key is case insensitive
+extension Dictionary where Key == String, Value == String {
+    internal func pathValue() -> String? {
+        return self["Path"] ?? self["PATH"] ?? self["path"]
+    }
 }
 
 

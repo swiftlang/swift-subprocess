@@ -111,7 +111,7 @@ extension SubprocessError: CustomStringConvertible, CustomDebugStringConvertible
         case .failedToWriteToSubprocess:
             return "Failed to write bytes to the child process."
         case .failedToMonitorProcess:
-            return "Failed to monitor the state of child process with underlying error: \(self.underlyingError!)"
+            return "Failed to monitor the state of child process with underlying error: \(self.underlyingError.map { "\($0)" } ?? "nil")"
         case .streamOutputExceedsLimit(let limit):
             return "Failed to create output from current buffer because the output limit (\(limit)) was reached."
         case .asyncIOFailed(let reason):

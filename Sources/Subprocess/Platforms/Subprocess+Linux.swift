@@ -447,7 +447,7 @@ private struct MonitorThreadContext: Sendable {
     }
 }
 
-private extension siginfo_t {
+internal extension siginfo_t {
     var si_status: Int32 {
         #if canImport(Glibc)
         return _sifields._sigchld.si_status
@@ -700,7 +700,7 @@ private let setup: () = {
 }()
 
 
-private func _setupMonitorSignalHandler() {
+internal func _setupMonitorSignalHandler() {
     // Only executed once
     setup
 }
