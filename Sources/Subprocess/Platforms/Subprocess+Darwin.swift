@@ -81,6 +81,29 @@ public struct PlatformOptions: Sendable {
                 inout posix_spawn_file_actions_t?
             ) throws -> Void
         )? = nil
+    /// A closure to configure platform-specific
+    /// spawning constructs. This closure enables direct
+    /// configuration or override of underlying platform-specific
+    /// spawn settings that `Subprocess` utilizes internally,
+    /// in cases where Subprocess does not provide higher-level
+    /// APIs for such modifications.
+    ///
+    /// On Darwin, Subprocess uses `posix_spawn()` as the
+    /// underlying spawning mechanism, but may require an initial `fork()`
+    /// depending on the configured `PlatformOptions`.
+    /// This closure is called after `fork()` but before `posix_spawn()`
+    /// (with the `POSIX_SPAWN_SETEXEC` flag set).
+    /// You may use it to call any necessary process setup functions.
+    ///
+    /// - note: You can set both `preExecProcessAction` and
+    /// `preSpawnProcessConfigurator` and both will be called.
+    /// Setting `preExecProcessAction` will always cause Subprocess
+    /// to pre-`fork()` before calling `posix_spawn()` (with the
+    /// `POSIX_SPAWN_SETEXEC` flag set) even if it would not have otherwise
+    /// done so based on the configured `PlatformOptions`.
+    ///
+    /// - warning: You may ONLY call [async-signal-safe functions](https://pubs.opengroup.org/onlinepubs/9799919799/functions/V2_chap02.html) within this closure (note _"The following table defines a set of functions and function-like macros that shall be async-signal-safe."_).
+    public var preExecProcessAction: (@convention(c) @Sendable () -> Void)? = nil
 
     public init() {}
 }
@@ -138,6 +161,7 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
             \(indent)    processGroupID: \(String(describing: processGroupID)),
             \(indent)    createSession: \(createSession),
             \(indent)    preSpawnProcessConfigurator: \(self.preSpawnProcessConfigurator == nil ? "not set" : "set")
+            \(indent)    preExecProcessAction: \(self.preExecProcessAction == nil ? "not set" : "set")
             \(indent))
             """
     }
@@ -402,7 +426,8 @@ extension Configuration {
                             gidPtr,
                             Int32(supplementaryGroups?.count ?? 0),
                             sgroups?.baseAddress,
-                            self.platformOptions.createSession ? 1 : 0
+                            self.platformOptions.createSession ? 1 : 0,
+                            self.platformOptions.preExecProcessAction,
                         )
                     }
                 }

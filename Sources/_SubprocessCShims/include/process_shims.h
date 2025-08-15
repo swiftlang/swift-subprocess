@@ -43,7 +43,8 @@ int _subprocess_spawn(
     uid_t * _Nullable uid,
     gid_t * _Nullable gid,
     int number_of_sgroups, const gid_t * _Nullable sgroups,
-    int create_session
+    int create_session,
+    void (* _Nullable configurator)(void)
 );
 #endif // TARGET_OS_MAC
 

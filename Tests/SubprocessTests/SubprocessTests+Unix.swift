@@ -955,6 +955,32 @@ extension SubprocessUnixTests {
 }
 
 // MARK: - Utils
+extension FileDescriptor {
+    /// Runs a closure and then closes the FileDescriptor, even if an error occurs.
+    ///
+    /// - Parameter body: The closure to run.
+    ///   If the closure throws an error,
+    ///   this method closes the file descriptor before it rethrows that error.
+    ///
+    /// - Returns: The value returned by the closure.
+    ///
+    /// If `body` throws an error
+    /// or an error occurs while closing the file descriptor,
+    /// this method rethrows that error.
+    public func closeAfter<R>(_ body: () async throws -> R) async throws -> R {
+        // No underscore helper, since the closure's throw isn't necessarily typed.
+        let result: R
+        do {
+            result = try await body()
+        } catch {
+            _ = try? self.close() // Squash close error and throw closure's
+            throw error
+        }
+        try self.close()
+        return result
+    }
+}
+
 extension SubprocessUnixTests {
     private func assertID(
         withArgument argument: String,
@@ -981,10 +1007,18 @@ internal func assertNewSessionCreated<Output: OutputProtocol>(
         Output
     >
 ) throws {
-    #expect(result.terminationStatus.isSuccess)
-    let psValue = try #require(
-        result.standardOutput
+    try assertNewSessionCreated(
+        terminationStatus: result.terminationStatus,
+        output: #require(result.standardOutput)
     )
+}
+
+internal func assertNewSessionCreated(
+    terminationStatus: TerminationStatus,
+    output psValue: String
+) throws {
+    #expect(terminationStatus.isSuccess)
+
     let match = try #require(try #/\s*PID\s*PGID\s*TPGID\s*(?<pid>[\-]?[0-9]+)\s*(?<pgid>[\-]?[0-9]+)\s*(?<tpgid>[\-]?[0-9]+)\s*/#.wholeMatch(in: psValue), "ps output was in an unexpected format:\n\n\(psValue)")
     // If setsid() has been called successfully, we should observe:
     // - pid == pgid

@@ -34,9 +34,9 @@ struct SubprocessLinuxTests {
             "This test requires root privileges"
         )
     )
-    func testSubprocessPlatformOptionsPreSpawnProcessConfigurator() async throws {
+    func testSubprocessPlatformOptionsPreExecProcessAction() async throws {
         var platformOptions = PlatformOptions()
-        platformOptions.preSpawnProcessConfigurator = {
+        platformOptions.preExecProcessAction = {
             guard setgid(4321) == 0 else {
                 // Returns EPERM when:
                 //   The calling process is not privileged (does not have the

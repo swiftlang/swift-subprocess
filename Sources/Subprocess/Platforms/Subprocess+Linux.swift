@@ -152,7 +152,7 @@ extension Configuration {
                                     CInt(supplementaryGroups?.count ?? 0),
                                     sgroups?.baseAddress,
                                     self.platformOptions.createSession ? 1 : 0,
-                                    self.platformOptions.preSpawnProcessConfigurator
+                                    self.platformOptions.preExecProcessAction
                                 )
                             }
                         }
@@ -261,7 +261,7 @@ extension ProcessIdentifier: CustomStringConvertible, CustomDebugStringConvertib
 /// The collection of platform-specific settings
 /// to configure the subprocess when running
 public struct PlatformOptions: Sendable {
-    // Set user ID for the subprocess
+    /// Set user ID for the subprocess
     public var userID: uid_t? = nil
     /// Set the real and effective group ID and the saved
     /// set-group-ID of the subprocess, equivalent to calling
@@ -269,19 +269,19 @@ public struct PlatformOptions: Sendable {
     /// Group ID is used to control permissions, particularly
     /// for file access.
     public var groupID: gid_t? = nil
-    // Set list of supplementary group IDs for the subprocess
+    /// Set list of supplementary group IDs for the subprocess
     public var supplementaryGroups: [gid_t]? = nil
     /// Set the process group for the subprocess, equivalent to
     /// calling `setpgid()` on the child process.
     /// Process group ID is used to group related processes for
     /// controlling signals.
     public var processGroupID: pid_t? = nil
-    // Creates a session and sets the process group ID
-    // i.e. Detach from the terminal.
+    /// Creates a session and sets the process group ID
+    /// i.e. Detach from the terminal.
     public var createSession: Bool = false
     /// An ordered list of steps in order to tear down the child
     /// process in case the parent task is cancelled before
-    /// the child proces terminates.
+    /// the child process terminates.
     /// Always ends in sending a `.kill` signal at the end.
     public var teardownSequence: [TeardownStep] = []
     /// A closure to configure platform-specific
@@ -295,7 +295,9 @@ public struct PlatformOptions: Sendable {
     /// underlying spawning mechanism. This closure is called
     /// after `fork()` but before `exec()`. You may use it to
     /// call any necessary process setup functions.
-    public var preSpawnProcessConfigurator: (@convention(c) @Sendable () -> Void)? = nil
+    ///
+    /// - warning: You may ONLY call [async-signal-safe functions](https://pubs.opengroup.org/onlinepubs/9799919799/functions/V2_chap02.html) within this closure (note _"The following table defines a set of functions and function-like macros that shall be async-signal-safe."_).
+    public var preExecProcessAction: (@convention(c) @Sendable () -> Void)? = nil
 
     public init() {}
 }
@@ -310,7 +312,7 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
             \(indent)    supplementaryGroups: \(String(describing: supplementaryGroups)),
             \(indent)    processGroupID: \(String(describing: processGroupID)),
             \(indent)    createSession: \(createSession),
-            \(indent)    preSpawnProcessConfigurator: \(self.preSpawnProcessConfigurator == nil ? "not set" : "set")
+            \(indent)    preExecProcessAction: \(self.preExecProcessAction == nil ? "not set" : "set")
             \(indent))
             """
     }
