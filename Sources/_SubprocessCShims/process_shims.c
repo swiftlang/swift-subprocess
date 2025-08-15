@@ -148,7 +148,8 @@ static int _subprocess_spawn_prefork(
     gid_t * _Nullable gid,
     int number_of_sgroups, const gid_t * _Nullable sgroups,
     int create_session,
-    void (* _Nullable configurator)(void)
+    void (* _Nonnull configurator)(void * _Nonnull context),
+    void * _Nullable configuratorContext
 ) {
 #define write_error_and_exit int error = errno; \
     write(pipefd[1], &error, sizeof(error));\
@@ -242,8 +243,8 @@ static int _subprocess_spawn_prefork(
         }
 
         // Run custom configuratior
-        if (configurator != NULL) {
-            configurator();
+        if (configuratorContext != NULL) {
+            configurator(configuratorContext);
         }
 
         // Use posix_spawnas exec
@@ -295,13 +296,14 @@ int _subprocess_spawn(
     gid_t * _Nullable gid,
     int number_of_sgroups, const gid_t * _Nullable sgroups,
     int create_session,
-    void (* _Nullable configurator)(void)
+    void (* _Nonnull configurator)(void * _Nonnull context),
+    void * _Nullable configuratorContext
 ) {
     int require_pre_fork = uid != NULL ||
         gid != NULL ||
         number_of_sgroups > 0 ||
         create_session > 0 ||
-        configurator != NULL;
+        configuratorContext != NULL;
 
     if (require_pre_fork != 0) {
         int rc = _subprocess_spawn_prefork(
@@ -309,7 +311,7 @@ int _subprocess_spawn(
             exec_path,
             file_actions, spawn_attrs,
             args, env,
-            uid, gid, number_of_sgroups, sgroups, create_session, configurator
+            uid, gid, number_of_sgroups, sgroups, create_session, configurator, configuratorContext
         );
         return rc;
     }
@@ -387,7 +389,8 @@ int _subprocess_fork_exec(
     gid_t * _Nullable process_group_id,
     int number_of_sgroups, const gid_t * _Nullable sgroups,
     int create_session,
-    void (* _Nullable configurator)(void)
+    void (* _Nonnull configurator)(void * _Nonnull context),
+    void * _Nullable configuratorContext
 ) {
 #define write_error_and_exit int error = errno; \
     write(pipefd[1], &error, sizeof(error));\
@@ -573,8 +576,8 @@ int _subprocess_fork_exec(
         }
 
         // Run custom configuratior
-        if (configurator != NULL) {
-            configurator();
+        if (configuratorContext != NULL) {
+            configurator(configuratorContext);
         }
         // Finally, exec
         execve(exec_path, args, env);

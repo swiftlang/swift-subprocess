@@ -44,7 +44,8 @@ int _subprocess_spawn(
     gid_t * _Nullable gid,
     int number_of_sgroups, const gid_t * _Nullable sgroups,
     int create_session,
-    void (* _Nullable configurator)(void)
+    void (* _Nonnull configurator)(void * _Nonnull context),
+    void * _Nullable configuratorContext
 );
 #endif // TARGET_OS_MAC
 
@@ -61,7 +62,8 @@ int _subprocess_fork_exec(
     gid_t * _Nullable process_group_id,
     int number_of_sgroups, const gid_t * _Nullable sgroups,
     int create_session,
-    void (* _Nullable configurator)(void)
+    void (* _Nonnull configurator)(void * _Nonnull context),
+    void * _Nullable configuratorContext
 );
 
 int _was_process_exited(int status);

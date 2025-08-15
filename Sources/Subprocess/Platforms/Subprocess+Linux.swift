@@ -131,6 +131,17 @@ extension Configuration {
                     errorReadFileDescriptor?.platformDescriptor() ?? -1,
                 ]
 
+                final class Context {
+                    let body: @Sendable () -> ()
+                    init(body: @Sendable @escaping () -> Void) {
+                        self.body = body
+                    }
+                }
+
+                func preExecProcessAction(_ context: UnsafeMutableRawPointer) -> Void {
+                    (Unmanaged<AnyObject>.fromOpaque(context).takeRetainedValue() as! Context).body()
+                }
+
                 // Spawn
                 var pid: pid_t = 0
                 var processDescriptor: PlatformFileDescriptor = -1
@@ -152,7 +163,8 @@ extension Configuration {
                                     CInt(supplementaryGroups?.count ?? 0),
                                     sgroups?.baseAddress,
                                     self.platformOptions.createSession ? 1 : 0,
-                                    self.platformOptions.preExecProcessAction
+                                    preExecProcessAction,
+                                    self.platformOptions.preExecProcessAction.map { Unmanaged.passRetained(Context(body: $0)).toOpaque() }
                                 )
                             }
                         }
@@ -297,7 +309,7 @@ public struct PlatformOptions: Sendable {
     /// call any necessary process setup functions.
     ///
     /// - warning: You may ONLY call [async-signal-safe functions](https://pubs.opengroup.org/onlinepubs/9799919799/functions/V2_chap02.html) within this closure (note _"The following table defines a set of functions and function-like macros that shall be async-signal-safe."_).
-    public var preExecProcessAction: (@convention(c) @Sendable () -> Void)? = nil
+    public var preExecProcessAction: (@Sendable () -> Void)? = nil
 
     public init() {}
 }

@@ -43,8 +43,7 @@ struct SubprocessDarwinTests {
         let (readFD, writeFD) = try FileDescriptor.pipe()
         try await readFD.closeAfter {
             let childPID = try await writeFD.closeAfter {
-                // Allocate some constant high-numbered FD that's unlikely to be used.
-                let specialFD = try writeFD.duplicate(as: FileDescriptor(rawValue: 9000))
+                let specialFD = try writeFD.duplicate()
                 return try await specialFD.closeAfter {
                     // Make the fd non-blocking just to avoid the test hanging if it fails
                     let opts = fcntl(specialFD.rawValue, F_GETFD)
@@ -54,7 +53,7 @@ struct SubprocessDarwinTests {
                     var platformOptions = PlatformOptions()
                     platformOptions.preExecProcessAction = {
                         var pid: Int32 = getpid()
-                        if write(9000, &pid, 4) != 4 {
+                        if write(specialFD.rawValue, &pid, 4) != 4 {
                             exit(EXIT_FAILURE)
                         }
                     }
