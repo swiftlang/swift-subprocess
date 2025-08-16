@@ -13,3 +13,6 @@ add_library(_SubprocessCShims STATIC
   process_shims.c)
 target_include_directories(_SubprocessCShims PUBLIC
   include)
+
+install(TARGETS _SubprocessCShims
+  EXPORT SwiftSubprocessTargets)
