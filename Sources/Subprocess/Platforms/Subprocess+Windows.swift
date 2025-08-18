@@ -63,14 +63,14 @@ extension Configuration {
         // automatic PATH lookup so we only need to call `CreateProcessW` once. However, if
         // user wants to override executable path in arguments, we have to use `lpApplicationName`
         // to specify the executable path. In this case, manually loop over all possible paths.
-        let possibleExecutablePaths: Set<String>
+        let possibleExecutablePaths: _OrderedSet<String>
         if _fastPath(self.arguments.executablePathOverride == nil) {
             // Fast path: we can rely on `CreateProcessW`'s built in Path searching
             switch self.executable.storage {
             case .executable(let executable):
-                possibleExecutablePaths = Set([executable])
+                possibleExecutablePaths = _OrderedSet([executable])
             case .path(let path):
-                possibleExecutablePaths = Set([path.string])
+                possibleExecutablePaths = _OrderedSet([path.string])
             }
         } else {
             // Slow path: user requested arg0 override, therefore we must manually
@@ -255,14 +255,14 @@ extension Configuration {
         // automatic PATH lookup so we only need to call `CreateProcessW` once. However, if
         // user wants to override executable path in arguments, we have to use `lpApplicationName`
         // to specify the executable path. In this case, manually loop over all possible paths.
-        let possibleExecutablePaths: Set<String>
+        let possibleExecutablePaths: _OrderedSet<String>
         if _fastPath(self.arguments.executablePathOverride == nil) {
             // Fast path: we can rely on `CreateProcessW`'s built in Path searching
             switch self.executable.storage {
             case .executable(let executable):
-                possibleExecutablePaths = Set([executable])
+                possibleExecutablePaths = _OrderedSet([executable])
             case .path(let path):
-                possibleExecutablePaths = Set([path.string])
+                possibleExecutablePaths = _OrderedSet([path.string])
             }
         } else {
             // Slow path: user requested arg0 override, therefore we must manually
@@ -771,12 +771,12 @@ extension Executable {
     /// https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw
     internal func possibleExecutablePaths(
         withPathValue pathValue: String?
-    ) -> Set<String> {
+    ) -> _OrderedSet<String> {
         func insertExecutableAddingExtension(
             _ name: String,
             currentPath: String,
-            pathExtensions: Set<String>,
-            storage: inout Set<String>
+            pathExtensions: _OrderedSet<String>,
+            storage: inout _OrderedSet<String>
         ) {
             let fullPath = FilePath(currentPath).appending(name)
             if !name.hasExtension() {
@@ -792,10 +792,10 @@ extension Executable {
 
         switch self.storage {
         case .executable(let name):
-            var possiblePaths: Set<String> = []
+            var possiblePaths: _OrderedSet<String> = .init()
             let currentEnvironmentValues = Environment.currentEnvironmentValues()
             // If `name` does not include extensions, we need to try these extensions
-            var pathExtensions: Set<String> = Set(["com", "exe", "cmd", "bat"])
+            var pathExtensions: _OrderedSet<String> = _OrderedSet(["com", "exe", "bat", "cmd"])
             if let extensionList = currentEnvironmentValues["PATHEXT"] {
                 for var ext in extensionList.split(separator: ";") {
                     ext.removeFirst(1)
@@ -890,7 +890,7 @@ extension Executable {
             }
             return possiblePaths
         case .path(let path):
-            return Set([path.string])
+            return _OrderedSet([path.string])
         }
     }
 }

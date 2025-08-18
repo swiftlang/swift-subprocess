@@ -998,3 +998,39 @@ internal func withAsyncTaskCleanupHandler<Result>(
         }
     }
 }
+
+internal struct _OrderedSet<Element: Hashable & Sendable>: Hashable, Sendable {
+    private var elements: [Element]
+    private var hashValueSet: Set<Int>
+
+    internal init() {
+        self.elements = []
+        self.hashValueSet = Set()
+    }
+
+    internal init(_ arrayValue: [Element]) {
+        self.elements = []
+        self.hashValueSet = Set()
+
+        for element in arrayValue {
+            self.insert(element)
+        }
+    }
+
+    mutating func insert(_ element: Element) {
+        guard !self.hashValueSet.contains(element.hashValue) else {
+            return
+        }
+        self.elements.append(element)
+        self.hashValueSet.insert(element.hashValue)
+    }
+}
+
+extension _OrderedSet : Sequence {
+    typealias Iterator = Array<Element>.Iterator
+
+    internal func makeIterator() -> Iterator {
+        return self.elements.makeIterator()
+    }
+}
+

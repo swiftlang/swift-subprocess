@@ -146,20 +146,32 @@ extension SubprocessAsyncIOTests {
 
         try writeChannel.safelyClose()
 
-        do {
+        await #expect {
             _ = try await AsyncIO.shared.write([100], to: writeChannel)
-            Issue.record("Expected write to closed pipe to throw an error")
-        } catch {
+        } throws: { error in
             guard let subprocessError = error as? SubprocessError else {
-                Issue.record("Expecting SubprocessError, but got \(error)")
-                return
+                return false
             }
-            #if canImport(Darwin) || os(FreeBSD) || os(OpenBSD)
+            guard subprocessError.code == .init(.failedToWriteToSubprocess) else {
+                return false
+            }
+
+            #if os(Windows)
+            #expect(subprocessError.underlyingError == .init(rawValue: DWORD(ERROR_INVALID_HANDLE)))
+            #elseif canImport(Darwin) || os(FreeBSD) || os(OpenBSD)
             #expect(subprocessError.underlyingError == .init(rawValue: ECANCELED))
-            #elseif os(Linux) || os(Android)
-            #expect(subprocessError.underlyingError == .init(rawValue: EBADF))
+            #else
+            // On Linux, depending on timing, either epoll_ctl or write
+            // could throw error first
+            #expect(
+                subprocessError.underlyingError == .init(rawValue: EBADF) ||
+                subprocessError.underlyingError == .init(rawValue: EINVAL) ||
+                subprocessError.underlyingError == .init(rawValue: EPERM)
+            )
             #endif
+            return true
         }
+
     }
 
     @Test func testReadFromClosedPipe() async throws {
@@ -172,19 +184,30 @@ extension SubprocessAsyncIOTests {
 
         try readChannel.safelyClose()
 
-        do {
+        await #expect {
             _ = try await AsyncIO.shared.read(from: readChannel, upTo: .max)
-            Issue.record("Expected write to closed pipe to throw an error")
-        } catch {
+        } throws: { error in
             guard let subprocessError = error as? SubprocessError else {
-                Issue.record("Expecting SubprocessError, but got \(error)")
-                return
+                return false
             }
-            #if canImport(Darwin) || os(FreeBSD) || os(OpenBSD)
+            guard subprocessError.code == .init(.failedToReadFromSubprocess) else {
+                return false
+            }
+
+            #if os(Windows)
+            #expect(subprocessError.underlyingError == .init(rawValue: DWORD(ERROR_INVALID_HANDLE)))
+            #elseif canImport(Darwin) || os(FreeBSD) || os(OpenBSD)
             #expect(subprocessError.underlyingError == .init(rawValue: ECANCELED))
-            #elseif os(Linux) || os(Android)
-            #expect(subprocessError.underlyingError == .init(rawValue: EBADF))
+            #else
+            // On Linux, depending on timing, either epoll_ctl or read
+            // could throw error first
+            #expect(
+                subprocessError.underlyingError == .init(rawValue: EBADF) ||
+                subprocessError.underlyingError == .init(rawValue: EINVAL) ||
+                subprocessError.underlyingError == .init(rawValue: EPERM)
+            )
             #endif
+            return true
         }
     }
 

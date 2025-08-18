@@ -303,10 +303,10 @@ extension Executable {
 
     internal func possibleExecutablePaths(
         withPathValue pathValue: String?
-    ) -> Set<String> {
+    ) -> _OrderedSet<String> {
         switch self.storage {
         case .executable(let executableName):
-            var results: Set<String> = []
+            var results: _OrderedSet<String> = .init()
             // executableName could be a full path
             results.insert(executableName)
             // Get $PATH from environment
@@ -324,7 +324,7 @@ extension Executable {
             }
             return results
         case .path(let executablePath):
-            return Set([executablePath.string])
+            return _OrderedSet([executablePath.string])
         }
     }
 }

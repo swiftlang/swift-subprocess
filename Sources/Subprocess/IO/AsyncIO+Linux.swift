@@ -357,59 +357,75 @@ extension AsyncIO {
         )
         var readLength: Int = 0
         let signalStream = self.registerFileDescriptor(fileDescriptor, for: .read)
-        /// Outer loop: every iteration signals we are ready to read more data
-        for try await _ in signalStream {
-            /// Inner loop: repeatedly call `.read()` and read more data until:
-            /// 1. We reached EOF (read length is 0), in which case return the result
-            /// 2. We read `maxLength` bytes, in which case return the result
-            /// 3. `read()` returns -1 and sets `errno` to `EAGAIN` or `EWOULDBLOCK`. In
-            ///     this case we `break` out of the inner loop and wait `.read()` to be
-            ///     ready by `await`ing the next signal in the outer loop.
-            while true {
-                let bytesRead = resultBuffer.withUnsafeMutableBufferPointer { bufferPointer in
-                    // Get a pointer to the memory at the specified offset
-                    let targetCount = bufferPointer.count - readLength
 
-                    let offsetAddress = bufferPointer.baseAddress!.advanced(by: readLength)
+        do {
+            /// Outer loop: every iteration signals we are ready to read more data
+            for try await _ in signalStream {
+                /// Inner loop: repeatedly call `.read()` and read more data until:
+                /// 1. We reached EOF (read length is 0), in which case return the result
+                /// 2. We read `maxLength` bytes, in which case return the result
+                /// 3. `read()` returns -1 and sets `errno` to `EAGAIN` or `EWOULDBLOCK`. In
+                ///     this case we `break` out of the inner loop and wait `.read()` to be
+                ///     ready by `await`ing the next signal in the outer loop.
+                while true {
+                    let bytesRead = resultBuffer.withUnsafeMutableBufferPointer { bufferPointer in
+                        // Get a pointer to the memory at the specified offset
+                        let targetCount = bufferPointer.count - readLength
 
-                    // Read directly into the buffer at the offset
-                    return _subprocess_read(fileDescriptor.rawValue, offsetAddress, targetCount)
-                }
-                if bytesRead > 0 {
-                    // Read some data
-                    readLength += bytesRead
-                    if maxLength == .max {
-                        // Grow resultBuffer if needed
-                        guard Double(readLength) > 0.8 * Double(resultBuffer.count) else {
-                            continue
+                        let offsetAddress = bufferPointer.baseAddress!.advanced(by: readLength)
+
+                        // Read directly into the buffer at the offset
+                        return _subprocess_read(fileDescriptor.rawValue, offsetAddress, targetCount)
+                    }
+                    let capturedErrno = errno
+                    if bytesRead > 0 {
+                        // Read some data
+                        readLength += bytesRead
+                        if maxLength == .max {
+                            // Grow resultBuffer if needed
+                            guard Double(readLength) > 0.8 * Double(resultBuffer.count) else {
+                                continue
+                            }
+                            resultBuffer.append(
+                                contentsOf: Array(repeating: 0, count: resultBuffer.count)
+                            )
+                        } else if readLength >= maxLength {
+                            // When we reached maxLength, return!
+                            try self.removeRegistration(for: fileDescriptor)
+                            return resultBuffer
                         }
-                        resultBuffer.append(
-                            contentsOf: Array(repeating: 0, count: resultBuffer.count)
-                        )
-                    } else if readLength >= maxLength {
-                        // When we reached maxLength, return!
+                    } else if bytesRead == 0 {
+                        // We reached EOF. Return whatever's left
                         try self.removeRegistration(for: fileDescriptor)
+                        guard readLength > 0 else {
+                            return nil
+                        }
+                        resultBuffer.removeLast(resultBuffer.count - readLength)
                         return resultBuffer
-                    }
-                } else if bytesRead == 0 {
-                    // We reached EOF. Return whatever's left
-                    try self.removeRegistration(for: fileDescriptor)
-                    guard readLength > 0 else {
-                        return nil
-                    }
-                    resultBuffer.removeLast(resultBuffer.count - readLength)
-                    return resultBuffer
-                } else {
-                    if self.shouldWaitForNextSignal(with: errno) {
-                        // No more data for now wait for the next signal
-                        break
                     } else {
-                        // Throw all other errors
-                        try self.removeRegistration(for: fileDescriptor)
-                        throw SubprocessError.UnderlyingError(rawValue: errno)
+                        if self.shouldWaitForNextSignal(with: capturedErrno) {
+                            // No more data for now wait for the next signal
+                            break
+                        } else {
+                            // Throw all other errors
+                            try self.removeRegistration(for: fileDescriptor)
+                            throw SubprocessError(
+                                code: .init(.failedToReadFromSubprocess),
+                                underlyingError: .init(rawValue: capturedErrno)
+                            )
+                        }
                     }
                 }
             }
+        } catch {
+            // Reset error code to .failedToRead to match other platforms
+            guard let originalError = error as? SubprocessError else {
+                throw error
+            }
+            throw SubprocessError(
+                code: .init(.failedToReadFromSubprocess),
+                underlyingError: originalError.underlyingError
+            )
         }
         resultBuffer.removeLast(resultBuffer.count - readLength)
         return resultBuffer
@@ -432,37 +448,52 @@ extension AsyncIO {
         let fileDescriptor = diskIO.channel
         let signalStream = self.registerFileDescriptor(fileDescriptor, for: .write)
         var writtenLength: Int = 0
-        /// Outer loop: every iteration signals we are ready to read more data
-        for try await _ in signalStream {
-            /// Inner loop: repeatedly call `.write()` and write more data until:
-            /// 1. We've written bytes.count bytes.
-            /// 3. `.write()` returns -1 and sets `errno` to `EAGAIN` or `EWOULDBLOCK`. In
-            ///     this case we `break` out of the inner loop and wait `.write()` to be
-            ///     ready by `await`ing the next signal in the outer loop.
-            while true {
-                let written = bytes.withUnsafeBytes { ptr in
-                    let remainingLength = ptr.count - writtenLength
-                    let startPtr = ptr.baseAddress!.advanced(by: writtenLength)
-                    return _subprocess_write(fileDescriptor.rawValue, startPtr, remainingLength)
-                }
-                if written > 0 {
-                    writtenLength += written
-                    if writtenLength >= bytes.count {
-                        // Wrote all data
-                        try self.removeRegistration(for: fileDescriptor)
-                        return writtenLength
+        do {
+            /// Outer loop: every iteration signals we are ready to read more data
+            for try await _ in signalStream {
+                /// Inner loop: repeatedly call `.write()` and write more data until:
+                /// 1. We've written bytes.count bytes.
+                /// 3. `.write()` returns -1 and sets `errno` to `EAGAIN` or `EWOULDBLOCK`. In
+                ///     this case we `break` out of the inner loop and wait `.write()` to be
+                ///     ready by `await`ing the next signal in the outer loop.
+                while true {
+                    let written = bytes.withUnsafeBytes { ptr in
+                        let remainingLength = ptr.count - writtenLength
+                        let startPtr = ptr.baseAddress!.advanced(by: writtenLength)
+                        return _subprocess_write(fileDescriptor.rawValue, startPtr, remainingLength)
                     }
-                } else {
-                    if self.shouldWaitForNextSignal(with: errno) {
-                        // No more data for now wait for the next signal
-                        break
+                    let capturedErrno = errno
+                    if written > 0 {
+                        writtenLength += written
+                        if writtenLength >= bytes.count {
+                            // Wrote all data
+                            try self.removeRegistration(for: fileDescriptor)
+                            return writtenLength
+                        }
                     } else {
-                        // Throw all other errors
-                        try self.removeRegistration(for: fileDescriptor)
-                        throw SubprocessError.UnderlyingError(rawValue: errno)
+                        if self.shouldWaitForNextSignal(with: capturedErrno) {
+                            // No more data for now wait for the next signal
+                            break
+                        } else {
+                            // Throw all other errors
+                            try self.removeRegistration(for: fileDescriptor)
+                            throw SubprocessError(
+                                code: .init(.failedToWriteToSubprocess),
+                                underlyingError: .init(rawValue: capturedErrno)
+                            )
+                        }
                     }
                 }
             }
+        } catch {
+            // Reset error code to .failedToWrite to match other platforms
+            guard let originalError = error as? SubprocessError else {
+                throw error
+            }
+            throw SubprocessError(
+                code: .init(.failedToWriteToSubprocess),
+                underlyingError: originalError.underlyingError
+            )
         }
         return 0
     }
@@ -478,37 +509,52 @@ extension AsyncIO {
         let fileDescriptor = diskIO.channel
         let signalStream = self.registerFileDescriptor(fileDescriptor, for: .write)
         var writtenLength: Int = 0
-        /// Outer loop: every iteration signals we are ready to read more data
-        for try await _ in signalStream {
-            /// Inner loop: repeatedly call `.write()` and write more data until:
-            /// 1. We've written bytes.count bytes.
-            /// 3. `.write()` returns -1 and sets `errno` to `EAGAIN` or `EWOULDBLOCK`. In
-            ///     this case we `break` out of the inner loop and wait `.write()` to be
-            ///     ready by `await`ing the next signal in the outer loop.
-            while true {
-                let written = span.withUnsafeBytes { ptr in
-                    let remainingLength = ptr.count - writtenLength
-                    let startPtr = ptr.baseAddress!.advanced(by: writtenLength)
-                    return _subprocess_write(fileDescriptor.rawValue, startPtr, remainingLength)
-                }
-                if written > 0 {
-                    writtenLength += written
-                    if writtenLength >= span.byteCount {
-                        // Wrote all data
-                        try self.removeRegistration(for: fileDescriptor)
-                        return writtenLength
+        do {
+            /// Outer loop: every iteration signals we are ready to read more data
+            for try await _ in signalStream {
+                /// Inner loop: repeatedly call `.write()` and write more data until:
+                /// 1. We've written bytes.count bytes.
+                /// 3. `.write()` returns -1 and sets `errno` to `EAGAIN` or `EWOULDBLOCK`. In
+                ///     this case we `break` out of the inner loop and wait `.write()` to be
+                ///     ready by `await`ing the next signal in the outer loop.
+                while true {
+                    let written = span.withUnsafeBytes { ptr in
+                        let remainingLength = ptr.count - writtenLength
+                        let startPtr = ptr.baseAddress!.advanced(by: writtenLength)
+                        return _subprocess_write(fileDescriptor.rawValue, startPtr, remainingLength)
                     }
-                } else {
-                    if self.shouldWaitForNextSignal(with: errno) {
-                        // No more data for now wait for the next signal
-                        break
+                    let capturedErrno = errno
+                    if written > 0 {
+                        writtenLength += written
+                        if writtenLength >= span.byteCount {
+                            // Wrote all data
+                            try self.removeRegistration(for: fileDescriptor)
+                            return writtenLength
+                        }
                     } else {
-                        // Throw all other errors
-                        try self.removeRegistration(for: fileDescriptor)
-                        throw SubprocessError.UnderlyingError(rawValue: errno)
+                        if self.shouldWaitForNextSignal(with: capturedErrno) {
+                            // No more data for now wait for the next signal
+                            break
+                        } else {
+                            // Throw all other errors
+                            try self.removeRegistration(for: fileDescriptor)
+                            throw SubprocessError(
+                                code: .init(.failedToWriteToSubprocess),
+                                underlyingError: .init(rawValue: capturedErrno)
+                            )
+                        }
                     }
                 }
             }
+        } catch {
+            // Reset error code to .failedToWrite to match other platforms
+            guard let originalError = error as? SubprocessError else {
+                throw error
+            }
+            throw SubprocessError(
+                code: .init(.failedToWriteToSubprocess),
+                underlyingError: originalError.underlyingError
+            )
         }
         return 0
     }
