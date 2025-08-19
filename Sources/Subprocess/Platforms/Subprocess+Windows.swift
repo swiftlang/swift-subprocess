@@ -19,6 +19,8 @@ internal import Dispatch
 @preconcurrency import SystemPackage
 #endif
 
+import _SubprocessCShims
+
 // Windows specific implementation
 extension Configuration {
     internal func spawn(
@@ -55,116 +57,174 @@ extension Configuration {
         var errorReadFileDescriptor: IODescriptor? = errorPipe.readFileDescriptor()
         var errorWriteFileDescriptor: IODescriptor? = errorPipe.writeFileDescriptor()
 
-        let applicationName: String?
-        let commandAndArgs: String
-        let environment: String
-        let intendedWorkingDir: String?
-        do {
-            (
-                applicationName,
-                commandAndArgs,
-                environment,
-                intendedWorkingDir
-            ) = try self.preSpawn()
-        } catch {
-            try self.safelyCloseMultiple(
-                inputRead: inputReadFileDescriptor.take(),
-                inputWrite: inputWriteFileDescriptor.take(),
-                outputRead: outputReadFileDescriptor.take(),
-                outputWrite: outputWriteFileDescriptor.take(),
-                errorRead: errorReadFileDescriptor.take(),
-                errorWrite: errorWriteFileDescriptor.take()
-            )
-            throw error
-        }
-
-        var startupInfo = try self.generateStartupInfo(
-            withInputRead: inputReadFileDescriptor,
-            inputWrite: inputWriteFileDescriptor,
-            outputRead: outputReadFileDescriptor,
-            outputWrite: outputWriteFileDescriptor,
-            errorRead: errorReadFileDescriptor,
-            errorWrite: errorWriteFileDescriptor
-        )
-        var processInfo: PROCESS_INFORMATION = PROCESS_INFORMATION()
-        var createProcessFlags = self.generateCreateProcessFlag()
-        // Give calling process a chance to modify flag and startup info
-        if let configurator = self.platformOptions.preSpawnProcessConfigurator {
-            try configurator(&createProcessFlags, &startupInfo)
-        }
-        // Spawn!
-        let created = try applicationName.withOptionalNTPathRepresentation { applicationNameW in
-            try commandAndArgs.withCString(
-                encodedAs: UTF16.self
-            ) { commandAndArgsW in
-                try environment.withCString(
-                    encodedAs: UTF16.self
-                ) { environmentW in
-                    try intendedWorkingDir.withOptionalNTPathRepresentation { intendedWorkingDirW in
-                        CreateProcessW(
-                            applicationNameW,
-                            UnsafeMutablePointer<WCHAR>(mutating: commandAndArgsW),
-                            nil,  // lpProcessAttributes
-                            nil,  // lpThreadAttributes
-                            true,  // bInheritHandles
-                            createProcessFlags,
-                            UnsafeMutableRawPointer(mutating: environmentW),
-                            intendedWorkingDirW,
-                            &startupInfo,
-                            &processInfo
-                        )
-                    }
-                }
+        // CreateProcessW supports using `lpApplicationName` as well as `lpCommandLine` to
+        // specify executable path. However, only `lpCommandLine` supports PATH looking up,
+        // whereas `lpApplicationName` does not. In general we should rely on `lpCommandLine`'s
+        // automatic PATH lookup so we only need to call `CreateProcessW` once. However, if
+        // user wants to override executable path in arguments, we have to use `lpApplicationName`
+        // to specify the executable path. In this case, manually loop over all possible paths.
+        let possibleExecutablePaths: _OrderedSet<String>
+        if _fastPath(self.arguments.executablePathOverride == nil) {
+            // Fast path: we can rely on `CreateProcessW`'s built in Path searching
+            switch self.executable.storage {
+            case .executable(let executable):
+                possibleExecutablePaths = _OrderedSet([executable])
+            case .path(let path):
+                possibleExecutablePaths = _OrderedSet([path.string])
             }
+        } else {
+            // Slow path: user requested arg0 override, therefore we must manually
+            // traverse through all possible executable paths
+            possibleExecutablePaths = self.executable.possibleExecutablePaths(
+                withPathValue: self.environment.pathValue()
+            )
         }
 
-        guard created else {
-            let windowsError = GetLastError()
-            try self.safelyCloseMultiple(
+        for executablePath in possibleExecutablePaths {
+            let applicationName: String?
+            let commandAndArgs: String
+            let environment: String
+            let intendedWorkingDir: String?
+            do {
+                (
+                    applicationName,
+                    commandAndArgs,
+                    environment,
+                    intendedWorkingDir
+                ) = try self.preSpawn(withPossibleExecutablePath: executablePath)
+            } catch {
+                try self.safelyCloseMultiple(
+                    inputRead: inputReadFileDescriptor,
+                    inputWrite: inputWriteFileDescriptor,
+                    outputRead: outputReadFileDescriptor,
+                    outputWrite: outputWriteFileDescriptor,
+                    errorRead: errorReadFileDescriptor,
+                    errorWrite: errorWriteFileDescriptor
+                )
+                throw error
+            }
+
+            var processInfo: PROCESS_INFORMATION = PROCESS_INFORMATION()
+            var createProcessFlags = self.generateCreateProcessFlag()
+
+            let created = try self.withStartupInfoEx(
                 inputRead: inputReadFileDescriptor,
                 inputWrite: inputWriteFileDescriptor,
                 outputRead: outputReadFileDescriptor,
                 outputWrite: outputWriteFileDescriptor,
                 errorRead: errorReadFileDescriptor,
                 errorWrite: errorWriteFileDescriptor
+            ) { startupInfo in
+                // Give calling process a chance to modify flag and startup info
+                if let configurator = self.platformOptions.preSpawnProcessConfigurator {
+                    try configurator(&createProcessFlags, &startupInfo.pointer(to: \.StartupInfo)!.pointee)
+                }
+
+                // Spawn!
+                return try applicationName.withOptionalNTPathRepresentation { applicationNameW in
+                    try commandAndArgs.withCString(
+                        encodedAs: UTF16.self
+                    ) { commandAndArgsW in
+                        try environment.withCString(
+                            encodedAs: UTF16.self
+                        ) { environmentW in
+                            try intendedWorkingDir.withOptionalNTPathRepresentation { intendedWorkingDirW in
+                                CreateProcessW(
+                                    applicationNameW,
+                                    UnsafeMutablePointer<WCHAR>(mutating: commandAndArgsW),
+                                    nil,  // lpProcessAttributes
+                                    nil,  // lpThreadAttributes
+                                    true,  // bInheritHandles
+                                    createProcessFlags,
+                                    UnsafeMutableRawPointer(mutating: environmentW),
+                                    intendedWorkingDirW,
+                                    startupInfo.pointer(to: \.StartupInfo)!,
+                                    &processInfo
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            guard created else {
+                let windowsError = GetLastError()
+                if windowsError == ERROR_FILE_NOT_FOUND || windowsError == ERROR_PATH_NOT_FOUND {
+                    // This execution path is not it. Try the next one
+                    continue
+                }
+
+                try self.safelyCloseMultiple(
+                    inputRead: inputReadFileDescriptor,
+                    inputWrite: inputWriteFileDescriptor,
+                    outputRead: outputReadFileDescriptor,
+                    outputWrite: outputWriteFileDescriptor,
+                    errorRead: errorReadFileDescriptor,
+                    errorWrite: errorWriteFileDescriptor
+                )
+
+                // Match Darwin and Linux behavior and throw
+                // .failedToChangeWorkingDirectory instead of .spawnFailed
+                if windowsError == ERROR_DIRECTORY {
+                    throw SubprocessError(
+                        code: .init(.failedToChangeWorkingDirectory(self.workingDirectory?.string ?? "")),
+                        underlyingError: .init(rawValue: windowsError)
+                    )
+                }
+
+                throw SubprocessError(
+                    code: .init(.spawnFailed),
+                    underlyingError: .init(rawValue: windowsError)
+                )
+            }
+
+            let pid = ProcessIdentifier(
+                value: processInfo.dwProcessId,
+                processDescriptor: processInfo.hProcess,
+                threadHandle: processInfo.hThread
             )
-            throw SubprocessError(
-                code: .init(.spawnFailed),
-                underlyingError: .init(rawValue: windowsError)
+            let execution = Execution(
+                processIdentifier: pid
+            )
+
+            do {
+                // After spawn finishes, close all child side fds
+                try self.safelyCloseMultiple(
+                    inputRead: inputReadFileDescriptor,
+                    inputWrite: nil,
+                    outputRead: nil,
+                    outputWrite: outputWriteFileDescriptor,
+                    errorRead: nil,
+                    errorWrite: errorWriteFileDescriptor
+                )
+            } catch {
+                // If spawn() throws, monitorProcessTermination
+                // won't have an opportunity to call release, so do it here to avoid leaking the handles.
+                pid.close()
+                throw error
+            }
+
+            return SpawnResult(
+                execution: execution,
+                inputWriteEnd: inputWriteFileDescriptor?.createIOChannel(),
+                outputReadEnd: outputReadFileDescriptor?.createIOChannel(),
+                errorReadEnd: errorReadFileDescriptor?.createIOChannel()
             )
         }
 
-        let pid = ProcessIdentifier(
-            value: processInfo.dwProcessId,
-            processDescriptor: processInfo.hProcess,
-            threadHandle: processInfo.hThread
-        )
-        let execution = Execution(
-            processIdentifier: pid
+        try self.safelyCloseMultiple(
+            inputRead: inputReadFileDescriptor,
+            inputWrite: inputWriteFileDescriptor,
+            outputRead: outputReadFileDescriptor,
+            outputWrite: outputWriteFileDescriptor,
+            errorRead: errorReadFileDescriptor,
+            errorWrite: errorWriteFileDescriptor
         )
 
-        do {
-            // After spawn finishes, close all child side fds
-            try self.safelyCloseMultiple(
-                inputRead: inputReadFileDescriptor,
-                inputWrite: nil,
-                outputRead: nil,
-                outputWrite: outputWriteFileDescriptor,
-                errorRead: nil,
-                errorWrite: errorWriteFileDescriptor
-            )
-        } catch {
-            // If spawn() throws, monitorProcessTermination
-            // won't have an opportunity to call release, so do it here to avoid leaking the handles.
-            pid.close()
-            throw error
-        }
-
-        return SpawnResult(
-            execution: execution,
-            inputWriteEnd: inputWriteFileDescriptor?.createIOChannel(),
-            outputReadEnd: outputReadFileDescriptor?.createIOChannel(),
-            errorReadEnd: errorReadFileDescriptor?.createIOChannel()
+        // If we reached this point, all possible executable paths have failed
+        throw SubprocessError(
+            code: .init(.executableNotFound(self.executable.description)),
+            underlyingError: .init(rawValue: DWORD(ERROR_FILE_NOT_FOUND))
         )
     }
 
@@ -189,126 +249,187 @@ extension Configuration {
         let errorReadFileDescriptor: IODescriptor? = _errorPipe.readFileDescriptor()
         let errorWriteFileDescriptor: IODescriptor? = _errorPipe.writeFileDescriptor()
 
-        let (
-            applicationName,
-            commandAndArgs,
-            environment,
-            intendedWorkingDir
-        ): (String?, String, String, String?)
-        do {
-            (applicationName, commandAndArgs, environment, intendedWorkingDir) = try self.preSpawn()
-        } catch {
-            try self.safelyCloseMultiple(
+        // CreateProcessW supports using `lpApplicationName` as well as `lpCommandLine` to
+        // specify executable path. However, only `lpCommandLine` supports PATH looking up,
+        // whereas `lpApplicationName` does not. In general we should rely on `lpCommandLine`'s
+        // automatic PATH lookup so we only need to call `CreateProcessW` once. However, if
+        // user wants to override executable path in arguments, we have to use `lpApplicationName`
+        // to specify the executable path. In this case, manually loop over all possible paths.
+        let possibleExecutablePaths: _OrderedSet<String>
+        if _fastPath(self.arguments.executablePathOverride == nil) {
+            // Fast path: we can rely on `CreateProcessW`'s built in Path searching
+            switch self.executable.storage {
+            case .executable(let executable):
+                possibleExecutablePaths = _OrderedSet([executable])
+            case .path(let path):
+                possibleExecutablePaths = _OrderedSet([path.string])
+            }
+        } else {
+            // Slow path: user requested arg0 override, therefore we must manually
+            // traverse through all possible executable paths
+            possibleExecutablePaths = self.executable.possibleExecutablePaths(
+                withPathValue: self.environment.pathValue()
+            )
+        }
+        for executablePath in possibleExecutablePaths {
+            let (
+                applicationName,
+                commandAndArgs,
+                environment,
+                intendedWorkingDir
+            ): (String?, String, String, String?)
+            do {
+                (applicationName,
+                 commandAndArgs,
+                 environment,
+                 intendedWorkingDir) = try self.preSpawn(withPossibleExecutablePath: executablePath)
+            } catch {
+                try self.safelyCloseMultiple(
+                    inputRead: inputReadFileDescriptor,
+                    inputWrite: inputWriteFileDescriptor,
+                    outputRead: outputReadFileDescriptor,
+                    outputWrite: outputWriteFileDescriptor,
+                    errorRead: errorReadFileDescriptor,
+                    errorWrite: errorWriteFileDescriptor
+                )
+                throw error
+            }
+
+            var processInfo: PROCESS_INFORMATION = PROCESS_INFORMATION()
+            var createProcessFlags = self.generateCreateProcessFlag()
+
+            let created = try self.withStartupInfoEx(
                 inputRead: inputReadFileDescriptor,
                 inputWrite: inputWriteFileDescriptor,
                 outputRead: outputReadFileDescriptor,
                 outputWrite: outputWriteFileDescriptor,
                 errorRead: errorReadFileDescriptor,
                 errorWrite: errorWriteFileDescriptor
-            )
-            throw error
-        }
+            ) { startupInfo in
+                // Give calling process a chance to modify flag and startup info
+                if let configurator = self.platformOptions.preSpawnProcessConfigurator {
+                    try configurator(&createProcessFlags, &startupInfo.pointer(to: \.StartupInfo)!.pointee)
+                }
 
-        var startupInfo = try self.generateStartupInfo(
-            withInputRead: inputReadFileDescriptor,
-            inputWrite: inputWriteFileDescriptor,
-            outputRead: outputReadFileDescriptor,
-            outputWrite: outputWriteFileDescriptor,
-            errorRead: errorReadFileDescriptor,
-            errorWrite: errorWriteFileDescriptor
-        )
-        var processInfo: PROCESS_INFORMATION = PROCESS_INFORMATION()
-        var createProcessFlags = self.generateCreateProcessFlag()
-        // Give calling process a chance to modify flag and startup info
-        if let configurator = self.platformOptions.preSpawnProcessConfigurator {
-            try configurator(&createProcessFlags, &startupInfo)
-        }
-        // Spawn (featuring pyramid!)
-        let created = try userCredentials.username.withCString(
-            encodedAs: UTF16.self
-        ) { usernameW in
-            try userCredentials.password.withCString(
-                encodedAs: UTF16.self
-            ) { passwordW in
-                try userCredentials.domain.withOptionalCString(
+                // Spawn (featuring pyramid!)
+                return try userCredentials.username.withCString(
                     encodedAs: UTF16.self
-                ) { domainW in
-                    try applicationName.withOptionalNTPathRepresentation { applicationNameW in
-                        try commandAndArgs.withCString(
+                ) { usernameW in
+                    try userCredentials.password.withCString(
+                        encodedAs: UTF16.self
+                    ) { passwordW in
+                        try userCredentials.domain.withOptionalCString(
                             encodedAs: UTF16.self
-                        ) { commandAndArgsW in
-                            try environment.withCString(
-                                encodedAs: UTF16.self
-                            ) { environmentW in
-                                try intendedWorkingDir.withOptionalNTPathRepresentation { intendedWorkingDirW in
-                                    CreateProcessWithLogonW(
-                                        usernameW,
-                                        domainW,
-                                        passwordW,
-                                        DWORD(LOGON_WITH_PROFILE),
-                                        applicationNameW,
-                                        UnsafeMutablePointer<WCHAR>(mutating: commandAndArgsW),
-                                        createProcessFlags,
-                                        UnsafeMutableRawPointer(mutating: environmentW),
-                                        intendedWorkingDirW,
-                                        &startupInfo,
-                                        &processInfo
-                                    )
+                        ) { domainW in
+                            try applicationName.withOptionalNTPathRepresentation { applicationNameW in
+                                try commandAndArgs.withCString(
+                                    encodedAs: UTF16.self
+                                ) { commandAndArgsW in
+                                    try environment.withCString(
+                                        encodedAs: UTF16.self
+                                    ) { environmentW in
+                                        try intendedWorkingDir.withOptionalNTPathRepresentation { intendedWorkingDirW in
+                                            CreateProcessWithLogonW(
+                                                usernameW,
+                                                domainW,
+                                                passwordW,
+                                                DWORD(LOGON_WITH_PROFILE),
+                                                applicationNameW,
+                                                UnsafeMutablePointer<WCHAR>(mutating: commandAndArgsW),
+                                                createProcessFlags,
+                                                UnsafeMutableRawPointer(mutating: environmentW),
+                                                intendedWorkingDirW,
+                                                startupInfo.pointer(to: \.StartupInfo)!,
+                                                &processInfo
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
+
+
+            guard created else {
+                let windowsError = GetLastError()
+
+                if windowsError == ERROR_FILE_NOT_FOUND || windowsError == ERROR_PATH_NOT_FOUND {
+                    // This executable path is not it. Try the next one
+                    continue
+                }
+
+                try self.safelyCloseMultiple(
+                    inputRead: inputReadFileDescriptor,
+                    inputWrite: inputWriteFileDescriptor,
+                    outputRead: outputReadFileDescriptor,
+                    outputWrite: outputWriteFileDescriptor,
+                    errorRead: errorReadFileDescriptor,
+                    errorWrite: errorWriteFileDescriptor
+                )
+                // Match Darwin and Linux behavior and throw
+                // .failedToChangeWorkingDirectory instead of .spawnFailed
+                if windowsError == ERROR_DIRECTORY {
+                    throw SubprocessError(
+                        code: .init(.failedToChangeWorkingDirectory(self.workingDirectory?.string ?? "")),
+                        underlyingError: .init(rawValue: windowsError)
+                    )
+                }
+
+                throw SubprocessError(
+                    code: .init(.spawnFailed),
+                    underlyingError: .init(rawValue: windowsError)
+                )
+            }
+
+            let pid = ProcessIdentifier(
+                value: processInfo.dwProcessId,
+                processDescriptor: processInfo.hProcess,
+                threadHandle: processInfo.hThread
+            )
+            let execution = Execution(
+                processIdentifier: pid
+            )
+
+            do {
+                // After spawn finishes, close all child side fds
+                try self.safelyCloseMultiple(
+                    inputRead: inputReadFileDescriptor,
+                    inputWrite: nil,
+                    outputRead: nil,
+                    outputWrite: outputWriteFileDescriptor,
+                    errorRead: nil,
+                    errorWrite: errorWriteFileDescriptor
+                )
+            } catch {
+                // If spawn() throws, monitorProcessTermination
+                // won't have an opportunity to call release, so do it here to avoid leaking the handles.
+                pid.close()
+                throw error
+            }
+
+            return SpawnResult(
+                execution: execution,
+                inputWriteEnd: inputWriteFileDescriptor?.createIOChannel(),
+                outputReadEnd: outputReadFileDescriptor?.createIOChannel(),
+                errorReadEnd: errorReadFileDescriptor?.createIOChannel()
+            )
         }
 
-        guard created else {
-            let windowsError = GetLastError()
-            try self.safelyCloseMultiple(
-                inputRead: inputReadFileDescriptor,
-                inputWrite: inputWriteFileDescriptor,
-                outputRead: outputReadFileDescriptor,
-                outputWrite: outputWriteFileDescriptor,
-                errorRead: errorReadFileDescriptor,
-                errorWrite: errorWriteFileDescriptor
-            )
-            throw SubprocessError(
-                code: .init(.spawnFailed),
-                underlyingError: .init(rawValue: windowsError)
-            )
-        }
-
-        let pid = ProcessIdentifier(
-            value: processInfo.dwProcessId,
-            processDescriptor: processInfo.hProcess,
-            threadHandle: processInfo.hThread
+        try self.safelyCloseMultiple(
+            inputRead: inputReadFileDescriptor,
+            inputWrite: inputWriteFileDescriptor,
+            outputRead: outputReadFileDescriptor,
+            outputWrite: outputWriteFileDescriptor,
+            errorRead: errorReadFileDescriptor,
+            errorWrite: errorWriteFileDescriptor
         )
-        let execution = Execution(
-            processIdentifier: pid
-        )
 
-        do {
-            // After spawn finishes, close all child side fds
-            try self.safelyCloseMultiple(
-                inputRead: inputReadFileDescriptor,
-                inputWrite: nil,
-                outputRead: nil,
-                outputWrite: outputWriteFileDescriptor,
-                errorRead: nil,
-                errorWrite: errorWriteFileDescriptor
-            )
-        } catch {
-            // If spawn() throws, monitorProcessTermination
-            // won't have an opportunity to call release, so do it here to avoid leaking the handles.
-            pid.close()
-            throw error
-        }
-
-        return SpawnResult(
-            execution: execution,
-            inputWriteEnd: inputWriteFileDescriptor?.createIOChannel(),
-            outputReadEnd: outputReadFileDescriptor?.createIOChannel(),
-            errorReadEnd: errorReadFileDescriptor?.createIOChannel()
+        // If we reached this point, all possible executable paths have failed
+        throw SubprocessError(
+            code: .init(.executableNotFound(self.executable.description)),
+            underlyingError: .init(rawValue: DWORD(ERROR_FILE_NOT_FOUND))
         )
     }
 }
@@ -471,7 +592,7 @@ internal func monitorProcessTermination(
         }
     }
 
-    try? await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
         // Set up a callback that immediately resumes the continuation and does no
         // other work.
         let context = Unmanaged.passRetained(continuation as AnyObject).toOpaque()
@@ -629,23 +750,164 @@ extension Executable {
             return executablePath.string
         }
     }
+
+    /// `CreateProcessW` allows users to specify the executable path via
+    /// `lpApplicationName` or via `lpCommandLine`. However, only `lpCommandLine` supports
+    /// path searching, whereas `lpApplicationName` does not. In order to support the
+    /// "argument 0 override" feature, Subprocess must use `lpApplicationName` instead of
+    /// relying on `lpCommandLine` (so we can potentially set a different value for `lpCommandLine`).
+    ///
+    /// This method replicates the executable searching behavior of `CreateProcessW`'s
+    /// `lpCommandLine`. Specifically, it follows the steps listed in `CreateProcessW`'s documentation:
+    ///
+    /// 1. The directory from which the application loaded.
+    /// 2. The current directory for the parent process.
+    /// 3. The 32-bit Windows system directory.
+    /// 4. The 16-bit Windows system directory.
+    /// 5. The Windows directory.
+    /// 6. The directories that are listed in the PATH environment variable.
+    ///
+    /// For more info:
+    /// https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw
+    internal func possibleExecutablePaths(
+        withPathValue pathValue: String?
+    ) -> _OrderedSet<String> {
+        func insertExecutableAddingExtension(
+            _ name: String,
+            currentPath: String,
+            pathExtensions: _OrderedSet<String>,
+            storage: inout _OrderedSet<String>
+        ) {
+            let fullPath = FilePath(currentPath).appending(name)
+            if !name.hasExtension() {
+                for ext in pathExtensions {
+                    var path = fullPath
+                    path.extension = ext
+                    storage.insert(path.string)
+                }
+            } else {
+                storage.insert(fullPath.string)
+            }
+        }
+
+        switch self.storage {
+        case .executable(let name):
+            var possiblePaths: _OrderedSet<String> = .init()
+            let currentEnvironmentValues = Environment.currentEnvironmentValues()
+            // If `name` does not include extensions, we need to try these extensions
+            var pathExtensions: _OrderedSet<String> = _OrderedSet(["com", "exe", "bat", "cmd"])
+            if let extensionList = currentEnvironmentValues["PATHEXT"] {
+                for var ext in extensionList.split(separator: ";") {
+                    ext.removeFirst(1)
+                    pathExtensions.insert(String(ext).lowercased())
+                }
+            }
+            // 1. The directory from which the application loaded.
+            let applicationDirectory = try? fillNullTerminatedWideStringBuffer(
+                initialSize: DWORD(MAX_PATH), maxSize: DWORD(Int16.max)
+            ) {
+                return GetModuleFileNameW(nil, $0.baseAddress, DWORD($0.count))
+            }
+            if let applicationDirectory {
+                insertExecutableAddingExtension(
+                    name,
+                    currentPath: FilePath(applicationDirectory).removingLastComponent().string,
+                    pathExtensions: pathExtensions,
+                    storage: &possiblePaths
+                )
+            }
+            // 2. Current directory
+            let directorySize = GetCurrentDirectoryW(0, nil)
+            let currentDirectory = try? fillNullTerminatedWideStringBuffer(
+                initialSize: directorySize >= 0 ? directorySize : DWORD(MAX_PATH),
+                maxSize: DWORD(Int16.max)
+            ) {
+                return GetCurrentDirectoryW(DWORD($0.count), $0.baseAddress)
+            }
+            if let currentDirectory {
+                insertExecutableAddingExtension(
+                    name,
+                    currentPath: currentDirectory,
+                    pathExtensions: pathExtensions,
+                    storage: &possiblePaths
+                )
+            }
+            // 3. System directory (System32)
+            let systemDirectorySize = GetSystemDirectoryW(nil, 0)
+            let systemDirectory = try? fillNullTerminatedWideStringBuffer(
+                initialSize: systemDirectorySize >= 0 ? systemDirectorySize : DWORD(MAX_PATH),
+                maxSize: DWORD(Int16.max)
+            ) {
+                return GetSystemDirectoryW($0.baseAddress, DWORD($0.count))
+            }
+            if let systemDirectory {
+                insertExecutableAddingExtension(
+                    name,
+                    currentPath: systemDirectory,
+                    pathExtensions: pathExtensions,
+                    storage: &possiblePaths
+                )
+            }
+            // 4. The Windows directory
+            let windowsDirectorySize = GetWindowsDirectoryW(nil, 0)
+            let windowsDirectory = try? fillNullTerminatedWideStringBuffer(
+                initialSize: windowsDirectorySize >= 0 ? windowsDirectorySize : DWORD(MAX_PATH),
+                maxSize: DWORD(Int16.max)
+            ) {
+                return GetWindowsDirectoryW($0.baseAddress, DWORD($0.count))
+            }
+            if let windowsDirectory {
+                insertExecutableAddingExtension(
+                    name,
+                    currentPath: windowsDirectory,
+                    pathExtensions: pathExtensions,
+                    storage: &possiblePaths
+                )
+
+                // 5. 16 bit Systen Directory
+                // Windows documentation stats that "No such standard function
+                // (similar to GetSystemDirectory) exists for the 16-bit system folder".
+                // Use "\(windowsDirectory)\System" instead
+                let systemDirectory16 = FilePath(windowsDirectory).appending("System")
+                insertExecutableAddingExtension(
+                    name,
+                    currentPath: systemDirectory16.string,
+                    pathExtensions: pathExtensions,
+                    storage: &possiblePaths
+                )
+            }
+            // 6. The directories that are listed in the PATH environment variable
+            if let pathValue {
+                let searchPaths = pathValue.split(separator: ";").map { String($0) }
+                for possiblePath in searchPaths {
+                    insertExecutableAddingExtension(
+                        name,
+                        currentPath: possiblePath,
+                        pathExtensions: pathExtensions,
+                        storage: &possiblePaths
+                    )
+                }
+            }
+            return possiblePaths
+        case .path(let path):
+            return _OrderedSet([path.string])
+        }
+    }
 }
 
 // MARK: - Environment Resolution
 extension Environment {
-    internal static let pathVariableName = "Path"
-
     internal func pathValue() -> String? {
         switch self.config {
         case .inherit(let overrides):
             // If PATH value exists in overrides, use it
-            if let value = overrides[Self.pathVariableName] {
+            if let value = overrides.pathValue() {
                 return value
             }
             // Fall back to current process
-            return Self.currentEnvironmentValues()[Self.pathVariableName]
+            return Self.currentEnvironmentValues().pathValue()
         case .custom(let fullEnvironment):
-            if let value = fullEnvironment[Self.pathVariableName] {
+            if let value = fullEnvironment.pathValue() {
                 return value
             }
             return nil
@@ -708,7 +970,7 @@ extension ProcessIdentifier: CustomStringConvertible, CustomDebugStringConvertib
 
 // MARK: - Private Utils
 extension Configuration {
-    private func preSpawn() throws -> (
+    private func preSpawn(withPossibleExecutablePath executablePath: String) throws -> (
         applicationName: String?,
         commandAndArgs: String,
         environment: String,
@@ -729,11 +991,10 @@ extension Configuration {
         }
         // On Windows, the PATH is required in order to locate dlls needed by
         // the process so we should also pass that to the child
-        let pathVariableName = Environment.pathVariableName
-        if env[pathVariableName] == nil,
-            let parentPath = Environment.currentEnvironmentValues()[pathVariableName]
+        if env.pathValue() == nil,
+           let parentPath = Environment.currentEnvironmentValues().pathValue()
         {
-            env[pathVariableName] = parentPath
+            env["Path"] = parentPath
         }
         // The environment string must be terminated by a double
         // null-terminator.  Otherwise, CreateProcess will fail with
@@ -747,20 +1008,13 @@ extension Configuration {
         let (
             applicationName,
             commandAndArgs
-        ) = try self.generateWindowsCommandAndAgruments()
-        // Validate workingDir
-        if let workingDirectory = self.workingDirectory?.string {
-            guard Self.pathAccessible(workingDirectory) else {
-                throw SubprocessError(
-                    code: .init(
-                        .failedToChangeWorkingDirectory(workingDirectory)
-                    ),
-                    underlyingError: nil
-                )
-            }
-        }
+        ) = try self.generateWindowsCommandAndArguments(
+            withPossibleExecutablePath: executablePath
+        )
+        // Omit applicationName (and therefore rely on commandAndArgs
+        // for executable path) if we don't need to override arg0
         return (
-            applicationName: applicationName,
+            applicationName: self.arguments.executablePathOverride == nil ? nil : applicationName,
             commandAndArgs: commandAndArgs,
             environment: environmentString,
             intendedWorkingDir: self.workingDirectory?.string
@@ -768,7 +1022,7 @@ extension Configuration {
     }
 
     private func generateCreateProcessFlag() -> DWORD {
-        var flags = CREATE_UNICODE_ENVIRONMENT
+        var flags = CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT
         switch self.platformOptions.consoleBehavior.storage {
         case .createNew:
             flags |= CREATE_NEW_CONSOLE
@@ -783,26 +1037,33 @@ extension Configuration {
         return DWORD(flags)
     }
 
-    private func generateStartupInfo(
-        withInputRead inputReadFileDescriptor: borrowing IODescriptor?,
+    private func withStartupInfoEx<Result>(
+        inputRead inputReadFileDescriptor: borrowing IODescriptor?,
         inputWrite inputWriteFileDescriptor: borrowing IODescriptor?,
         outputRead outputReadFileDescriptor: borrowing IODescriptor?,
         outputWrite outputWriteFileDescriptor: borrowing IODescriptor?,
         errorRead errorReadFileDescriptor: borrowing IODescriptor?,
         errorWrite errorWriteFileDescriptor: borrowing IODescriptor?,
-    ) throws -> STARTUPINFOW {
-        var info: STARTUPINFOW = STARTUPINFOW()
-        info.cb = DWORD(MemoryLayout<STARTUPINFOW>.size)
-        info.dwFlags |= DWORD(STARTF_USESTDHANDLES)
+        _ body: (UnsafeMutablePointer<STARTUPINFOEXW>) throws -> Result
+    ) rethrows -> Result {
+        var info: STARTUPINFOEXW = STARTUPINFOEXW()
+        info.StartupInfo.cb = DWORD(MemoryLayout.size(ofValue: info))
+        info.StartupInfo.dwFlags |= DWORD(STARTF_USESTDHANDLES)
 
         if self.platformOptions.windowStyle.storage != .normal {
-            info.wShowWindow = self.platformOptions.windowStyle.platformStyle
-            info.dwFlags |= DWORD(STARTF_USESHOWWINDOW)
+            info.StartupInfo.wShowWindow = self.platformOptions.windowStyle.platformStyle
+            info.StartupInfo.dwFlags |= DWORD(STARTF_USESHOWWINDOW)
         }
         // Bind IOs
+        // Keep track of the explicitly list HANDLE to be inherited by the child process
+        // This emulate `posix_spawn`'s `POSIX_SPAWN_CLOEXEC_DEFAULT`
+        var inheritedHandles: Set<HANDLE> = Set()
         // Input
         if inputReadFileDescriptor != nil {
-            info.hStdInput = inputReadFileDescriptor!.platformDescriptor()
+            let inputHandle = inputReadFileDescriptor!.platformDescriptor()
+            SetHandleInformation(inputHandle, DWORD(HANDLE_FLAG_INHERIT), DWORD(HANDLE_FLAG_INHERIT))
+            info.StartupInfo.hStdInput = inputHandle
+            inheritedHandles.insert(inputHandle)
         }
         if inputWriteFileDescriptor != nil {
             // Set parent side to be uninheritable
@@ -814,7 +1075,10 @@ extension Configuration {
         }
         // Output
         if outputWriteFileDescriptor != nil {
-            info.hStdOutput = outputWriteFileDescriptor!.platformDescriptor()
+            let outputHandle = outputWriteFileDescriptor!.platformDescriptor()
+            SetHandleInformation(outputHandle, DWORD(HANDLE_FLAG_INHERIT), DWORD(HANDLE_FLAG_INHERIT))
+            info.StartupInfo.hStdOutput = outputHandle
+            inheritedHandles.insert(outputHandle)
         }
         if outputReadFileDescriptor != nil {
             // Set parent side to be uninheritable
@@ -826,7 +1090,10 @@ extension Configuration {
         }
         // Error
         if errorWriteFileDescriptor != nil {
-            info.hStdError = errorWriteFileDescriptor!.platformDescriptor()
+            let errorHandle = errorWriteFileDescriptor!.platformDescriptor()
+            SetHandleInformation(errorHandle, DWORD(HANDLE_FLAG_INHERIT), DWORD(HANDLE_FLAG_INHERIT))
+            info.StartupInfo.hStdError = errorHandle
+            inheritedHandles.insert(errorHandle)
         }
         if errorReadFileDescriptor != nil {
             // Set parent side to be uninheritable
@@ -836,33 +1103,63 @@ extension Configuration {
                 0
             )
         }
-        return info
+        // Initialize an attribute list of sufficient size for the specified number of
+        // attributes. Alignment is a problem because LPPROC_THREAD_ATTRIBUTE_LIST is
+        // an opaque pointer and we don't know the alignment of the underlying data.
+        // We *should* use the alignment of C's max_align_t, but it is defined using a
+        // C++ using statement on Windows and isn't imported into Swift. So, 16 it is.
+        let alignment = 16
+        var attributeListByteCount = SIZE_T(0)
+        _ = InitializeProcThreadAttributeList(nil, 1, 0, &attributeListByteCount)
+        return try withUnsafeTemporaryAllocation(byteCount: Int(attributeListByteCount), alignment: alignment) { attributeListPtr in
+            let attributeList = LPPROC_THREAD_ATTRIBUTE_LIST(attributeListPtr.baseAddress!)
+            guard InitializeProcThreadAttributeList(attributeList, 1, 0, &attributeListByteCount) else {
+                throw SubprocessError(
+                    code: .init(.spawnFailed),
+                    underlyingError: .init(rawValue: GetLastError())
+                )
+            }
+            defer {
+                DeleteProcThreadAttributeList(attributeList)
+            }
+
+            var handles = Array(inheritedHandles)
+            return try handles.withUnsafeMutableBufferPointer { inheritedHandlesPtr in
+                _ = UpdateProcThreadAttribute(
+                    attributeList,
+                    0,
+                    _subprocess_PROC_THREAD_ATTRIBUTE_HANDLE_LIST(),
+                    inheritedHandlesPtr.baseAddress!,
+                    SIZE_T(MemoryLayout<HANDLE>.stride * inheritedHandlesPtr.count),
+                    nil,
+                    nil
+                )
+
+                info.lpAttributeList = attributeList
+
+                return try body(&info)
+            }
+        }
     }
 
-    private func generateWindowsCommandAndAgruments() throws -> (
+    private func generateWindowsCommandAndArguments(
+        withPossibleExecutablePath executablePath: String
+    ) throws -> (
         applicationName: String?,
         commandAndArgs: String
     ) {
-        // CreateProcess accepts partial names
-        let executableNameOrPath: String
-        switch self.executable.storage {
-        case .path(let path):
-            executableNameOrPath = path.string
-        case .executable(let name):
-            // Technically CreateProcessW accepts just the name
-            // of the executable, therefore we don't need to
-            // actually resolve the path. However, to maintain
-            // the same behavior as other platforms, still check
-            // here to make sure the executable actually exists
-            do {
-                _ = try self.executable.resolveExecutablePath(
-                    withPathValue: self.environment.pathValue()
-                )
-            } catch {
-                throw error
-            }
-            executableNameOrPath = name
-        }
+        // CreateProcessW behavior:
+        // - lpApplicationName: The actual executable path to run (can be NULL)
+        // - lpCommandLine: The command line string passed to the process
+        //
+        // If both are specified:
+        // - Windows runs the exe from lpApplicationName
+        // - The new process receives lpCommandLine as-is via GetCommandLine()
+        // - argv[0] is parsed from lpCommandLine, NOT from lpApplicationName
+        //
+        // For Unix-style argv[0] override (where argv[0] differs from actual exe):
+        // Set lpApplicationName = "C:\\path\\to\\real.exe"
+        // Set lpCommandLine = "fake_name.exe arg1 arg2"
         var args = self.arguments.storage.map {
             guard case .string(let stringValue) = $0 else {
                 // We should never get here since the API
@@ -871,22 +1168,16 @@ extension Configuration {
             }
             return stringValue
         }
-        // The first parameter of CreateProcessW, `lpApplicationName`
-        // is optional. If it's nil, CreateProcessW uses argument[0]
-        // as the execuatble name.
-        // We should only set lpApplicationName if it's different from
-        // argument[0] (i.e. executablePathOverride)
-        var applicationName: String? = nil
+
         if case .string(let overrideName) = self.arguments.executablePathOverride {
             // Use the override as argument0 and set applicationName
             args.insert(overrideName, at: 0)
-            applicationName = executableNameOrPath
         } else {
             // Set argument[0] to be executableNameOrPath
-            args.insert(executableNameOrPath, at: 0)
+            args.insert(executablePath, at: 0)
         }
         return (
-            applicationName: applicationName,
+            applicationName: executablePath,
             commandAndArgs: self.quoteWindowsCommandLine(args)
         )
     }
@@ -1101,6 +1392,11 @@ extension String {
             }
         }
     }
+
+    internal func hasExtension() -> Bool {
+        let components = self.split(separator: ".")
+        return components.count > 1 && components.last?.count == 3
+    }
 }
 
 @inline(__always)
@@ -1139,5 +1435,47 @@ extension UInt8 {
         return (0x41...0x5a) ~= self || (0x61...0x7a) ~= self
     }
 }
+
+/// Calls a Win32 API function that fills a (potentially long path) null-terminated string buffer by continually attempting to allocate more memory up until the true max path is reached.
+/// This is especially useful for protecting against race conditions like with GetCurrentDirectoryW where the measured length may no longer be valid on subsequent calls.
+/// - parameter initialSize: Initial size of the buffer (including the null terminator) to allocate to hold the returned string.
+/// - parameter maxSize: Maximum size of the buffer (including the null terminator) to allocate to hold the returned string.
+/// - parameter body: Closure to call the Win32 API function to populate the provided buffer.
+///   Should return the number of UTF-16 code units (not including the null terminator) copied, 0 to indicate an error.
+///   If the buffer is not of sufficient size, should return a value greater than or equal to the size of the buffer.
+internal func fillNullTerminatedWideStringBuffer(
+    initialSize: DWORD,
+    maxSize: DWORD,
+    _ body: (UnsafeMutableBufferPointer<WCHAR>) throws -> DWORD
+) throws -> String {
+    var bufferCount = max(1, min(initialSize, maxSize))
+    while bufferCount <= maxSize {
+        if let result = try withUnsafeTemporaryAllocation(of: WCHAR.self, capacity: Int(bufferCount), { buffer in
+            let count = try body(buffer)
+            switch count {
+            case 0:
+                throw SubprocessError.UnderlyingError(rawValue: GetLastError())
+            case 1..<DWORD(buffer.count):
+                let result = String(decodingCString: buffer.baseAddress!, as: UTF16.self)
+                assert(result.utf16.count == count, "Parsed UTF-16 count \(result.utf16.count) != reported UTF-16 count \(count)")
+                return result
+            default:
+                bufferCount *= 2
+                return nil
+            }
+        }) {
+            return result
+        }
+    }
+    throw SubprocessError.UnderlyingError(rawValue: DWORD(ERROR_INSUFFICIENT_BUFFER))
+}
+
+// Windows environment key is case insensitive
+extension Dictionary where Key == String, Value == String {
+    internal func pathValue() -> String? {
+        return self["Path"] ?? self["PATH"] ?? self["path"]
+    }
+}
+
 
 #endif  // canImport(WinSDK)

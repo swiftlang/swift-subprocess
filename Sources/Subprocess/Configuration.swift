@@ -79,38 +79,42 @@ public struct Configuration: Sendable {
 
         let execution = _spawnResult.execution
 
-        let result: Swift.Result<Result, Error>
-        do {
-            result = try await .success(withAsyncTaskCleanupHandler {
-                let inputIO = _spawnResult.inputWriteEnd()
-                let outputIO = _spawnResult.outputReadEnd()
-                let errorIO = _spawnResult.errorReadEnd()
+        return try await withAsyncTaskCleanupHandler {
+            let inputIO = _spawnResult.inputWriteEnd()
+            let outputIO = _spawnResult.outputReadEnd()
+            let errorIO = _spawnResult.errorReadEnd()
 
+            let result: Swift.Result<Result, Error>
+            do {
                 // Body runs in the same isolation
-                return try await body(_spawnResult.execution, inputIO, outputIO, errorIO)
-            } onCleanup: {
-                // Attempt to terminate the child process
-                await execution.runTeardownSequence(
-                    self.platformOptions.teardownSequence
-                )
-            })
-        } catch {
-            result = .failure(error)
+                let bodyResult = try await body(_spawnResult.execution, inputIO, outputIO, errorIO)
+                result = .success(bodyResult)
+            } catch {
+                result = .failure(error)
+            }
+
+            // Ensure that we begin monitoring process termination after `body` runs
+            // and regardless of whether `body` throws, so that the pid gets reaped
+            // even if `body` throws, and we are not leaving zombie processes in the
+            // process table which will cause the process termination monitoring thread
+            // to effectively hang due to the pid never being awaited
+            let terminationStatus = try await monitorProcessTermination(
+                for: execution.processIdentifier
+            )
+
+            // Close process file descriptor now we finished monitoring
+            execution.processIdentifier.close()
+
+            return ExecutionResult(
+                terminationStatus: terminationStatus,
+                value: try result.get()
+            )
+        } onCleanup: {
+            // Attempt to terminate the child process
+            await execution.runTeardownSequence(
+                self.platformOptions.teardownSequence
+            )
         }
-
-        // Ensure that we begin monitoring process termination after `body` runs
-        // and regardless of whether `body` throws, so that the pid gets reaped
-        // even if `body` throws, and we are not leaving zombie processes in the
-        // process table which will cause the process termination monitoring thread
-        // to effectively hang due to the pid never being awaited
-        let terminationStatus = try await Subprocess.monitorProcessTermination(
-            for: execution.processIdentifier
-        )
-
-        // Close process file descriptor now we finished monitoring
-        execution.processIdentifier.close()
-
-        return try ExecutionResult(terminationStatus: terminationStatus, value: result.get())
     }
 }
 
@@ -246,40 +250,6 @@ extension Executable: CustomStringConvertible, CustomDebugStringConvertible {
     }
 }
 
-extension Executable {
-    internal func possibleExecutablePaths(
-        withPathValue pathValue: String?
-    ) -> Set<String> {
-        switch self.storage {
-        case .executable(let executableName):
-            #if os(Windows)
-            // Windows CreateProcessW accepts executable name directly
-            return Set([executableName])
-            #else
-            var results: Set<String> = []
-            // executableName could be a full path
-            results.insert(executableName)
-            // Get $PATH from environment
-            let searchPaths: Set<String>
-            if let pathValue = pathValue {
-                let localSearchPaths = pathValue.split(separator: ":").map { String($0) }
-                searchPaths = Set(localSearchPaths).union(Self.defaultSearchPaths)
-            } else {
-                searchPaths = Self.defaultSearchPaths
-            }
-            for path in searchPaths {
-                results.insert(
-                    FilePath(path).appending(executableName).string
-                )
-            }
-            return results
-            #endif
-        case .path(let executablePath):
-            return Set([executablePath.string])
-        }
-    }
-}
-
 // MARK: - Arguments
 
 /// A collection of arguments to pass to the subprocess.
@@ -300,7 +270,6 @@ public struct Arguments: Sendable, ExpressibleByArrayLiteral, Hashable {
         self.executablePathOverride = nil
     }
 
-    #if !os(Windows)  // Windows does NOT support arg0 override
     /// Create an `Argument` object using the given values, but
     /// override the first Argument value to `executablePathOverride`.
     /// If `executablePathOverride` is nil,
@@ -317,7 +286,7 @@ public struct Arguments: Sendable, ExpressibleByArrayLiteral, Hashable {
             self.executablePathOverride = nil
         }
     }
-
+    #if !os(Windows) // Windows does not support non-unicode arguments
     /// Create an `Argument` object using the given values, but
     /// override the first Argument value to `executablePathOverride`.
     /// If `executablePathOverride` is nil,
@@ -869,7 +838,7 @@ internal struct CreatedPipe: ~Copyable {
                     DWORD(readBufferSize),
                     DWORD(readBufferSize),
                     0,
-                    &saAttributes
+                    nil
                 )
             }
             guard let parentEnd, parentEnd != INVALID_HANDLE_VALUE else {
@@ -1029,3 +998,39 @@ internal func withAsyncTaskCleanupHandler<Result>(
         }
     }
 }
+
+internal struct _OrderedSet<Element: Hashable & Sendable>: Hashable, Sendable {
+    private var elements: [Element]
+    private var hashValueSet: Set<Int>
+
+    internal init() {
+        self.elements = []
+        self.hashValueSet = Set()
+    }
+
+    internal init(_ arrayValue: [Element]) {
+        self.elements = []
+        self.hashValueSet = Set()
+
+        for element in arrayValue {
+            self.insert(element)
+        }
+    }
+
+    mutating func insert(_ element: Element) {
+        guard !self.hashValueSet.contains(element.hashValue) else {
+            return
+        }
+        self.elements.append(element)
+        self.hashValueSet.insert(element.hashValue)
+    }
+}
+
+extension _OrderedSet : Sequence {
+    typealias Iterator = Array<Element>.Iterator
+
+    internal func makeIterator() -> Iterator {
+        return self.elements.makeIterator()
+    }
+}
+
