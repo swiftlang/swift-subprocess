@@ -662,7 +662,7 @@ int _subprocess_fork_exec(
         #endif
         if (rc != 0) {
             // close_range failed (or doesn't exist), fall back to close()
-            for (int fd = STDERR_FILENO + 1; fd < _highest_possibly_open_fd(); fd++) {
+            for (int fd = STDERR_FILENO + 1; fd <= _highest_possibly_open_fd(); fd++) {
                 // We must NOT close pipefd[1] for writing errors
                 if (fd != pipefd[1]) {
                     close(fd);
