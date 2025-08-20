@@ -77,11 +77,23 @@ extension Int32 {
 #endif
 
 extension Configuration {
+    // @unchecked Sendable because we need to capture UnsafePointers
+    // to send to another thread. While UnsafePointers are not
+    // Sendable, we are not mutating them -- we only need these type
+    // for C interface.
+    internal struct SpawnContext: @unchecked Sendable {
+        let argv: [UnsafeMutablePointer<CChar>?]
+        let env: [UnsafeMutablePointer<CChar>?]
+        let uidPtr: UnsafeMutablePointer<uid_t>?
+        let gidPtr: UnsafeMutablePointer<gid_t>?
+        let processGroupIDPtr: UnsafeMutablePointer<gid_t>?
+    }
+
     internal func spawn(
         withInput inputPipe: consuming CreatedPipe,
         outputPipe: consuming CreatedPipe,
         errorPipe: consuming CreatedPipe
-    ) throws -> SpawnResult {
+    ) async throws -> SpawnResult {
         // Ensure the waiter thread is running.
         _setupMonitorSignalHandler()
 
@@ -94,7 +106,7 @@ extension Configuration {
         var outputPipeBox: CreatedPipe? = consume outputPipe
         var errorPipeBox: CreatedPipe? = consume errorPipe
 
-        return try self.preSpawn { args throws -> SpawnResult in
+        return try await self.preSpawn { args throws -> SpawnResult in
             let (env, uidPtr, gidPtr, supplementaryGroups) = args
 
             var _inputPipe = inputPipeBox.take()!
@@ -132,27 +144,34 @@ extension Configuration {
                 ]
 
                 // Spawn
-                var pid: pid_t = 0
-                var processDescriptor: PlatformFileDescriptor = -1
-                let spawnError: CInt = possibleExecutablePath.withCString { exePath in
-                    return (self.workingDirectory?.string).withOptionalCString { workingDir in
-                        return supplementaryGroups.withOptionalUnsafeBufferPointer { sgroups in
-                            return fileDescriptors.withUnsafeBufferPointer { fds in
-                                return _subprocess_fork_exec(
-                                    &pid,
-                                    &processDescriptor,
-                                    exePath,
-                                    workingDir,
-                                    fds.baseAddress!,
-                                    argv,
-                                    env,
-                                    uidPtr,
-                                    gidPtr,
-                                    processGroupIDPtr,
-                                    CInt(supplementaryGroups?.count ?? 0),
-                                    sgroups?.baseAddress,
-                                    self.platformOptions.createSession ? 1 : 0
-                                )
+                let spawnContext = SpawnContext(
+                    argv: argv, env: env, uidPtr: uidPtr, gidPtr: gidPtr, processGroupIDPtr: processGroupIDPtr
+                )
+                let (pid, processDescriptor, spawnError) = try await runOnBackgroundThread {
+                    return possibleExecutablePath.withCString { exePath in
+                        return (self.workingDirectory?.string).withOptionalCString { workingDir in
+                            return supplementaryGroups.withOptionalUnsafeBufferPointer { sgroups in
+                                return fileDescriptors.withUnsafeBufferPointer { fds in
+                                    var pid: pid_t = 0
+                                    var processDescriptor: PlatformFileDescriptor = -1
+
+                                    let rc = _subprocess_fork_exec(
+                                        &pid,
+                                        &processDescriptor,
+                                        exePath,
+                                        workingDir,
+                                        fds.baseAddress!,
+                                        spawnContext.argv,
+                                        spawnContext.env,
+                                        spawnContext.uidPtr,
+                                        spawnContext.gidPtr,
+                                        spawnContext.processGroupIDPtr,
+                                        CInt(supplementaryGroups?.count ?? 0),
+                                        sgroups?.baseAddress,
+                                        self.platformOptions.createSession ? 1 : 0
+                                    )
+                                    return (pid, processDescriptor, rc)
+                                }
                             }
                         }
                     }
@@ -822,45 +841,6 @@ internal func _isWaitprocessDescriptorSupported() -> Bool {
     ///     recognize the `P_PIDFD` type
     waitid(idtype_t(UInt32(P_PIDFD)), id_t(selfPidfd), &siginfo, WEXITED | WNOWAIT)
     return errno == ECHILD
-}
-
-internal func pthread_create(_ body: @Sendable @escaping () -> ()) throws(SubprocessError.UnderlyingError) -> pthread_t {
-    final class Context {
-        let body: @Sendable () -> ()
-        init(body: @Sendable @escaping () -> Void) {
-            self.body = body
-        }
-    }
-    #if canImport(Glibc) || canImport(Musl)
-    func proc(_ context: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
-        (Unmanaged<AnyObject>.fromOpaque(context!).takeRetainedValue() as! Context).body()
-        return nil
-    }
-    #elseif canImport(Bionic)
-    func proc(_ context: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer {
-        (Unmanaged<AnyObject>.fromOpaque(context).takeRetainedValue() as! Context).body()
-        return context
-    }
-    #endif
-    #if canImport(Glibc) || canImport(Bionic)
-    var thread = pthread_t()
-    #else
-    var thread: pthread_t?
-    #endif
-    let rc = pthread_create(
-        &thread,
-        nil,
-        proc,
-        Unmanaged.passRetained(Context(body: body)).toOpaque()
-    )
-    if rc != 0 {
-        throw SubprocessError.UnderlyingError(rawValue: rc)
-    }
-    #if canImport(Glibc) || canImport(Bionic)
-    return thread
-    #else
-    return thread!
-    #endif
 }
 
 #endif  // canImport(Glibc) || canImport(Android) || canImport(Musl)

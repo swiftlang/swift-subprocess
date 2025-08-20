@@ -14,6 +14,7 @@ add_library(Subprocess
   Buffer.swift
   Error.swift
   Teardown.swift
+  Thread.swift
   Result.swift
   IO/Output.swift
   IO/Input.swift

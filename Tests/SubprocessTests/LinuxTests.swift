@@ -40,7 +40,7 @@ struct SubprocessLinuxTests {
                 do {
                     waitThread = try pthread_create {
                         var suspendedStatus: Int32 = 0
-                        let rc = waitpid(pid, &suspendedStatus, targetSignal)
+                        waitpid(pid, &suspendedStatus, targetSignal)
                         handler(suspendedStatus)
                         continuation.resume()
                     }
