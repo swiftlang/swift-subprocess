@@ -350,8 +350,8 @@ extension Configuration {
     )
 
     internal func preSpawn<Result: ~Copyable>(
-        _ work: (PreSpawnArgs) throws -> Result
-    ) throws -> Result {
+        _ work: (PreSpawnArgs) async throws -> Result
+    ) async throws -> Result {
         // Prepare environment
         let env = self.environment.createEnv()
         defer {
@@ -378,7 +378,7 @@ extension Configuration {
         if let groupsValue = self.platformOptions.supplementaryGroups {
             supplementaryGroups = groupsValue
         }
-        return try work(
+        return try await work(
             (
                 env: env,
                 uidPtr: uidPtr,

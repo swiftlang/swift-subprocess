@@ -84,7 +84,7 @@ public struct Configuration: Sendable {
         isolation: isolated (any Actor)? = #isolation,
         _ body: ((Execution, consuming IOChannel?, consuming IOChannel?, consuming IOChannel?) async throws -> Result)
     ) async throws -> ExecutionResult<Result> {
-        let spawnResults = try self.spawn(
+        let spawnResults = try await self.spawn(
             withInput: input,
             outputPipe: output,
             errorPipe: error
