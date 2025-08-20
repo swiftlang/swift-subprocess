@@ -423,17 +423,22 @@ static int _highest_possibly_open_fd_dir_linux(const char *fd_dir) {
 
     // Buffer for directory entries - allocated on stack, no heap allocation
     char buffer[4096] = {0};
-    long bytes_read = -1;
 
-    while ((bytes_read = _getdents64(dir_fd, (struct linux_dirent64 *)buffer, sizeof(buffer))) > 0) {
+    while (1) {
+        long bytes_read = _getdents64(dir_fd, (struct linux_dirent64 *)buffer, sizeof(buffer));
         if (bytes_read < 0) {
             if (errno == EINTR) {
                 continue;
             } else {
                 // `errno` set by _getdents64.
                 highest_fd_so_far = -1;
-                goto error;
+                close(dir_fd);
+                return highest_fd_so_far;
             }
+        }
+        if (bytes_read == 0) {
+            close(dir_fd);
+            return highest_fd_so_far;
         }
         long offset = 0;
         while (offset < bytes_read) {
@@ -451,7 +456,6 @@ static int _highest_possibly_open_fd_dir_linux(const char *fd_dir) {
         }
     }
 
-error:
     close(dir_fd);
     return highest_fd_so_far;
 }
@@ -659,6 +663,13 @@ int _subprocess_fork_exec(
         // We must NOT close pipefd[1] for writing errors
         rc = close_range(STDERR_FILENO + 1, pipefd[1] - 1, 0);
         rc |= close_range(pipefd[1] + 1, ~0U, 0);
+        #elif defined(__OpenBSD__)
+        // OpenBSD Supports closefrom, but not close_range
+        // See https://man.openbsd.org/closefrom
+        for (int fd = STDERR_FILENO + 1; fd <= pipefd[1] - 1; fd++) {
+            close(fd);
+        }
+        rc = closefrom(pipefd[1] + 1);
         #endif
         if (rc != 0) {
             // close_range failed (or doesn't exist), fall back to close()
