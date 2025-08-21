@@ -389,7 +389,7 @@ internal func monitorProcessTermination(
                         if siginfo.si_pid == 0 && siginfo.si_signo == 0 {
                             // Save this continuation to be called by signal hander
                             var newState = storage
-                            newState.continuations[processIdentifier.processDescriptor] = continuation
+                            newState.continuations[processIdentifier.value] = continuation
                             state = .started(newState)
                             return nil
                         }
@@ -472,7 +472,7 @@ internal extension siginfo_t {
 // Okay to be unlocked global mutable because this value is only set once like dispatch_once
 private nonisolated(unsafe) var _signalPipe: (readEnd: CInt, writeEnd: CInt) = (readEnd: -1, writeEnd: -1)
 // Okay to be unlocked global mutable because this value is only set once like dispatch_once
-private nonisolated(unsafe) var _waitprocessDescriptorSupported = false
+private nonisolated(unsafe) var _waitProcessDescriptorSupported = false
 private let _processMonitorState: Mutex<ProcessMonitorState> = .init(.notStarted)
 
 private func shutdown() {
@@ -568,8 +568,8 @@ private func monitorThreadFunc(context: MonitorThreadContext) {
             }
 
             // P_PIDFD requires Linux Kernel 5.4 and above
-            if _waitprocessDescriptorSupported {
-                _blockAndWaitForprocessDescriptor(targetFileDescriptor, context: context)
+            if _waitProcessDescriptorSupported {
+                _blockAndWaitForProcessDescriptor(targetFileDescriptor, context: context)
             } else {
                 _reapAllKnownChildProcesses(targetFileDescriptor, context: context)
             }
@@ -658,7 +658,7 @@ private let setup: () = {
         }
     } else {
         // Mark waitid(P_PIDFD) as supported
-        _waitprocessDescriptorSupported = true
+        _waitProcessDescriptorSupported = true
     }
     let monitorThreadContext = MonitorThreadContext(
         epollFileDescriptor: epollFileDescriptor,
@@ -705,7 +705,7 @@ internal func _setupMonitorSignalHandler() {
     setup
 }
 
-private func _blockAndWaitForprocessDescriptor(_ pidfd: CInt, context: MonitorThreadContext) {
+private func _blockAndWaitForProcessDescriptor(_ pidfd: CInt, context: MonitorThreadContext) {
     var terminationStatus: Result<TerminationStatus, SubprocessError>
 
     var siginfo = siginfo_t()

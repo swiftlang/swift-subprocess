@@ -23,6 +23,7 @@ import Musl
 import FoundationEssentials
 
 import Testing
+import _SubprocessCShims
 @testable import Subprocess
 
 // MARK: PlatformOption Tests
@@ -43,7 +44,6 @@ struct SubprocessLinuxTests {
                 //   CAP_SETGID capability in its user namespace), and gid does
                 //   not match the real group ID or saved set-group-ID of the
                 //   calling process.
-                perror("setgid")
                 abort()
             }
         }
@@ -64,55 +64,63 @@ struct SubprocessLinuxTests {
     }
 
     @Test func testSuspendResumeProcess() async throws {
-        let result = try await Subprocess.run(
+        func blockAndWaitForStatus(
+            pid: pid_t,
+            waitThread: inout pthread_t?,
+            targetSignal: Int32,
+            _ handler: @Sendable @escaping (Int32) -> Void
+        ) async throws {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                do {
+                    waitThread = try pthread_create {
+                        var suspendedStatus: Int32 = 0
+                        let rc = waitpid(pid, &suspendedStatus, targetSignal)
+                        handler(suspendedStatus)
+                        continuation.resume()
+                    }
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+
+        _ = try await Subprocess.run(
             // This will intentionally hang
             .path("/usr/bin/sleep"),
             arguments: ["infinity"],
-            output: .discarded,
             error: .discarded
-        ) { subprocess -> Error? in
-            do {
-                try await tryFinally {
-                    // First suspend the process
-                    try subprocess.send(signal: .suspend)
-                    try await waitForCondition(timeout: .seconds(30), comment: "Process did not transition from running to stopped state after $$") {
-                        let state = try subprocess.state()
-                        switch state {
-                        case .running:
-                            return false
-                        case .zombie:
-                            throw ProcessStateError(expectedState: .stopped, actualState: state)
-                        case .stopped, .sleeping, .uninterruptibleWait:
-                            return true
-                        }
-                    }
-                    // Now resume the process
-                    try subprocess.send(signal: .resume)
-                    try await waitForCondition(timeout: .seconds(30), comment: "Process did not transition from stopped to running state after $$") {
-                        let state = try subprocess.state()
-                        switch state {
-                        case .running, .sleeping, .uninterruptibleWait:
-                            return true
-                        case .zombie:
-                            throw ProcessStateError(expectedState: .running, actualState: state)
-                        case .stopped:
-                            return false
-                        }
-                    }
-                } finally: { error in
-                    // Now kill the process
-                    try subprocess.send(signal: error != nil ? .kill : .terminate)
-                }
-                return nil
-            } catch {
-                return error
+        ) { subprocess, standardOutput in
+            // First suspend the process
+            try subprocess.send(signal: .suspend)
+            var thread1: pthread_t? = nil
+            try await blockAndWaitForStatus(
+                pid: subprocess.processIdentifier.value,
+                waitThread: &thread1,
+                targetSignal: WSTOPPED
+            ) { status in
+                #expect(_was_process_suspended(status) > 0)
             }
-        }
-        if let error = result.value {
-            #expect(result.terminationStatus == .unhandledException(SIGKILL))
-            throw error
-        } else {
-            #expect(result.terminationStatus == .unhandledException(SIGTERM))
+            // Now resume the process
+            try subprocess.send(signal: .resume)
+            var thread2: pthread_t? = nil
+            try await blockAndWaitForStatus(
+                pid: subprocess.processIdentifier.value,
+                waitThread: &thread2,
+                targetSignal: WCONTINUED
+            ) { status in
+                #expect(_was_process_suspended(status) == 0)
+            }
+
+            // Now kill the process
+            try subprocess.send(signal: .terminate)
+            for try await _ in standardOutput {}
+
+            if let thread1 {
+                pthread_join(thread1, nil)
+            }
+            if let thread2 {
+                pthread_join(thread2, nil)
+            }
         }
     }
 
@@ -132,81 +140,4 @@ struct SubprocessLinuxTests {
         }
     }
 }
-
-fileprivate enum ProcessState: String {
-    case running = "R"
-    case sleeping = "S"
-    case uninterruptibleWait = "D"
-    case zombie = "Z"
-    case stopped = "T"
-}
-
-fileprivate struct ProcessStateError: Error, CustomStringConvertible {
-    let expectedState: ProcessState
-    let actualState: ProcessState
-
-    var description: String {
-        "Process did not transition to \(expectedState) state, but was actually \(actualState)"
-    }
-}
-
-extension Execution {
-    fileprivate func state() throws -> ProcessState {
-        let processStatusFile = "/proc/\(processIdentifier.value)/status"
-        let processStatusData = try Data(
-            contentsOf: URL(filePath: processStatusFile)
-        )
-        let stateMatches = try String(decoding: processStatusData, as: UTF8.self)
-            .split(separator: "\n")
-            .compactMap({ line in
-                return try #/^State:\s+(?<status>[A-Z])\s+.*/#.wholeMatch(in: line)
-            })
-        guard let status = stateMatches.first, stateMatches.count == 1, let processState = ProcessState(rawValue: String(status.output.status)) else {
-            struct ProcStatusParseError: Error, CustomStringConvertible {
-                let filePath: String
-                let contents: Data
-                var description: String {
-                    "Could not parse \(filePath):\n\(String(decoding: contents, as: UTF8.self))"
-                }
-            }
-            throw ProcStatusParseError(filePath: processStatusFile, contents: processStatusData)
-        }
-        return processState
-    }
-}
-
-func waitForCondition(timeout: Duration, comment: Comment, _ evaluateCondition: () throws -> Bool) async throws {
-    var currentCondition = try evaluateCondition()
-    let deadline = ContinuousClock.now + timeout
-    while ContinuousClock.now < deadline {
-        if currentCondition {
-            return
-        }
-        try await Task.sleep(for: .milliseconds(10))
-        currentCondition = try evaluateCondition()
-    }
-    struct TimeoutError: Error, CustomStringConvertible {
-        let timeout: Duration
-        let comment: Comment
-        var description: String {
-            comment.description.replacingOccurrences(of: "$$", with: "\(timeout)")
-        }
-    }
-    throw TimeoutError(timeout: timeout, comment: comment)
-}
-
-func tryFinally(_ work: () async throws -> (), finally: (Error?) async throws -> ()) async throws {
-    let error: Error?
-    do {
-        try await work()
-        error = nil
-    } catch let e {
-        error = e
-    }
-    try await finally(error)
-    if let error {
-        throw error
-    }
-}
-
 #endif  // canImport(Glibc) || canImport(Bionic) || canImport(Musl)
