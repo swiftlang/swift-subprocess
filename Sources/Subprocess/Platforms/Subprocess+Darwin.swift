@@ -433,7 +433,7 @@ extension Configuration {
                 }
                 // Spawn error
                 if spawnError != 0 {
-                    if spawnError == ENOENT {
+                    if spawnError == ENOENT || spawnError == EACCES {
                         // Move on to another possible path
                         continue
                     }
