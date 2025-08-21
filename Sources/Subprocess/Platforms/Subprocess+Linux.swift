@@ -151,8 +151,7 @@ extension Configuration {
                                     processGroupIDPtr,
                                     CInt(supplementaryGroups?.count ?? 0),
                                     sgroups?.baseAddress,
-                                    self.platformOptions.createSession ? 1 : 0,
-                                    self.platformOptions.preExecProcessAction
+                                    self.platformOptions.createSession ? 1 : 0
                                 )
                             }
                         }
@@ -284,20 +283,6 @@ public struct PlatformOptions: Sendable {
     /// the child process terminates.
     /// Always ends in sending a `.kill` signal at the end.
     public var teardownSequence: [TeardownStep] = []
-    /// A closure to configure platform-specific
-    /// spawning constructs. This closure enables direct
-    /// configuration or override of underlying platform-specific
-    /// spawn settings that `Subprocess` utilizes internally,
-    /// in cases where Subprocess does not provide higher-level
-    /// APIs for such modifications.
-    ///
-    /// On Linux, Subprocess uses `fork/exec` as the
-    /// underlying spawning mechanism. This closure is called
-    /// after `fork()` but before `exec()`. You may use it to
-    /// call any necessary process setup functions.
-    ///
-    /// - warning: You may ONLY call [async-signal-safe functions](https://pubs.opengroup.org/onlinepubs/9799919799/functions/V2_chap02.html) within this closure (note _"The following table defines a set of functions and function-like macros that shall be async-signal-safe."_).
-    public var preExecProcessAction: (@convention(c) @Sendable () -> Void)? = nil
 
     public init() {}
 }
@@ -311,8 +296,7 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
             \(indent)    groupID: \(String(describing: groupID)),
             \(indent)    supplementaryGroups: \(String(describing: supplementaryGroups)),
             \(indent)    processGroupID: \(String(describing: processGroupID)),
-            \(indent)    createSession: \(createSession),
-            \(indent)    preExecProcessAction: \(self.preExecProcessAction == nil ? "not set" : "set")
+            \(indent)    createSession: \(createSession)
             \(indent))
             """
     }

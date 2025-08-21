@@ -29,40 +29,6 @@ import _SubprocessCShims
 // MARK: PlatformOption Tests
 @Suite(.serialized)
 struct SubprocessLinuxTests {
-    @Test(
-        .enabled(
-            if: getgid() == 0,
-            "This test requires root privileges"
-        )
-    )
-    func testSubprocessPlatformOptionsPreExecProcessAction() async throws {
-        var platformOptions = PlatformOptions()
-        platformOptions.preExecProcessAction = {
-            guard setgid(4321) == 0 else {
-                // Returns EPERM when:
-                //   The calling process is not privileged (does not have the
-                //   CAP_SETGID capability in its user namespace), and gid does
-                //   not match the real group ID or saved set-group-ID of the
-                //   calling process.
-                abort()
-            }
-        }
-        let idResult = try await Subprocess.run(
-            .path("/usr/bin/id"),
-            arguments: ["-g"],
-            platformOptions: platformOptions,
-            output: .string(limit: 32),
-            error: .string(limit: 32)
-        )
-        let error = try #require(idResult.standardError)
-        try #require(error == "")
-        #expect(idResult.terminationStatus.isSuccess)
-        let id = try #require(idResult.standardOutput)
-        #expect(
-            id.trimmingCharacters(in: .whitespacesAndNewlines) == "\(4321)"
-        )
-    }
-
     @Test func testSuspendResumeProcess() async throws {
         func blockAndWaitForStatus(
             pid: pid_t,
