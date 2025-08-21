@@ -487,6 +487,7 @@ internal func assertNewSessionCreated(
 
 // MARK: - Performance Tests
 extension SubprocessUnixTests {
+    #if SubprocessFoundation
     @Test(.requiresBash) func testConcurrentRun() async throws {
         // Launch as many processes as we can
         // Figure out the max open file limit
@@ -540,6 +541,7 @@ extension SubprocessUnixTests {
             try await group.waitForAll()
         }
     }
+    #endif
 }
 
 #endif  // canImport(Darwin) || canImport(Glibc)
