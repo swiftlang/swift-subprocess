@@ -120,5 +120,45 @@ extension DispatchData.Region {
         }
     }
 }
-#endif
+#if !SubprocessFoundation
+/// `DispatchData.Region` is defined in Foundation, but we can't depend on Foundation when the SubprocessFoundation trait is disabled.
+extension DispatchData {
+    typealias Region = _ContiguousBufferView
 
+    var regions: [Region] {
+        contiguousBufferViews
+    }
+
+    internal struct _ContiguousBufferView: @unchecked Sendable, RandomAccessCollection {
+        typealias Element = UInt8
+
+        internal let bytes: UnsafeBufferPointer<UInt8>
+
+        internal var startIndex: Int { self.bytes.startIndex }
+        internal var endIndex: Int { self.bytes.endIndex }
+
+        internal init(bytes: UnsafeBufferPointer<UInt8>) {
+            self.bytes = bytes
+        }
+
+        internal func withUnsafeBytes<ResultType>(_ body: (UnsafeRawBufferPointer) throws -> ResultType) rethrows -> ResultType {
+            return try body(UnsafeRawBufferPointer(self.bytes))
+        }
+
+        subscript(position: Int) -> UInt8 {
+            _read {
+                yield self.bytes[position]
+            }
+        }
+    }
+
+    internal var contiguousBufferViews: [_ContiguousBufferView] {
+        var slices = [_ContiguousBufferView]()
+        enumerateBytes { (bytes, index, stop) in
+            slices.append(_ContiguousBufferView(bytes: bytes))
+        }
+        return slices
+    }
+}
+#endif
+#endif

@@ -559,6 +559,7 @@ extension SubprocessIntegrationTests {
         )
     }
 
+    #if SubprocessFoundation
     @Test func testFileDescriptorInput() async throws {
         #if os(Windows)
         let setup = TestSetup(
@@ -592,6 +593,7 @@ extension SubprocessIntegrationTests {
         // Make sure we read all bytes
         #expect(cat.standardOutput == expected)
     }
+    #endif
 
     #if SubprocessFoundation
     @Test func testDataInput() async throws {
@@ -658,6 +660,7 @@ extension SubprocessIntegrationTests {
     }
     #endif
 
+    #if SubprocessFoundation
     @Test func testAsyncSequenceInput() async throws {
         #if os(Windows)
         let setup = TestSetup(
@@ -700,6 +703,7 @@ extension SubprocessIntegrationTests {
         #expect(catResult.terminationStatus.isSuccess)
         #expect(catResult.standardOutput == expected)
     }
+    #endif
 
     @Test func testStandardInputWriterInput() async throws {
         #if os(Windows)
@@ -810,6 +814,7 @@ extension SubprocessIntegrationTests {
         #expect(echoResult.terminationStatus.isSuccess)
     }
 
+    #if SubprocessFoundation
     @Test func testStringOutput() async throws {
         #if os(Windows)
         let setup = TestSetup(
@@ -845,6 +850,7 @@ extension SubprocessIntegrationTests {
             ).trimmingNewLineAndQuotes()
         )
     }
+    #endif
 
     @Test func testStringOutputExceedsLimit() async throws {
         #if os(Windows)
@@ -878,6 +884,7 @@ extension SubprocessIntegrationTests {
         }
     }
 
+    #if SubprocessFoundation
     @Test func testBytesOutput() async throws {
         #if os(Windows)
         let setup = TestSetup(
@@ -907,6 +914,7 @@ extension SubprocessIntegrationTests {
             catResult.standardOutput == Array(expected)
         )
     }
+    #endif
 
     @Test func testBytesOutputExceedsLimit() async throws {
         #if os(Windows)
@@ -1089,6 +1097,7 @@ extension SubprocessIntegrationTests {
     }
     #endif
 
+    #if SubprocessFoundation
     @Test func testStringErrorOutput() async throws {
         #if os(Windows)
         let setup = TestSetup(
@@ -1124,6 +1133,7 @@ extension SubprocessIntegrationTests {
             ).trimmingNewLineAndQuotes()
         )
     }
+    #endif
 
     @Test func testStringErrorOutputExceedsLimit() async throws {
         #if os(Windows)
@@ -1156,6 +1166,7 @@ extension SubprocessIntegrationTests {
         }
     }
 
+    #if SubprocessFoundation
     @Test func testBytesErrorOutput() async throws {
         #if os(Windows)
         let setup = TestSetup(
@@ -1185,6 +1196,7 @@ extension SubprocessIntegrationTests {
             catResult.standardError == Array(expected)
         )
     }
+    #endif
 
     @Test func testBytesErrorOutputExceedsLimit() async throws {
         #if os(Windows)
@@ -1757,6 +1769,7 @@ extension SubprocessIntegrationTests {
         try FileManager.default.removeItem(at: testFilePath)
     }
 
+    #if SubprocessFoundation
     @Test func testCaptureLongStandardOutputAndError() async throws {
         let string = String(repeating: "X", count: 100_000)
         #if os(Windows)
@@ -1791,6 +1804,7 @@ extension SubprocessIntegrationTests {
             try await group.waitForAll()
         }
     }
+    #endif
 
     @Test func stressTestCancelProcessVeryEarlyOn() async throws {
 
