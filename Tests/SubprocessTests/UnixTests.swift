@@ -381,37 +381,36 @@ extension SubprocessUnixTests {
 
     @Test(.requiresBash) func testSubprocessDoesNotInheritRandomFileDescriptors() async throws {
         let pipe = try FileDescriptor.ssp_pipe()
-        defer {
-            try? pipe.readEnd.close()
-            try? pipe.writeEnd.close()
+        try await pipe.readEnd.closeAfter {
+            let result = try await pipe.writeEnd.closeAfter {
+                // Spawn bash and then attempt to write to the write end
+                try await Subprocess.run(
+                    .path("/bin/bash"),
+                    arguments: [
+                        "-c",
+                        """
+                        echo this string should be discarded >&\(pipe.writeEnd.rawValue);
+                        echo wrote into \(pipe.writeEnd.rawValue), echo exit code $?;
+                        """
+                    ],
+                    input: .none,
+                    output: .string(limit: 64),
+                    error: .discarded
+                )
+            }
+            #expect(result.terminationStatus.isSuccess)
+            // Make sure nothing is written to the pipe
+            var readBytes: [UInt8] = Array(repeating: 0, count: 1024)
+            let readCount = try readBytes.withUnsafeMutableBytes { ptr in
+                return try FileDescriptor(rawValue: pipe.readEnd.rawValue)
+                    .read(into: ptr, retryOnInterrupt: true)
+            }
+            #expect(readCount == 0)
+            #expect(
+                result.standardOutput?.trimmingNewLineAndQuotes() ==
+                "wrote into \(pipe.writeEnd.rawValue), echo exit code 1"
+            )
         }
-        // Spawn bash and then attempt to write to the write end
-        let result = try await Subprocess.run(
-            .path("/bin/bash"),
-            arguments: [
-                "-c",
-                """
-                echo this string should be discarded >&\(pipe.writeEnd.rawValue);
-                echo wrote into \(pipe.writeEnd.rawValue), echo exit code $?;
-                """
-            ],
-            input: .none,
-            output: .string(limit: 64),
-            error: .discarded
-        )
-        try pipe.writeEnd.close()
-        #expect(result.terminationStatus.isSuccess)
-        // Make sure nothing is written to the pipe
-        var readBytes: [UInt8] = Array(repeating: 0, count: 1024)
-        let readCount = try readBytes.withUnsafeMutableBytes { ptr in
-            return try FileDescriptor(rawValue: pipe.readEnd.rawValue)
-                .read(into: ptr, retryOnInterrupt: true)
-        }
-        #expect(readCount == 0)
-        #expect(
-            result.standardOutput?.trimmingNewLineAndQuotes() ==
-            "wrote into \(pipe.writeEnd.rawValue), echo exit code 1"
-        )
     }
 }
 

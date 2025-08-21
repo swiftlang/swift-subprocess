@@ -299,6 +299,12 @@ extension SubprocessProcessMonitoringTests {
         let testCount = 100
         var spawnedProcesses: [ProcessIdentifier] = []
 
+        defer {
+            for pid in spawnedProcesses {
+                pid.close()
+            }
+        }
+
         for _ in 0 ..< testCount {
             let config = self.immediateExitProcess(withExitCode: 0)
             let spawnResult = try config.spawn(
@@ -307,12 +313,6 @@ extension SubprocessProcessMonitoringTests {
                 errorPipe: self.devNullOutputPipe()
             )
             spawnedProcesses.append(spawnResult.execution.processIdentifier)
-        }
-
-        defer {
-            for pid in spawnedProcesses {
-                pid.close()
-            }
         }
 
         try await withThrowingTaskGroup { group in

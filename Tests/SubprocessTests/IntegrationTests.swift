@@ -973,17 +973,19 @@ extension SubprocessIntegrationTests {
             options: .create,
             permissions: [.ownerReadWrite, .groupReadWrite]
         )
-        let echoResult = try await _run(
-            setup,
-            input: .none,
-            output: .fileDescriptor(
-                outputFile,
-                closeAfterSpawningProcess: false
-            ),
-            error: .discarded
-        )
-        #expect(echoResult.terminationStatus.isSuccess)
-        try outputFile.close()
+        let echoResult = try await outputFile.closeAfter {
+            let echoResult = try await _run(
+                setup,
+                input: .none,
+                output: .fileDescriptor(
+                    outputFile,
+                    closeAfterSpawningProcess: false
+                ),
+                error: .discarded
+            )
+            #expect(echoResult.terminationStatus.isSuccess)
+            return echoResult
+        }
         let outputData: Data = try Data(
             contentsOf: URL(filePath: outputFilePath.string)
         )
@@ -994,7 +996,7 @@ extension SubprocessIntegrationTests {
         #expect(output == expected)
     }
 
-    @Test func testFileDescriptorOutputAutoClose() async throws {
+    @Test(.disabled("Cannot ever safely call unbalanced close() on the same fd")) func testFileDescriptorOutputAutoClose() async throws {
         #if os(Windows)
         let setup = TestSetup(
             executable: .name("cmd.exe"),
@@ -1254,17 +1256,19 @@ extension SubprocessIntegrationTests {
             options: .create,
             permissions: [.ownerReadWrite, .groupReadWrite]
         )
-        let echoResult = try await _run(
-            setup,
-            input: .none,
-            output: .discarded,
-            error: .fileDescriptor(
-                outputFile,
-                closeAfterSpawningProcess: false
+        let echoResult = try await outputFile.closeAfter {
+            let echoResult = try await _run(
+                setup,
+                input: .none,
+                output: .discarded,
+                error: .fileDescriptor(
+                    outputFile,
+                    closeAfterSpawningProcess: false
+                )
             )
-        )
-        #expect(echoResult.terminationStatus.isSuccess)
-        try outputFile.close()
+            #expect(echoResult.terminationStatus.isSuccess)
+            return echoResult
+        }
         let outputData: Data = try Data(
             contentsOf: URL(filePath: outputFilePath.string)
         )
@@ -1275,7 +1279,7 @@ extension SubprocessIntegrationTests {
         #expect(output == expected)
     }
 
-    @Test func testFileDescriptorErrorOutputAutoClose() async throws {
+    @Test(.disabled("Cannot ever safely call unbalanced close() on the same fd")) func testFileDescriptorErrorOutputAutoClose() async throws {
         #if os(Windows)
         let setup = TestSetup(
             executable: .name("cmd.exe"),
@@ -1338,20 +1342,22 @@ extension SubprocessIntegrationTests {
             options: .create,
             permissions: [.ownerReadWrite, .groupReadWrite]
         )
-        let echoResult = try await _run(
-            setup,
-            input: .none,
-            output: .fileDescriptor(
-                outputFile,
-                closeAfterSpawningProcess: false
-            ),
-            error: .fileDescriptor(
-                outputFile,
-                closeAfterSpawningProcess: false
+        let echoResult = try await outputFile.closeAfter {
+            let echoResult = try await _run(
+                setup,
+                input: .none,
+                output: .fileDescriptor(
+                    outputFile,
+                    closeAfterSpawningProcess: false
+                ),
+                error: .fileDescriptor(
+                    outputFile,
+                    closeAfterSpawningProcess: false
+                )
             )
-        )
-        #expect(echoResult.terminationStatus.isSuccess)
-        try outputFile.close()
+            #expect(echoResult.terminationStatus.isSuccess)
+            return echoResult
+        }
         let outputData: Data = try Data(
             contentsOf: URL(filePath: outputFilePath.string)
         )
