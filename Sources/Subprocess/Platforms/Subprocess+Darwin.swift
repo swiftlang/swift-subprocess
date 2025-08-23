@@ -497,46 +497,4 @@ extension ProcessIdentifier: CustomStringConvertible, CustomDebugStringConvertib
     public var debugDescription: String { "\(self.value)" }
 }
 
-// MARK: - Process Monitoring
-@Sendable
-internal func monitorProcessTermination(
-    for processIdentifier: ProcessIdentifier
-) async throws -> TerminationStatus {
-    return try await withCheckedThrowingContinuation { continuation in
-        let source = DispatchSource.makeProcessSource(
-            identifier: processIdentifier.value,
-            eventMask: [.exit],
-            queue: .global()
-        )
-        source.setEventHandler {
-            source.cancel()
-            var siginfo = siginfo_t()
-            let rc = waitid(P_PID, id_t(processIdentifier.value), &siginfo, WEXITED)
-            guard rc == 0 else {
-                continuation.resume(
-                    throwing: SubprocessError(
-                        code: .init(.failedToMonitorProcess),
-                        underlyingError: .init(rawValue: errno)
-                    )
-                )
-                return
-            }
-            switch siginfo.si_code {
-            case .init(CLD_EXITED):
-                continuation.resume(returning: .exited(siginfo.si_status))
-                return
-            case .init(CLD_KILLED), .init(CLD_DUMPED):
-                continuation.resume(returning: .unhandledException(siginfo.si_status))
-            case .init(CLD_TRAPPED), .init(CLD_STOPPED), .init(CLD_CONTINUED), .init(CLD_NOOP):
-                // Ignore these signals because they are not related to
-                // process exiting
-                break
-            default:
-                fatalError("Unexpected exit status: \(siginfo.si_code)")
-            }
-        }
-        source.resume()
-    }
-}
-
 #endif  // canImport(Darwin)

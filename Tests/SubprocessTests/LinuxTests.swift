@@ -41,6 +41,10 @@ struct SubprocessLinuxTests {
                     waitThread = try pthread_create {
                         var suspendedStatus: Int32 = 0
                         let rc = waitpid(pid, &suspendedStatus, targetSignal)
+                        if rc == -1 {
+                            continuation.resume(throwing: SubprocessError.UnderlyingError(rawValue: errno))
+                            return
+                        }
                         handler(suspendedStatus)
                         continuation.resume()
                     }

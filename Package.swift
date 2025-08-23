@@ -27,6 +27,10 @@ var defaultTraits: Set<String> = ["SubprocessFoundation"]
 defaultTraits.insert("SubprocessSpan")
 #endif
 
+let packageSwiftSettings: [SwiftSetting] = [
+    .define("SUBPROCESS_ASYNCIO_DISPATCH", .when(platforms: [.macOS, .custom("freebsd"), .openbsd]))
+]
+
 let package = Package(
     name: "Subprocess",
     platforms: [.macOS(.v13), .iOS("99.0")],
@@ -58,7 +62,7 @@ let package = Package(
                 .enableExperimentalFeature("NonescapableTypes"),
                 .enableExperimentalFeature("LifetimeDependence"),
                 .enableExperimentalFeature("Span"),
-            ]
+            ] + packageSwiftSettings
         ),
         .testTarget(
             name: "SubprocessTests",
@@ -70,7 +74,7 @@ let package = Package(
             ],
             swiftSettings: [
                 .enableExperimentalFeature("Span"),
-            ]
+            ] + packageSwiftSettings
         ),
 
         .target(

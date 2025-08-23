@@ -20,6 +20,14 @@ import FoundationEssentials
 import Testing
 import Subprocess
 
+// Workaround: https://github.com/swiftlang/swift-testing/issues/543
+internal func _require<T: ~Copyable>(_ value: consuming T?) throws -> T {
+    guard let value else {
+        throw SubprocessError.UnderlyingError(rawValue: .max)
+    }
+    return value
+}
+
 internal func randomString(length: Int, lettersOnly: Bool = false) -> String {
     let letters: String
     if lettersOnly {

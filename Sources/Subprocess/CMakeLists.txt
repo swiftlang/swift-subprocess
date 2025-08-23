@@ -17,7 +17,7 @@ add_library(Subprocess
   Result.swift
   IO/Output.swift
   IO/Input.swift
-  IO/AsyncIO+Darwin.swift
+  IO/AsyncIO+Dispatch.swift
   IO/AsyncIO+Linux.swift
   IO/AsyncIO+Windows.swift
   Span+Subprocess.swift
@@ -36,7 +36,12 @@ elseif(LINUX OR ANDROID)
     Platforms/Subprocess+Unix.swift)
 elseif(APPLE)
   target_sources(Subprocess PRIVATE
+    Platforms/Subprocess+BSD.swift
     Platforms/Subprocess+Darwin.swift
+    Platforms/Subprocess+Unix.swift)
+elseif(FREEBSD OR OPENBSD)
+  target_sources(Subprocess PRIVATE
+    Platforms/Subprocess+BSD.swift
     Platforms/Subprocess+Unix.swift)
 endif()
 

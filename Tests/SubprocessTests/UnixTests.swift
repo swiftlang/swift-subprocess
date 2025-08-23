@@ -106,7 +106,7 @@ extension SubprocessUnixTests {
         let ids = try #require(
             idResult.standardOutput
         ).split(separator: ",")
-            .map { gid_t($0.trimmingCharacters(in: .whitespacesAndNewlines))! }
+            .map { try #require(gid_t($0.trimmingCharacters(in: .whitespacesAndNewlines))) }
         #expect(Set(ids) == expectedGroups)
     }
 
@@ -253,7 +253,7 @@ extension SubprocessUnixTests {
                         .send(signal: .interrupt, allowedDurationToNextStep: .milliseconds(100))
                     ]
                     let result = try await Subprocess.run(
-                        .path("/bin/bash"),
+                        .name("bash"),
                         arguments: [
                             "-c",
                         """
@@ -350,6 +350,9 @@ extension SubprocessUnixTests {
             done
             """
         var arguments = ["-c", shellScript, "--"]
+        #if os(FreeBSD)
+        arguments.append("") // FreeBSD /bin/sh interprets the first argument as the script name
+        #endif
         arguments.append(contentsOf: openedFileDescriptors.map { "\($0)" })
 
         let result = try await Subprocess.run(
@@ -385,7 +388,7 @@ extension SubprocessUnixTests {
             let result = try await pipe.writeEnd.closeAfter {
                 // Spawn bash and then attempt to write to the write end
                 try await Subprocess.run(
-                    .path("/bin/bash"),
+                    .name("bash"),
                     arguments: [
                         "-c",
                         """

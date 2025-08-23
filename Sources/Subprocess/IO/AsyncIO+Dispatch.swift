@@ -12,7 +12,7 @@
 /// Darwin AsyncIO implementation based on DispatchIO
 
 // MARK: - macOS (DispatchIO)
-#if canImport(Darwin)
+#if SUBPROCESS_ASYNCIO_DISPATCH
 
 #if canImport(System)
 @preconcurrency import System
@@ -165,5 +165,9 @@ final class AsyncIO: Sendable {
         }
     }
 }
+
+#if !canImport(Darwin)
+extension DispatchData: @retroactive @unchecked Sendable { }
+#endif
 
 #endif

@@ -54,8 +54,8 @@ struct SubprocessLintingTest {
         else {
             return
         }
-        let sourcePath = String(
-            maybePath.prefix(upTo: maybePath.range(of: "/.build")!.lowerBound)
+        let sourcePath = try String(
+            maybePath.prefix(upTo: #require(maybePath.range(of: "/.build")).lowerBound)
         )
         print("Linting \(sourcePath)")
         #if os(macOS)
