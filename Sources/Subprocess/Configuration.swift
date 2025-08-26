@@ -657,7 +657,7 @@ internal struct IODescriptor: ~Copyable {
     consuming func createIOChannel() -> IOChannel {
         let shouldClose = self.closeWhenDone
         self.closeWhenDone = false
-        #if canImport(Darwin)
+        #if SUBPROCESS_ASYNCIO_DISPATCH
         // Transferring out the ownership of fileDescriptor means we don't have go close here
         let closeFd = self.descriptor
         let dispatchIO: DispatchIO = DispatchIO(
@@ -708,10 +708,10 @@ internal struct IODescriptor: ~Copyable {
 }
 
 internal struct IOChannel: ~Copyable, @unchecked Sendable {
-    #if canImport(WinSDK)
-    typealias Channel = HANDLE
-    #elseif canImport(Darwin)
+    #if SUBPROCESS_ASYNCIO_DISPATCH
     typealias Channel = DispatchIO
+    #elseif canImport(WinSDK)
+    typealias Channel = HANDLE
     #else
     typealias Channel = FileDescriptor
     #endif
@@ -733,10 +733,10 @@ internal struct IOChannel: ~Copyable, @unchecked Sendable {
         }
         closeWhenDone = false
 
-        #if canImport(WinSDK)
-        try _safelyClose(.handle(self.channel))
-        #elseif canImport(Darwin)
+        #if SUBPROCESS_ASYNCIO_DISPATCH
         try _safelyClose(.dispatchIO(self.channel))
+        #elseif canImport(WinSDK)
+        try _safelyClose(.handle(self.channel))
         #else
         try _safelyClose(.fileDescriptor(self.channel))
         #endif

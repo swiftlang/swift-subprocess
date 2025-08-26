@@ -429,7 +429,7 @@ extension SubprocessIntegrationTests {
         #expect(result.terminationStatus.isSuccess)
         // There shouldn't be any other environment variables besides
         // `PATH` that we set
-        let resultPath = result.standardOutput!
+        let resultPath = try #require(result.standardOutput)
             .trimmingNewLineAndQuotes()
         #if canImport(Darwin)
         // On Darwin, /var is linked to /private/var; /tmp is linked to /private/tmp
@@ -1686,7 +1686,7 @@ extension SubprocessIntegrationTests {
         }
 
         // Generate at least 2 long lines that is longer than buffer size
-        func generateTestCases(count: Int) -> [TestCase] {
+        func generateTestCases(count: Int) throws -> [TestCase] {
             var targetSizes: [TestCaseSize] = TestCaseSize.allCases.flatMap {
                 Array(repeating: $0, count: count / 3)
             }
@@ -1701,7 +1701,7 @@ extension SubprocessIntegrationTests {
             for size in targetSizes {
                 let components = generateString(size: size)
                 // Choose a random new line
-                let newLine = newLineCharacters.randomElement()!
+                let newLine = try #require(newLineCharacters.randomElement())
                 let string = String(decoding: components + newLine, as: UTF8.self)
                 testCases.append((
                     value: string,
@@ -1717,7 +1717,7 @@ extension SubprocessIntegrationTests {
             FileManager.default.createFile(atPath: url.path(), contents: nil, attributes: nil)
             let fileHadle = try FileHandle(forWritingTo: url)
             for testCase in testCases {
-                fileHadle.write(testCase.value.data(using: .utf8)!)
+                fileHadle.write(Data(testCase.value.utf8))
             }
             try fileHadle.close()
             #else
@@ -1734,7 +1734,7 @@ extension SubprocessIntegrationTests {
         if FileManager.default.fileExists(atPath: testFilePath.path()) {
             try FileManager.default.removeItem(at: testFilePath)
         }
-        let testCases = generateTestCases(count: testCaseCount)
+        let testCases = try generateTestCases(count: testCaseCount)
         try writeTestCasesToFile(testCases, at: testFilePath)
 
         #if os(Windows)

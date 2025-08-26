@@ -138,8 +138,8 @@ extension SubprocessAsyncIOTests {
 extension SubprocessAsyncIOTests {
     @Test func testWriteToClosedPipe() async throws {
         var pipe = try CreatedPipe(closeWhenDone: true, purpose: .input)
-        var writeChannel = pipe.writeFileDescriptor()!.createIOChannel()
-        var readChannel = pipe.readFileDescriptor()!.createIOChannel()
+        var writeChannel = try _require(pipe.writeFileDescriptor()).createIOChannel()
+        var readChannel = try _require(pipe.readFileDescriptor()).createIOChannel()
         defer {
             try? readChannel.safelyClose()
         }
@@ -176,8 +176,8 @@ extension SubprocessAsyncIOTests {
 
     @Test func testReadFromClosedPipe() async throws {
         var pipe = try CreatedPipe(closeWhenDone: true, purpose: .input)
-        var writeChannel = pipe.writeFileDescriptor()!.createIOChannel()
-        var readChannel = pipe.readFileDescriptor()!.createIOChannel()
+        var writeChannel = try _require(pipe.writeFileDescriptor()).createIOChannel()
+        var readChannel = try _require(pipe.readFileDescriptor()).createIOChannel()
         defer {
             try? writeChannel.safelyClose()
         }
@@ -257,12 +257,12 @@ extension SubprocessAsyncIOTests {
 
             group.addTask {
                 var readIOContainer: IOChannel? = readBox.take()
-                let readTestBed = TestBed(ioChannel: readIOContainer.take()!)
+                let readTestBed = try TestBed(ioChannel: _require(readIOContainer.take()))
                 try await reader(readIO, readTestBed)
             }
             group.addTask {
                 var writeIOContainer: IOChannel? = writeBox.take()
-                let writeTestBed = TestBed(ioChannel: writeIOContainer.take()!)
+                let writeTestBed = try TestBed(ioChannel: _require(writeIOContainer.take()))
                 try await writer(writeIO, writeTestBed)
             }
 
@@ -276,10 +276,10 @@ extension SubprocessAsyncIOTests {
 
 extension SubprocessAsyncIOTests.TestBed {
     consuming func finish() async throws {
-#if canImport(WinSDK)
-        try _safelyClose(.handle(self.ioChannel.channel))
-#elseif canImport(Darwin)
+#if SUBPROCESS_ASYNCIO_DISPATCH
         try _safelyClose(.dispatchIO(self.ioChannel.channel))
+#elseif canImport(WinSDK)
+        try _safelyClose(.handle(self.ioChannel.channel))
 #else
         try _safelyClose(.fileDescriptor(self.ioChannel.channel))
 #endif

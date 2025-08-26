@@ -17,7 +17,7 @@
 extension AsyncBufferSequence {
     /// A immutable collection of bytes
     public struct Buffer: Sendable {
-        #if canImport(Darwin)
+        #if SUBPROCESS_ASYNCIO_DISPATCH
         // We need to keep the backingData alive while Slice is alive
         internal let backingData: DispatchData
         internal let data: DispatchData.Region
@@ -45,7 +45,7 @@ extension AsyncBufferSequence {
         internal static func createFrom(_ data: [UInt8]) -> [Buffer] {
             return [.init(data: data)]
         }
-        #endif // canImport(Darwin)
+        #endif // SUBPROCESS_ASYNCIO_DISPATCH
     }
 }
 
@@ -92,7 +92,7 @@ extension AsyncBufferSequence.Buffer {
 
 // MARK: - Hashable, Equatable
 extension AsyncBufferSequence.Buffer: Equatable, Hashable {
-    #if canImport(Darwin)
+    #if SUBPROCESS_ASYNCIO_DISPATCH
     public static func == (lhs: AsyncBufferSequence.Buffer, rhs: AsyncBufferSequence.Buffer) -> Bool {
         return lhs.data == rhs.data
     }
@@ -104,7 +104,7 @@ extension AsyncBufferSequence.Buffer: Equatable, Hashable {
     // else Compiler generated conformances
 }
 
-#if canImport(Darwin)
+#if SUBPROCESS_ASYNCIO_DISPATCH
 extension DispatchData.Region {
     static func == (lhs: DispatchData.Region, rhs: DispatchData.Region) -> Bool {
         return lhs.withUnsafeBytes { lhsBytes in
@@ -120,7 +120,7 @@ extension DispatchData.Region {
         }
     }
 }
-#if !SubprocessFoundation
+#if !canImport(Darwin) || !SubprocessFoundation
 /// `DispatchData.Region` is defined in Foundation, but we can't depend on Foundation when the SubprocessFoundation trait is disabled.
 extension DispatchData {
     typealias Region = _ContiguousBufferView

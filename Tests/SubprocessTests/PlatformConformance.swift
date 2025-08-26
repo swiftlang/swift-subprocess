@@ -36,7 +36,7 @@ protocol ProcessIdentifierProtocol: Sendable, Hashable, CustomStringConvertible,
     var value: pid_t { get }
     #endif
 
-    #if os(Linux) || os(Android)
+    #if os(Linux) || os(Android) || os(FreeBSD)
     var processDescriptor: PlatformFileDescriptor { get }
     #endif
 

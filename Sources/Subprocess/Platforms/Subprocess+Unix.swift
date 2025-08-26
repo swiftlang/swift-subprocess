@@ -110,13 +110,13 @@ extension Execution {
         }
         let pid = shouldSendToProcessGroup ? -(processIdentifier.value) : processIdentifier.value
 
-        #if os(Linux) || os(Android)
-        // On linux, use pidfd_send_signal if possible
+        #if os(Linux) || os(Android) || os(FreeBSD)
+        // On platforms with process descriptors, use _subprocess_pdkill if possible
         if shouldSendToProcessGroup || self.processIdentifier.processDescriptor < 0 {
-            // pidfd_send_signal does not support sending signal to process group
+            // _subprocess_pdkill does not support sending signal to process group
             try _kill(pid, signal: signal)
         } else {
-            let rc = _pidfd_send_signal(
+            let rc = _subprocess_pdkill(
                 processIdentifier.processDescriptor,
                 signal.rawValue
             )
@@ -191,7 +191,7 @@ extension Environment {
             /// length = `key` + `=` + `value` + `\null`
             let totalLength = keyContainer.count + 1 + valueContainer.count + 1
             let fullString: UnsafeMutablePointer<CChar> = .allocate(capacity: totalLength)
-            #if os(Linux) || os(Android)
+            #if os(OpenBSD) || os(Linux) || os(Android)
             _ = _shims_snprintf(fullString, CInt(totalLength), "%s=%s", rawByteKey, rawByteValue)
             #else
             _ = snprintf(ptr: fullString, totalLength, "%s=%s", rawByteKey, rawByteValue)
@@ -410,5 +410,374 @@ extension FileDescriptor {
 }
 
 internal typealias PlatformFileDescriptor = CInt
+
+// MARK: - Spawning
+
+#if !canImport(Darwin)
+extension Configuration {
+    internal func spawn(
+        withInput inputPipe: consuming CreatedPipe,
+        outputPipe: consuming CreatedPipe,
+        errorPipe: consuming CreatedPipe
+    ) throws -> SpawnResult {
+        // Ensure the waiter thread is running.
+        #if os(Linux) || os(Android)
+        _setupMonitorSignalHandler()
+        #endif
+
+        // Instead of checking if every possible executable path
+        // is valid, spawn each directly and catch ENOENT
+        let possiblePaths = self.executable.possibleExecutablePaths(
+            withPathValue: self.environment.pathValue()
+        )
+        var inputPipeBox: CreatedPipe? = consume inputPipe
+        var outputPipeBox: CreatedPipe? = consume outputPipe
+        var errorPipeBox: CreatedPipe? = consume errorPipe
+
+        return try self.preSpawn { args throws -> SpawnResult in
+            let (env, uidPtr, gidPtr, supplementaryGroups) = args
+
+            var _inputPipe = inputPipeBox.take()!
+            var _outputPipe = outputPipeBox.take()!
+            var _errorPipe = errorPipeBox.take()!
+
+            let inputReadFileDescriptor: IODescriptor? = _inputPipe.readFileDescriptor()
+            let inputWriteFileDescriptor: IODescriptor? = _inputPipe.writeFileDescriptor()
+            let outputReadFileDescriptor: IODescriptor? = _outputPipe.readFileDescriptor()
+            let outputWriteFileDescriptor: IODescriptor? = _outputPipe.writeFileDescriptor()
+            let errorReadFileDescriptor: IODescriptor? = _errorPipe.readFileDescriptor()
+            let errorWriteFileDescriptor: IODescriptor? = _errorPipe.writeFileDescriptor()
+
+            for possibleExecutablePath in possiblePaths {
+                var processGroupIDPtr: UnsafeMutablePointer<gid_t>? = nil
+                if let processGroupID = self.platformOptions.processGroupID {
+                    processGroupIDPtr = .allocate(capacity: 1)
+                    processGroupIDPtr?.pointee = gid_t(processGroupID)
+                }
+                // Setup Arguments
+                let argv: [UnsafeMutablePointer<CChar>?] = self.arguments.createArgs(
+                    withExecutablePath: possibleExecutablePath
+                )
+                defer {
+                    for ptr in argv { ptr?.deallocate() }
+                }
+                // Setup input
+                let fileDescriptors: [CInt] = [
+                    inputReadFileDescriptor?.platformDescriptor() ?? -1,
+                    inputWriteFileDescriptor?.platformDescriptor() ?? -1,
+                    outputWriteFileDescriptor?.platformDescriptor() ?? -1,
+                    outputReadFileDescriptor?.platformDescriptor() ?? -1,
+                    errorWriteFileDescriptor?.platformDescriptor() ?? -1,
+                    errorReadFileDescriptor?.platformDescriptor() ?? -1,
+                ]
+
+                // Spawn
+                var pid: pid_t = 0
+                var processDescriptor: PlatformFileDescriptor = -1
+                let spawnError: CInt = possibleExecutablePath.withCString { exePath in
+                    return (self.workingDirectory?.string).withOptionalCString { workingDir in
+                        return supplementaryGroups.withOptionalUnsafeBufferPointer { sgroups in
+                            return fileDescriptors.withUnsafeBufferPointer { fds in
+                                return _subprocess_fork_exec(
+                                    &pid,
+                                    &processDescriptor,
+                                    exePath,
+                                    workingDir,
+                                    fds.baseAddress!,
+                                    argv,
+                                    env,
+                                    uidPtr,
+                                    gidPtr,
+                                    processGroupIDPtr,
+                                    CInt(supplementaryGroups?.count ?? 0),
+                                    sgroups?.baseAddress,
+                                    self.platformOptions.createSession ? 1 : 0
+                                )
+                            }
+                        }
+                    }
+                }
+                // Spawn error
+                if spawnError != 0 {
+                    if spawnError == ENOENT || spawnError == EACCES {
+                        // Move on to another possible path
+                        continue
+                    }
+                    // Throw all other errors
+                    try self.safelyCloseMultiple(
+                        inputRead: inputReadFileDescriptor,
+                        inputWrite: inputWriteFileDescriptor,
+                        outputRead: outputReadFileDescriptor,
+                        outputWrite: outputWriteFileDescriptor,
+                        errorRead: errorReadFileDescriptor,
+                        errorWrite: errorWriteFileDescriptor
+                    )
+                    throw SubprocessError(
+                        code: .init(.spawnFailed),
+                        underlyingError: .init(rawValue: spawnError)
+                    )
+                }
+                // After spawn finishes, close all child side fds
+                try self.safelyCloseMultiple(
+                    inputRead: inputReadFileDescriptor,
+                    inputWrite: nil,
+                    outputRead: nil,
+                    outputWrite: outputWriteFileDescriptor,
+                    errorRead: nil,
+                    errorWrite: errorWriteFileDescriptor
+                )
+                let execution = Execution(
+                    processIdentifier: .init(
+                        value: pid,
+                        processDescriptor: processDescriptor
+                    )
+                )
+                return SpawnResult(
+                    execution: execution,
+                    inputWriteEnd: inputWriteFileDescriptor?.createIOChannel(),
+                    outputReadEnd: outputReadFileDescriptor?.createIOChannel(),
+                    errorReadEnd: errorReadFileDescriptor?.createIOChannel()
+                )
+            }
+
+            // If we reach this point, it means either the executable path
+            // or working directory is not valid. Since posix_spawn does not
+            // provide which one is not valid, here we make a best effort guess
+            // by checking whether the working directory is valid. This technically
+            // still causes TOUTOC issue, but it's the best we can do for error recovery.
+            try self.safelyCloseMultiple(
+                inputRead: inputReadFileDescriptor,
+                inputWrite: inputWriteFileDescriptor,
+                outputRead: outputReadFileDescriptor,
+                outputWrite: outputWriteFileDescriptor,
+                errorRead: errorReadFileDescriptor,
+                errorWrite: errorWriteFileDescriptor
+            )
+            if let workingDirectory = self.workingDirectory?.string {
+                guard Configuration.pathAccessible(workingDirectory, mode: F_OK) else {
+                    throw SubprocessError(
+                        code: .init(.failedToChangeWorkingDirectory(workingDirectory)),
+                        underlyingError: .init(rawValue: ENOENT)
+                    )
+                }
+            }
+            throw SubprocessError(
+                code: .init(.executableNotFound(self.executable.description)),
+                underlyingError: .init(rawValue: ENOENT)
+            )
+        }
+    }
+}
+
+// MARK:  - ProcessIdentifier
+
+/// A platform independent identifier for a Subprocess.
+public struct ProcessIdentifier: Sendable, Hashable {
+    /// The platform specific process identifier value
+    public let value: pid_t
+
+    #if os(Linux) || os(Android) || os(FreeBSD)
+    public let processDescriptor: CInt
+    #else
+    internal let processDescriptor: CInt // not used on other platforms
+    #endif
+
+    internal init(value: pid_t, processDescriptor: PlatformFileDescriptor) {
+        self.value = value
+        self.processDescriptor = processDescriptor
+    }
+
+    internal func close() {
+        if self.processDescriptor > 0 {
+            _ = _subprocess_close(self.processDescriptor)
+        }
+    }
+}
+
+extension ProcessIdentifier: CustomStringConvertible, CustomDebugStringConvertible {
+    public var description: String { "\(self.value)" }
+
+    public var debugDescription: String { "\(self.value)" }
+}
+
+// MARK: - Platform Specific Options
+
+/// The collection of platform-specific settings
+/// to configure the subprocess when running
+public struct PlatformOptions: Sendable {
+    /// Set user ID for the subprocess
+    public var userID: uid_t? = nil
+    /// Set the real and effective group ID and the saved
+    /// set-group-ID of the subprocess, equivalent to calling
+    /// `setgid()` on the child process.
+    /// Group ID is used to control permissions, particularly
+    /// for file access.
+    public var groupID: gid_t? = nil
+    /// Set list of supplementary group IDs for the subprocess
+    public var supplementaryGroups: [gid_t]? = nil
+    /// Set the process group for the subprocess, equivalent to
+    /// calling `setpgid()` on the child process.
+    /// Process group ID is used to group related processes for
+    /// controlling signals.
+    public var processGroupID: pid_t? = nil
+    /// Creates a session and sets the process group ID
+    /// i.e. Detach from the terminal.
+    public var createSession: Bool = false
+    /// An ordered list of steps in order to tear down the child
+    /// process in case the parent task is cancelled before
+    /// the child process terminates.
+    /// Always ends in sending a `.kill` signal at the end.
+    public var teardownSequence: [TeardownStep] = []
+
+    public init() {}
+}
+
+extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible {
+    internal func description(withIndent indent: Int) -> String {
+        let indent = String(repeating: " ", count: indent * 4)
+        return """
+            PlatformOptions(
+            \(indent)    userID: \(String(describing: userID)),
+            \(indent)    groupID: \(String(describing: groupID)),
+            \(indent)    supplementaryGroups: \(String(describing: supplementaryGroups)),
+            \(indent)    processGroupID: \(String(describing: processGroupID)),
+            \(indent)    createSession: \(createSession)
+            \(indent))
+            """
+    }
+
+    public var description: String {
+        return self.description(withIndent: 0)
+    }
+
+    public var debugDescription: String {
+        return self.description(withIndent: 0)
+    }
+}
+
+// Special keys used in Error's user dictionary
+extension String {
+    static let debugDescriptionErrorKey = "DebugDescription"
+}
+
+internal func pthread_create(_ body: @Sendable @escaping () -> ()) throws(SubprocessError.UnderlyingError) -> pthread_t {
+    final class Context {
+        let body: @Sendable () -> ()
+        init(body: @Sendable @escaping () -> Void) {
+            self.body = body
+        }
+    }
+    #if canImport(Glibc) || canImport(Musl)
+    func proc(_ context: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
+        (Unmanaged<AnyObject>.fromOpaque(context!).takeRetainedValue() as! Context).body()
+        return nil
+    }
+    #elseif canImport(Bionic)
+    func proc(_ context: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer {
+        (Unmanaged<AnyObject>.fromOpaque(context).takeRetainedValue() as! Context).body()
+        return context
+    }
+    #endif
+    #if (os(Linux) && canImport(Glibc)) || canImport(Bionic)
+    var thread = pthread_t()
+    #else
+    var thread: pthread_t?
+    #endif
+    let rc = pthread_create(
+        &thread,
+        nil,
+        proc,
+        Unmanaged.passRetained(Context(body: body)).toOpaque()
+    )
+    if rc != 0 {
+        throw SubprocessError.UnderlyingError(rawValue: rc)
+    }
+    #if (os(Linux) && canImport(Glibc)) || canImport(Bionic)
+    return thread
+    #else
+    return thread!
+    #endif
+}
+
+#endif  // !canImport(Darwin)
+
+extension ProcessIdentifier {
+    /// Reaps the zombie for the exited process. This function may block.
+    @available(*, noasync)
+    internal func blockingReap() throws(SubprocessError.UnderlyingError) -> TerminationStatus {
+        try _blockingReap(pid: value)
+    }
+
+    /// Reaps the zombie for the exited process, or returns `nil` if the process is still running. This function will not block.
+    internal func reap() throws(SubprocessError.UnderlyingError) -> TerminationStatus? {
+        try _reap(pid: value)
+    }
+}
+
+@available(*, noasync)
+internal func _blockingReap(pid: pid_t) throws(SubprocessError.UnderlyingError) -> TerminationStatus {
+    return try TerminationStatus(_waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED))
+}
+
+internal func _reap(pid: pid_t) throws(SubprocessError.UnderlyingError) -> TerminationStatus? {
+    let siginfo = try _waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED | WNOHANG)
+    // If si_pid and si_signo are both 0, the child is still running since we used WNOHANG
+    if siginfo.si_pid == 0 && siginfo.si_signo == 0 {
+        return nil
+    }
+    return TerminationStatus(siginfo)
+}
+
+internal func _waitid(idtype: idtype_t, id: id_t, flags: Int32) throws(SubprocessError.UnderlyingError) -> siginfo_t {
+    while true {
+        var siginfo = siginfo_t()
+        if waitid(idtype, id, &siginfo, flags) != -1 {
+            return siginfo
+        } else if errno != EINTR {
+            throw SubprocessError.UnderlyingError(rawValue: errno)
+        }
+    }
+}
+
+internal extension TerminationStatus {
+    init(_ siginfo: siginfo_t) {
+        switch siginfo.si_code {
+        case .init(CLD_EXITED):
+            self = .exited(siginfo.si_status)
+        case .init(CLD_KILLED), .init(CLD_DUMPED):
+            self = .unhandledException(siginfo.si_status)
+        default:
+            fatalError("Unexpected exit status: \(siginfo.si_code)")
+        }
+    }
+}
+
+#if os(OpenBSD) || os(Linux) || os(Android)
+internal extension siginfo_t {
+    var si_status: Int32 {
+        #if os(OpenBSD)
+        return _data._proc._pdata._cld._status
+        #elseif canImport(Glibc)
+        return _sifields._sigchld.si_status
+        #elseif canImport(Musl)
+        return __si_fields.__si_common.__second.__sigchld.si_status
+        #elseif canImport(Bionic)
+        return _sifields._sigchld._status
+        #endif
+    }
+
+    var si_pid: pid_t {
+        #if os(OpenBSD)
+        return _data._proc._pid
+        #elseif canImport(Glibc)
+        return _sifields._sigchld.si_pid
+        #elseif canImport(Musl)
+        return __si_fields.__si_common.__first.__piduid.si_pid
+        #elseif canImport(Bionic)
+        return _sifields._kill._pid
+        #endif
+    }
+}
+#endif
 
 #endif  // canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl)

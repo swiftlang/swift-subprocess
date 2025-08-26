@@ -28,10 +28,16 @@
 #define TARGET_OS_LINUX 0
 #endif
 
-#if defined(__unix__)
-#define TARGET_OS_BSD 1
+#if defined(__FreeBSD__)
+#define TARGET_OS_FREEBSD 1
 #else
-#define TARGET_OS_BSD 0
+#define TARGET_OS_FREEBSD 0
+#endif
+
+#if defined(__unix__)
+#define TARGET_OS_UNIX 1
+#else
+#define TARGET_OS_UNIX 0
 #endif
 
 #if defined(_WIN32)
