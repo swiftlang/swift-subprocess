@@ -674,51 +674,6 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
         return self.description(withIndent: 0)
     }
 }
-
-// Special keys used in Error's user dictionary
-extension String {
-    static let debugDescriptionErrorKey = "DebugDescription"
-}
-
-internal func pthread_create(_ body: @Sendable @escaping () -> ()) throws(SubprocessError.UnderlyingError) -> pthread_t {
-    final class Context {
-        let body: @Sendable () -> ()
-        init(body: @Sendable @escaping () -> Void) {
-            self.body = body
-        }
-    }
-    #if canImport(Glibc) || canImport(Musl)
-    func proc(_ context: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
-        (Unmanaged<AnyObject>.fromOpaque(context!).takeRetainedValue() as! Context).body()
-        return nil
-    }
-    #elseif canImport(Bionic)
-    func proc(_ context: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer {
-        (Unmanaged<AnyObject>.fromOpaque(context).takeRetainedValue() as! Context).body()
-        return context
-    }
-    #endif
-    #if (os(Linux) && canImport(Glibc)) || canImport(Bionic)
-    var thread = pthread_t()
-    #else
-    var thread: pthread_t?
-    #endif
-    let rc = pthread_create(
-        &thread,
-        nil,
-        proc,
-        Unmanaged.passRetained(Context(body: body)).toOpaque()
-    )
-    if rc != 0 {
-        throw SubprocessError.UnderlyingError(rawValue: rc)
-    }
-    #if (os(Linux) && canImport(Glibc)) || canImport(Bionic)
-    return thread
-    #else
-    return thread!
-    #endif
-}
-
 #endif // !canImport(Darwin)
 
 extension ProcessIdentifier {

@@ -660,7 +660,11 @@ internal struct IODescriptor: ~Copyable {
     #endif
 
     internal var closeWhenDone: Bool
+    #if canImport(WinSDK)
+    internal nonisolated(unsafe) let descriptor: Descriptor
+    #else
     internal let descriptor: Descriptor
+    #endif
 
     internal init(
         _ descriptor: Descriptor,

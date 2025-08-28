@@ -23,21 +23,30 @@ import _SubprocessCShims
 
 // Windows specific implementation
 extension Configuration {
+    // @unchecked Sendable because we need to capture UnsafePointers
+    // to send to another thread. While UnsafePointers are not
+    // Sendable, we are not mutating them -- we only need these type
+    // for C interface.
+    internal struct SpawnContext: @unchecked Sendable {
+        let startupInfo: UnsafeMutablePointer<STARTUPINFOEXW>
+        let createProcessFlags: DWORD
+    }
+
     internal func spawn(
         withInput inputPipe: consuming CreatedPipe,
         outputPipe: consuming CreatedPipe,
         errorPipe: consuming CreatedPipe
-    ) throws -> SpawnResult {
+    ) async throws -> SpawnResult {
         // Spawn differently depending on whether
         // we need to spawn as a user
         guard let userCredentials = self.platformOptions.userCredentials else {
-            return try self.spawnDirect(
+            return try await self.spawnDirect(
                 withInput: inputPipe,
                 outputPipe: outputPipe,
                 errorPipe: errorPipe
             )
         }
-        return try self.spawnAsUser(
+        return try await self.spawnAsUser(
             withInput: inputPipe,
             outputPipe: outputPipe,
             errorPipe: errorPipe,
@@ -49,7 +58,7 @@ extension Configuration {
         withInput inputPipe: consuming CreatedPipe,
         outputPipe: consuming CreatedPipe,
         errorPipe: consuming CreatedPipe
-    ) throws -> SpawnResult {
+    ) async throws -> SpawnResult {
         var inputReadFileDescriptor: IODescriptor? = inputPipe.readFileDescriptor()
         var inputWriteFileDescriptor: IODescriptor? = inputPipe.writeFileDescriptor()
         var outputReadFileDescriptor: IODescriptor? = outputPipe.readFileDescriptor()
@@ -104,10 +113,9 @@ extension Configuration {
                 throw error
             }
 
-            var processInfo: PROCESS_INFORMATION = PROCESS_INFORMATION()
             var createProcessFlags = self.generateCreateProcessFlag()
 
-            let created = try self.withStartupInfoEx(
+            let (created, processInfo, windowsError) = try await self.withStartupInfoEx(
                 inputRead: inputReadFileDescriptor,
                 inputWrite: inputWriteFileDescriptor,
                 outputRead: outputReadFileDescriptor,
@@ -121,26 +129,34 @@ extension Configuration {
                 }
 
                 // Spawn!
-                return try applicationName.withOptionalNTPathRepresentation { applicationNameW in
-                    try commandAndArgs.withCString(
-                        encodedAs: UTF16.self
-                    ) { commandAndArgsW in
-                        try environment.withCString(
+                let spawnContext = SpawnContext(
+                    startupInfo: startupInfo,
+                    createProcessFlags: createProcessFlags
+                )
+                return try await runOnBackgroundThread {
+                    return try applicationName.withOptionalNTPathRepresentation { applicationNameW in
+                        try commandAndArgs.withCString(
                             encodedAs: UTF16.self
-                        ) { environmentW in
-                            try intendedWorkingDir.withOptionalNTPathRepresentation { intendedWorkingDirW in
-                                CreateProcessW(
-                                    applicationNameW,
-                                    UnsafeMutablePointer<WCHAR>(mutating: commandAndArgsW),
-                                    nil, // lpProcessAttributes
-                                    nil, // lpThreadAttributes
-                                    true, // bInheritHandles
-                                    createProcessFlags,
-                                    UnsafeMutableRawPointer(mutating: environmentW),
-                                    intendedWorkingDirW,
-                                    startupInfo.pointer(to: \.StartupInfo)!,
-                                    &processInfo
-                                )
+                        ) { commandAndArgsW in
+                            try environment.withCString(
+                                encodedAs: UTF16.self
+                            ) { environmentW in
+                                try intendedWorkingDir.withOptionalNTPathRepresentation { intendedWorkingDirW in
+                                    var processInfo = PROCESS_INFORMATION()
+                                    let result = CreateProcessW(
+                                        applicationNameW,
+                                        UnsafeMutablePointer<WCHAR>(mutating: commandAndArgsW),
+                                        nil, // lpProcessAttributes
+                                        nil, // lpThreadAttributes
+                                        true, // bInheritHandles
+                                        spawnContext.createProcessFlags,
+                                        UnsafeMutableRawPointer(mutating: environmentW),
+                                        intendedWorkingDirW,
+                                        spawnContext.startupInfo.pointer(to: \.StartupInfo)!,
+                                        &processInfo
+                                    )
+                                    return (result, processInfo, GetLastError())
+                                }
                             }
                         }
                     }
@@ -148,7 +164,6 @@ extension Configuration {
             }
 
             guard created else {
-                let windowsError = GetLastError()
                 if windowsError == ERROR_FILE_NOT_FOUND || windowsError == ERROR_PATH_NOT_FOUND {
                     // This execution path is not it. Try the next one
                     continue
@@ -233,7 +248,7 @@ extension Configuration {
         outputPipe: consuming CreatedPipe,
         errorPipe: consuming CreatedPipe,
         userCredentials: PlatformOptions.UserCredentials
-    ) throws -> SpawnResult {
+    ) async throws -> SpawnResult {
         var inputPipeBox: CreatedPipe? = consume inputPipe
         var outputPipeBox: CreatedPipe? = consume outputPipe
         var errorPipeBox: CreatedPipe? = consume errorPipe
@@ -297,10 +312,9 @@ extension Configuration {
                 throw error
             }
 
-            var processInfo: PROCESS_INFORMATION = PROCESS_INFORMATION()
             var createProcessFlags = self.generateCreateProcessFlag()
 
-            let created = try self.withStartupInfoEx(
+            let (created, processInfo, windowsError) = try await self.withStartupInfoEx(
                 inputRead: inputReadFileDescriptor,
                 inputWrite: inputWriteFileDescriptor,
                 outputRead: outputReadFileDescriptor,
@@ -313,37 +327,45 @@ extension Configuration {
                     try configurator(&createProcessFlags, &startupInfo.pointer(to: \.StartupInfo)!.pointee)
                 }
 
+                let spawnContext = SpawnContext(
+                    startupInfo: startupInfo,
+                    createProcessFlags: createProcessFlags
+                )
                 // Spawn (featuring pyramid!)
-                return try userCredentials.username.withCString(
-                    encodedAs: UTF16.self
-                ) { usernameW in
-                    try userCredentials.password.withCString(
+                return try await runOnBackgroundThread {
+                    return try userCredentials.username.withCString(
                         encodedAs: UTF16.self
-                    ) { passwordW in
-                        try userCredentials.domain.withOptionalCString(
+                    ) { usernameW in
+                        try userCredentials.password.withCString(
                             encodedAs: UTF16.self
-                        ) { domainW in
-                            try applicationName.withOptionalNTPathRepresentation { applicationNameW in
-                                try commandAndArgs.withCString(
-                                    encodedAs: UTF16.self
-                                ) { commandAndArgsW in
-                                    try environment.withCString(
+                        ) { passwordW in
+                            try userCredentials.domain.withOptionalCString(
+                                encodedAs: UTF16.self
+                            ) { domainW in
+                                try applicationName.withOptionalNTPathRepresentation { applicationNameW in
+                                    try commandAndArgs.withCString(
                                         encodedAs: UTF16.self
-                                    ) { environmentW in
-                                        try intendedWorkingDir.withOptionalNTPathRepresentation { intendedWorkingDirW in
-                                            CreateProcessWithLogonW(
-                                                usernameW,
-                                                domainW,
-                                                passwordW,
-                                                DWORD(LOGON_WITH_PROFILE),
-                                                applicationNameW,
-                                                UnsafeMutablePointer<WCHAR>(mutating: commandAndArgsW),
-                                                createProcessFlags,
-                                                UnsafeMutableRawPointer(mutating: environmentW),
-                                                intendedWorkingDirW,
-                                                startupInfo.pointer(to: \.StartupInfo)!,
-                                                &processInfo
-                                            )
+                                    ) { commandAndArgsW in
+                                        try environment.withCString(
+                                            encodedAs: UTF16.self
+                                        ) { environmentW in
+                                            try intendedWorkingDir.withOptionalNTPathRepresentation { intendedWorkingDirW in
+                                                var processInfo = PROCESS_INFORMATION()
+                                                let created = CreateProcessWithLogonW(
+                                                    usernameW,
+                                                    domainW,
+                                                    passwordW,
+                                                    DWORD(LOGON_WITH_PROFILE),
+                                                    applicationNameW,
+                                                    UnsafeMutablePointer<WCHAR>(mutating: commandAndArgsW),
+                                                    spawnContext.createProcessFlags,
+                                                    UnsafeMutableRawPointer(mutating: environmentW),
+                                                    intendedWorkingDirW,
+                                                    spawnContext.startupInfo.pointer(to: \.StartupInfo)!,
+                                                    &processInfo
+                                                )
+                                                return (created, processInfo, GetLastError())
+                                            }
                                         }
                                     }
                                 }
@@ -354,8 +376,6 @@ extension Configuration {
             }
 
             guard created else {
-                let windowsError = GetLastError()
-
                 if windowsError == ERROR_FILE_NOT_FOUND || windowsError == ERROR_PATH_NOT_FOUND {
                     // This executable path is not it. Try the next one
                     continue
@@ -1045,8 +1065,8 @@ extension Configuration {
         outputWrite outputWriteFileDescriptor: borrowing IODescriptor?,
         errorRead errorReadFileDescriptor: borrowing IODescriptor?,
         errorWrite errorWriteFileDescriptor: borrowing IODescriptor?,
-        _ body: (UnsafeMutablePointer<STARTUPINFOEXW>) throws -> Result
-    ) rethrows -> Result {
+        _ body: (UnsafeMutablePointer<STARTUPINFOEXW>) async throws -> Result
+    ) async throws -> Result {
         var info: STARTUPINFOEXW = STARTUPINFOEXW()
         info.StartupInfo.cb = DWORD(MemoryLayout.size(ofValue: info))
         info.StartupInfo.dwFlags |= DWORD(STARTF_USESTDHANDLES)
@@ -1112,35 +1132,41 @@ extension Configuration {
         let alignment = 16
         var attributeListByteCount = SIZE_T(0)
         _ = InitializeProcThreadAttributeList(nil, 1, 0, &attributeListByteCount)
-        return try withUnsafeTemporaryAllocation(byteCount: Int(attributeListByteCount), alignment: alignment) { attributeListPtr in
-            let attributeList = LPPROC_THREAD_ATTRIBUTE_LIST(attributeListPtr.baseAddress!)
-            guard InitializeProcThreadAttributeList(attributeList, 1, 0, &attributeListByteCount) else {
-                throw SubprocessError(
-                    code: .init(.spawnFailed),
-                    underlyingError: .init(rawValue: GetLastError())
-                )
-            }
-            defer {
-                DeleteProcThreadAttributeList(attributeList)
-            }
-
-            var handles = Array(inheritedHandles)
-            return try handles.withUnsafeMutableBufferPointer { inheritedHandlesPtr in
-                _ = UpdateProcThreadAttribute(
-                    attributeList,
-                    0,
-                    _subprocess_PROC_THREAD_ATTRIBUTE_HANDLE_LIST(),
-                    inheritedHandlesPtr.baseAddress!,
-                    SIZE_T(MemoryLayout<HANDLE>.stride * inheritedHandlesPtr.count),
-                    nil,
-                    nil
-                )
-
-                info.lpAttributeList = attributeList
-
-                return try body(&info)
-            }
+        // We can't use withUnsafeTemporaryAllocation here because body is async
+        let attributeListPtr: UnsafeMutableRawBufferPointer = .allocate(
+            byteCount: Int(attributeListByteCount),
+            alignment: alignment
+        )
+        defer {
+            attributeListPtr.deallocate()
         }
+
+        let attributeList = LPPROC_THREAD_ATTRIBUTE_LIST(attributeListPtr.baseAddress!)
+        guard InitializeProcThreadAttributeList(attributeList, 1, 0, &attributeListByteCount) else {
+            throw SubprocessError(
+                code: .init(.spawnFailed),
+                underlyingError: .init(rawValue: GetLastError())
+            )
+        }
+        defer {
+            DeleteProcThreadAttributeList(attributeList)
+        }
+
+        var handles = Array(inheritedHandles)
+        handles.withUnsafeMutableBufferPointer { inheritedHandlesPtr in
+            _ = UpdateProcThreadAttribute(
+                attributeList,
+                0,
+                _subprocess_PROC_THREAD_ATTRIBUTE_HANDLE_LIST(),
+                inheritedHandlesPtr.baseAddress!,
+                SIZE_T(MemoryLayout<HANDLE>.stride * inheritedHandlesPtr.count),
+                nil,
+                nil
+            )
+
+            info.lpAttributeList = attributeList
+        }
+        return try await body(&info)
     }
 
     private func generateWindowsCommandAndArguments(

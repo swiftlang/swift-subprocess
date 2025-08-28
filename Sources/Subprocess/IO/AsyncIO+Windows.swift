@@ -60,9 +60,11 @@ final class AsyncIO: @unchecked Sendable {
     internal init() {
         var maybeSetupError: SubprocessError? = nil
         // Create the the completion port
-        guard let ioCompletionPort = CreateIoCompletionPort(
-            INVALID_HANDLE_VALUE, nil, 0, 0
-        ), ioCompletionPort != INVALID_HANDLE_VALUE else {
+        guard
+            let ioCompletionPort = CreateIoCompletionPort(
+                INVALID_HANDLE_VALUE, nil, 0, 0
+            ), ioCompletionPort != INVALID_HANDLE_VALUE
+        else {
             let error = SubprocessError(
                 code: .init(.asyncIOFailed("CreateIoCompletionPort failed")),
                 underlyingError: .init(rawValue: GetLastError())
@@ -91,45 +93,7 @@ final class AsyncIO: @unchecked Sendable {
                     var bytesTransferred: DWORD = 0
                     var targetFileDescriptor: UInt64 = 0
                     var overlapped: LPOVERLAPPED? = nil
-                // Monitor loop
-                while true {
-                    var bytesTransferred: DWORD = 0
-                    var targetFileDescriptor: UInt64 = 0
-                    var overlapped: LPOVERLAPPED? = nil
 
-                    let monitorResult = GetQueuedCompletionStatus(
-                        context.ioCompletionPort,
-                        &bytesTransferred,
-                        &targetFileDescriptor,
-                        &overlapped,
-                        INFINITE
-                    )
-                    if !monitorResult {
-                        let lastError = GetLastError()
-                        if lastError == ERROR_BROKEN_PIPE {
-                            // We finished reading the handle. Signal EOF by
-                            // finishing the stream.
-                            // NOTE: here we deliberately leave now unused continuation
-                            // in the store. Windows does not offer an API to remove a
-                            // HANDLE from an IOCP port, therefore we leave the registration
-                            // to signify the HANDLE has already been resisted.
-                            let continuation = _registration.withLock { store -> SignalStream.Continuation? in
-                                if let continuation = store[targetFileDescriptor] {
-                                    return continuation
-                                }
-                                return nil
-                            }
-                            continuation?.finish()
-                            continue
-                        } else {
-                            let error = SubprocessError(
-                                code: .init(.asyncIOFailed("GetQueuedCompletionStatus failed")),
-                                underlyingError: .init(rawValue: lastError)
-                            )
-                            reportError(error)
-                            break
-                        }
-                    }
                     let monitorResult = GetQueuedCompletionStatus(
                         context.ioCompletionPort,
                         &bytesTransferred,

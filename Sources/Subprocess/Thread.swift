@@ -29,7 +29,6 @@ import _SubprocessCShims
 import Synchronization
 #endif
 
-
 #if canImport(WinSDK)
 private typealias MutexType = CRITICAL_SECTION
 private typealias ConditionType = CONDITION_VARIABLE
@@ -285,7 +284,8 @@ internal func begin_thread_x(
         nil
     )
     guard threadHandleValue != 0,
-          let threadHandle = HANDLE(bitPattern: threadHandleValue) else {
+        let threadHandle = HANDLE(bitPattern: threadHandleValue)
+    else {
         // _beginthreadex uses errno instead of GetLastError()
         let capturedError = _subprocess_windows_get_errno()
         throw SubprocessError.UnderlyingError(rawValue: DWORD(capturedError))
@@ -304,28 +304,28 @@ internal func pthread_create(
             self.body = body
         }
     }
-#if canImport(Darwin)
+    #if canImport(Darwin)
     func proc(_ context: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer? {
         (Unmanaged<AnyObject>.fromOpaque(context).takeRetainedValue() as! Context).body()
         return context
     }
-#elseif canImport(Glibc) || canImport(Musl)
+    #elseif canImport(Glibc) || canImport(Musl)
     func proc(_ context: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
         (Unmanaged<AnyObject>.fromOpaque(context!).takeRetainedValue() as! Context).body()
         return context
     }
-#elseif canImport(Bionic)
+    #elseif canImport(Bionic)
     func proc(_ context: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer {
         (Unmanaged<AnyObject>.fromOpaque(context).takeRetainedValue() as! Context).body()
         return context
     }
-#endif
+    #endif
 
-#if canImport(Glibc) || canImport(Bionic)
+    #if canImport(Glibc) || canImport(Bionic)
     var thread = pthread_t()
-#else
+    #else
     var thread: pthread_t?
-#endif
+    #endif
     let rc = pthread_create(
         &thread,
         nil,
@@ -335,12 +335,11 @@ internal func pthread_create(
     if rc != 0 {
         throw SubprocessError.UnderlyingError(rawValue: rc)
     }
-#if canImport(Glibc) || canImport(Bionic)
+    #if canImport(Glibc) || canImport(Bionic)
     return thread
-#else
+    #else
     return thread!
-#endif
+    #endif
 }
 
 #endif // canImport(WinSDK)
-
