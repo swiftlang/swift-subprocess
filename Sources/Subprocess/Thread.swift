@@ -11,6 +11,7 @@
 
 #if canImport(Darwin)
 import Darwin
+import os
 #elseif canImport(Glibc)
 import Glibc
 #elseif canImport(Bionic)
@@ -28,24 +29,6 @@ import _SubprocessCShims
 import Synchronization
 #endif
 
-#if canImport(Darwin)
-internal func runOnBackgroundThread<Result>(
-    _ body: @Sendable @escaping () throws -> Result
-) async throws -> Result {
-    let result = try await withCheckedThrowingContinuation { continuation in
-        // On Darwin, use DispatchQueue directly
-        DispatchQueue.global().async {
-            do {
-                let result = try body()
-                continuation.resume(returning: result)
-            } catch {
-                continuation.resume(throwing: error)
-            }
-        }
-    }
-    return result
-}
-#else
 
 #if canImport(WinSDK)
 private typealias MutexType = CRITICAL_SECTION
@@ -56,6 +39,19 @@ private typealias MutexType = pthread_mutex_t
 private typealias ConditionType = pthread_cond_t
 private typealias ThreadType = pthread_t
 #endif
+
+internal func runOnBackgroundThread<Result>(
+    _ body: @Sendable @escaping () throws -> Result
+) async throws -> Result {
+    // Only executed once
+    _setupWorkerThread
+
+    let result = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Result, any Error>) in
+        let workItem = BackgroundWorkItem(body, continuation: continuation)
+        _workQueue.enqueue(workItem)
+    }
+    return result
+}
 
 private struct BackgroundWorkItem {
     private let work: @Sendable () -> Void
@@ -165,12 +161,12 @@ private final class WorkQueue: Sendable {
 }
 
 private let _workQueue = WorkQueue()
-private let _workQueueShutdownFlag: Atomic<UInt8> = Atomic(0)
+private let _workQueueShutdownFlag = AtomicCounter()
 
 // Okay to be unlocked global mutable because this value is only set once like dispatch_once
 private nonisolated(unsafe) var _workerThread: Result<ThreadType, any Error> = .failure(SubprocessError(code: .init(.spawnFailed), underlyingError: nil))
 
-private let setupWorkerThread: () = {
+private let _setupWorkerThread: () = {
     do {
         #if canImport(WinSDK)
         let workerThread = try begin_thread_x {
@@ -208,7 +204,7 @@ private func _shutdownWorkerThread() {
     guard case .success(let thread) = _workerThread else {
         return
     }
-    guard _workQueueShutdownFlag.add(1, ordering: .sequentiallyConsistent).newValue == 1 else {
+    guard _workQueueShutdownFlag.addOne() == 1 else {
         // We already shutdown this thread
         return
     }
@@ -227,65 +223,41 @@ private func _shutdownWorkerThread() {
     _workQueue.waitCondition.deallocate()
 }
 
-internal func runOnBackgroundThread<Result>(
-    _ body: @Sendable @escaping () throws -> Result
-) async throws -> Result {
-    // Only executed once
-    setupWorkerThread
+// MARK: - AtomicCounter
 
-    let result = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Result, any Error>) in
-        let workItem = BackgroundWorkItem(body, continuation: continuation)
-        _workQueue.enqueue(workItem)
+#if canImport(Darwin)
+// Unfortunately on Darwin we can unconditionally use Atomic since it requires macOS 15
+internal struct AtomicCounter: ~Copyable {
+    private let storage: OSAllocatedUnfairLock<UInt8>
+
+    internal init() {
+        self.storage = .init(initialState: 0)
     }
-    return result
-}
 
+    internal func addOne() -> UInt8 {
+        return self.storage.withLock {
+            $0 += 1
+            return $0
+        }
+    }
+}
+#else
+internal struct AtomicCounter: ~Copyable {
+
+    private let storage: Atomic<UInt8>
+
+    internal init() {
+        self.storage = Atomic(0)
+    }
+
+    internal func addOne() -> UInt8 {
+        return self.storage.add(1, ordering: .sequentiallyConsistent).newValue
+    }
+}
 #endif
 
 // MARK: - Thread Creation Primitives
-#if canImport(Glibc) || canImport(Bionic) || canImport(Musl)
-internal func pthread_create(
-    _ body: @Sendable @escaping () -> ()
-) throws(SubprocessError.UnderlyingError) -> pthread_t {
-    final class Context {
-        let body: @Sendable () -> ()
-        init(body: @Sendable @escaping () -> Void) {
-            self.body = body
-        }
-    }
-    #if canImport(Glibc) || canImport(Musl)
-    func proc(_ context: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
-        (Unmanaged<AnyObject>.fromOpaque(context!).takeRetainedValue() as! Context).body()
-        return nil
-    }
-    #elseif canImport(Bionic)
-    func proc(_ context: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer {
-        (Unmanaged<AnyObject>.fromOpaque(context).takeRetainedValue() as! Context).body()
-        return context
-    }
-    #endif
-    #if canImport(Glibc) || canImport(Bionic)
-    var thread = pthread_t()
-    #else
-    var thread: pthread_t?
-    #endif
-    let rc = pthread_create(
-        &thread,
-        nil,
-        proc,
-        Unmanaged.passRetained(Context(body: body)).toOpaque()
-    )
-    if rc != 0 {
-        throw SubprocessError.UnderlyingError(rawValue: rc)
-    }
-    #if canImport(Glibc) || canImport(Bionic)
-    return thread
-    #else
-    return thread!
-    #endif
-}
-
-#elseif canImport(WinSDK)
+#if canImport(WinSDK)
 /// Microsoft documentation for `CreateThread` states:
 /// > A thread in an executable that calls the C run-time library (CRT)
 /// > should use the _beginthreadex and _endthreadex functions for
@@ -321,5 +293,54 @@ internal func begin_thread_x(
 
     return threadHandle
 }
+#else
+
+internal func pthread_create(
+    _ body: @Sendable @escaping () -> ()
+) throws(SubprocessError.UnderlyingError) -> pthread_t {
+    final class Context {
+        let body: @Sendable () -> ()
+        init(body: @Sendable @escaping () -> Void) {
+            self.body = body
+        }
+    }
+#if canImport(Darwin)
+    func proc(_ context: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer? {
+        (Unmanaged<AnyObject>.fromOpaque(context).takeRetainedValue() as! Context).body()
+        return context
+    }
+#elseif canImport(Glibc) || canImport(Musl)
+    func proc(_ context: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
+        (Unmanaged<AnyObject>.fromOpaque(context!).takeRetainedValue() as! Context).body()
+        return context
+    }
+#elseif canImport(Bionic)
+    func proc(_ context: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer {
+        (Unmanaged<AnyObject>.fromOpaque(context).takeRetainedValue() as! Context).body()
+        return context
+    }
 #endif
+
+#if canImport(Glibc) || canImport(Bionic)
+    var thread = pthread_t()
+#else
+    var thread: pthread_t?
+#endif
+    let rc = pthread_create(
+        &thread,
+        nil,
+        proc,
+        Unmanaged.passRetained(Context(body: body)).toOpaque()
+    )
+    if rc != 0 {
+        throw SubprocessError.UnderlyingError(rawValue: rc)
+    }
+#if canImport(Glibc) || canImport(Bionic)
+    return thread
+#else
+    return thread!
+#endif
+}
+
+#endif // canImport(WinSDK)
 

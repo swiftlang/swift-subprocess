@@ -415,11 +415,24 @@ internal typealias PlatformFileDescriptor = CInt
 
 #if !canImport(Darwin)
 extension Configuration {
+
+    // @unchecked Sendable because we need to capture UnsafePointers
+    // to send to another thread. While UnsafePointers are not
+    // Sendable, we are not mutating them -- we only need these type
+    // for C interface.
+    internal struct SpawnContext: @unchecked Sendable {
+        let argv: [UnsafeMutablePointer<CChar>?]
+        let env: [UnsafeMutablePointer<CChar>?]
+        let uidPtr: UnsafeMutablePointer<uid_t>?
+        let gidPtr: UnsafeMutablePointer<gid_t>?
+        let processGroupIDPtr: UnsafeMutablePointer<gid_t>?
+    }
+
     internal func spawn(
         withInput inputPipe: consuming CreatedPipe,
         outputPipe: consuming CreatedPipe,
         errorPipe: consuming CreatedPipe
-    ) throws -> SpawnResult {
+    ) async throws -> SpawnResult {
         // Ensure the waiter thread is running.
         #if os(Linux) || os(Android)
         _setupMonitorSignalHandler()
@@ -434,7 +447,7 @@ extension Configuration {
         var outputPipeBox: CreatedPipe? = consume outputPipe
         var errorPipeBox: CreatedPipe? = consume errorPipe
 
-        return try self.preSpawn { args throws -> SpawnResult in
+        return try await self.preSpawn { args throws -> SpawnResult in
             let (env, uidPtr, gidPtr, supplementaryGroups) = args
 
             var _inputPipe = inputPipeBox.take()!
@@ -472,27 +485,34 @@ extension Configuration {
                 ]
 
                 // Spawn
-                var pid: pid_t = 0
-                var processDescriptor: PlatformFileDescriptor = -1
-                let spawnError: CInt = possibleExecutablePath.withCString { exePath in
-                    return (self.workingDirectory?.string).withOptionalCString { workingDir in
-                        return supplementaryGroups.withOptionalUnsafeBufferPointer { sgroups in
-                            return fileDescriptors.withUnsafeBufferPointer { fds in
-                                return _subprocess_fork_exec(
-                                    &pid,
-                                    &processDescriptor,
-                                    exePath,
-                                    workingDir,
-                                    fds.baseAddress!,
-                                    argv,
-                                    env,
-                                    uidPtr,
-                                    gidPtr,
-                                    processGroupIDPtr,
-                                    CInt(supplementaryGroups?.count ?? 0),
-                                    sgroups?.baseAddress,
-                                    self.platformOptions.createSession ? 1 : 0
-                                )
+                let spawnContext = SpawnContext(
+                    argv: argv, env: env, uidPtr: uidPtr, gidPtr: gidPtr, processGroupIDPtr: processGroupIDPtr
+                )
+                let (pid, processDescriptor, spawnError) = try await runOnBackgroundThread {
+                    return possibleExecutablePath.withCString { exePath in
+                        return (self.workingDirectory?.string).withOptionalCString { workingDir in
+                            return supplementaryGroups.withOptionalUnsafeBufferPointer { sgroups in
+                                return fileDescriptors.withUnsafeBufferPointer { fds in
+                                    var pid: pid_t = 0
+                                    var processDescriptor: PlatformFileDescriptor = -1
+
+                                    let rc = _subprocess_fork_exec(
+                                        &pid,
+                                        &processDescriptor,
+                                        exePath,
+                                        workingDir,
+                                        fds.baseAddress!,
+                                        spawnContext.argv,
+                                        spawnContext.env,
+                                        spawnContext.uidPtr,
+                                        spawnContext.gidPtr,
+                                        spawnContext.processGroupIDPtr,
+                                        CInt(supplementaryGroups?.count ?? 0),
+                                        sgroups?.baseAddress,
+                                        self.platformOptions.createSession ? 1 : 0
+                                    )
+                                    return (pid, processDescriptor, rc)
+                                }
                             }
                         }
                     }
