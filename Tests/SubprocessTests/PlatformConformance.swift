@@ -46,4 +46,4 @@ protocol ProcessIdentifierProtocol: Sendable, Hashable, CustomStringConvertible,
     #endif
 }
 
-extension ProcessIdentifier : ProcessIdentifierProtocol {}
+extension ProcessIdentifier: ProcessIdentifierProtocol {}

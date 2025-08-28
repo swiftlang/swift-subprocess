@@ -29,7 +29,7 @@ import Foundation
 import FoundationEssentials
 #endif
 
-#endif  // SubprocessFoundation
+#endif // SubprocessFoundation
 
 // MARK: - Input
 

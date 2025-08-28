@@ -17,7 +17,7 @@ import Foundation
 #else
 // On other platforms prefer FoundationEssentials
 import FoundationEssentials
-#endif  // canImport(Darwin)
+#endif // canImport(Darwin)
 
 internal import Dispatch
 
@@ -71,4 +71,4 @@ extension DataProtocol {
     }
 }
 
-#endif  // SubprocessFoundation
+#endif // SubprocessFoundation

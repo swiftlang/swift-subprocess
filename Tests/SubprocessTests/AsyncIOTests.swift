@@ -35,7 +35,7 @@ import _SubprocessCShims
 @testable import Subprocess
 
 @Suite("Subprocess.AsyncIO Unit Tests", .serialized)
-struct SubprocessAsyncIOTests { }
+struct SubprocessAsyncIOTests {}
 
 // MARK: - Basic Functionality Tests
 extension SubprocessAsyncIOTests {
@@ -133,7 +133,6 @@ extension SubprocessAsyncIOTests {
     }
 }
 
-
 // MARK: - Error Handling Tests
 extension SubprocessAsyncIOTests {
     @Test func testWriteToClosedPipe() async throws {
@@ -164,9 +163,7 @@ extension SubprocessAsyncIOTests {
             // On Linux, depending on timing, either epoll_ctl or write
             // could throw error first
             #expect(
-                subprocessError.underlyingError == .init(rawValue: EBADF) ||
-                subprocessError.underlyingError == .init(rawValue: EINVAL) ||
-                subprocessError.underlyingError == .init(rawValue: EPERM)
+                subprocessError.underlyingError == .init(rawValue: EBADF) || subprocessError.underlyingError == .init(rawValue: EINVAL) || subprocessError.underlyingError == .init(rawValue: EPERM)
             )
             #endif
             return true
@@ -202,9 +199,7 @@ extension SubprocessAsyncIOTests {
             // On Linux, depending on timing, either epoll_ctl or read
             // could throw error first
             #expect(
-                subprocessError.underlyingError == .init(rawValue: EBADF) ||
-                subprocessError.underlyingError == .init(rawValue: EINVAL) ||
-                subprocessError.underlyingError == .init(rawValue: EPERM)
+                subprocessError.underlyingError == .init(rawValue: EBADF) || subprocessError.underlyingError == .init(rawValue: EINVAL) || subprocessError.underlyingError == .init(rawValue: EPERM)
             )
             #endif
             return true
@@ -276,13 +271,13 @@ extension SubprocessAsyncIOTests {
 
 extension SubprocessAsyncIOTests.TestBed {
     consuming func finish() async throws {
-#if SUBPROCESS_ASYNCIO_DISPATCH
+        #if SUBPROCESS_ASYNCIO_DISPATCH
         try _safelyClose(.dispatchIO(self.ioChannel.channel))
-#elseif canImport(WinSDK)
+        #elseif canImport(WinSDK)
         try _safelyClose(.handle(self.ioChannel.channel))
-#else
+        #else
         try _safelyClose(.fileDescriptor(self.ioChannel.channel))
-#endif
+        #endif
     }
 
     func delay(_ duration: Duration) async throws {

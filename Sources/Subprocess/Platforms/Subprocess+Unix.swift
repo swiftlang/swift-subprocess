@@ -699,7 +699,7 @@ internal func pthread_create(_ body: @Sendable @escaping () -> ()) throws(Subpro
     #endif
 }
 
-#endif  // !canImport(Darwin)
+#endif // !canImport(Darwin)
 
 extension ProcessIdentifier {
     /// Reaps the zombie for the exited process. This function may block.
@@ -780,4 +780,4 @@ internal extension siginfo_t {
 }
 #endif
 
-#endif  // canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl)
+#endif // canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl)

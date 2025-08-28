@@ -121,7 +121,7 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol {
     public func output(from span: RawSpan) throws -> String? {
         // FIXME: Span to String
         var array: [UInt8] = []
-        for index in 0..<span.byteCount {
+        for index in 0 ..< span.byteCount {
             array.append(span.unsafeLoad(fromByteOffset: index, as: UInt8.self))
         }
         return String(decodingBytes: array, as: Encoding.self)
@@ -242,7 +242,6 @@ extension OutputProtocol {
     }
 }
 
-
 extension OutputProtocol where Self == BytesOutput {
     /// Create a `Subprocess` output that collects output as
     /// `Buffer` with a buffer limit in bytes. Subprocess throws
@@ -264,7 +263,6 @@ extension OutputProtocol {
     }
 }
 #endif
-
 
 // MARK: - Default Implementations
 extension OutputProtocol {

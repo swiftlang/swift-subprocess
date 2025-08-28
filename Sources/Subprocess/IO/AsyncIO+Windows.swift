@@ -26,9 +26,10 @@ internal import Dispatch
 
 private typealias SignalStream = AsyncThrowingStream<DWORD, any Error>
 private let shutdownPort: UInt64 = .max
-private let _registration: Mutex<
-    [UInt64 : SignalStream.Continuation]
-> = Mutex([:])
+private let _registration:
+    Mutex<
+        [UInt64: SignalStream.Continuation]
+    > = Mutex([:])
 
 final class AsyncIO: @unchecked Sendable {
 
@@ -36,8 +37,10 @@ final class AsyncIO: @unchecked Sendable {
         var count: Int { get }
 
         func withUnsafeBytes<ResultType>(
-            _ body: (UnsafeRawBufferPointer
-            ) throws -> ResultType) rethrows -> ResultType
+            _ body: (
+                UnsafeRawBufferPointer
+            ) throws -> ResultType
+        ) rethrows -> ResultType
     }
 
     private final class MonitorThreadContext {
@@ -57,9 +60,11 @@ final class AsyncIO: @unchecked Sendable {
     internal init() {
         var maybeSetupError: SubprocessError? = nil
         // Create the the completion port
-        guard let port = CreateIoCompletionPort(
-            INVALID_HANDLE_VALUE, nil, 0, 0
-        ), port != INVALID_HANDLE_VALUE else {
+        guard
+            let port = CreateIoCompletionPort(
+                INVALID_HANDLE_VALUE, nil, 0, 0
+            ), port != INVALID_HANDLE_VALUE
+        else {
             let error = SubprocessError(
                 code: .init(.asyncIOFailed("CreateIoCompletionPort failed")),
                 underlyingError: .init(rawValue: GetLastError())
@@ -76,76 +81,79 @@ final class AsyncIO: @unchecked Sendable {
         /// > A thread in an executable that calls the C run-time library (CRT)
         /// > should use the _beginthreadex and _endthreadex functions for
         /// > thread management rather than CreateThread and ExitThread
-        let threadHandleValue = _beginthreadex(nil, 0, { args in
-            func reportError(_ error: SubprocessError) {
-                let continuations = _registration.withLock { store in
-                    return store.values
+        let threadHandleValue = _beginthreadex(
+            nil, 0,
+            { args in
+                func reportError(_ error: SubprocessError) {
+                    let continuations = _registration.withLock { store in
+                        return store.values
+                    }
+                    for continuation in continuations {
+                        continuation.finish(throwing: error)
+                    }
                 }
-                for continuation in continuations {
-                    continuation.finish(throwing: error)
-                }
-            }
 
-            let unmanaged = Unmanaged<MonitorThreadContext>.fromOpaque(args!)
-            let context = unmanaged.takeRetainedValue()
+                let unmanaged = Unmanaged<MonitorThreadContext>.fromOpaque(args!)
+                let context = unmanaged.takeRetainedValue()
 
-            // Monitor loop
-            while true {
-                var bytesTransferred: DWORD = 0
-                var targetFileDescriptor: UInt64 = 0
-                var overlapped: LPOVERLAPPED? = nil
+                // Monitor loop
+                while true {
+                    var bytesTransferred: DWORD = 0
+                    var targetFileDescriptor: UInt64 = 0
+                    var overlapped: LPOVERLAPPED? = nil
 
-                let monitorResult = GetQueuedCompletionStatus(
-                    context.ioCompletionPort,
-                    &bytesTransferred,
-                    &targetFileDescriptor,
-                    &overlapped,
-                    INFINITE
-                )
-                if !monitorResult {
-                    let lastError = GetLastError()
-                    if lastError == ERROR_BROKEN_PIPE {
-                        // We finished reading the handle. Signal EOF by
-                        // finishing the stream.
-                        // NOTE: here we deliberately leave now unused continuation
-                        // in the store. Windows does not offer an API to remove a
-                        // HANDLE from an IOCP port, therefore we leave the registration
-                        // to signify the HANDLE has already been resisted.
-                        let continuation = _registration.withLock { store -> SignalStream.Continuation? in
-                            if let continuation = store[targetFileDescriptor] {
-                                return continuation
+                    let monitorResult = GetQueuedCompletionStatus(
+                        context.ioCompletionPort,
+                        &bytesTransferred,
+                        &targetFileDescriptor,
+                        &overlapped,
+                        INFINITE
+                    )
+                    if !monitorResult {
+                        let lastError = GetLastError()
+                        if lastError == ERROR_BROKEN_PIPE {
+                            // We finished reading the handle. Signal EOF by
+                            // finishing the stream.
+                            // NOTE: here we deliberately leave now unused continuation
+                            // in the store. Windows does not offer an API to remove a
+                            // HANDLE from an IOCP port, therefore we leave the registration
+                            // to signify the HANDLE has already been resisted.
+                            let continuation = _registration.withLock { store -> SignalStream.Continuation? in
+                                if let continuation = store[targetFileDescriptor] {
+                                    return continuation
+                                }
+                                return nil
                             }
-                            return nil
+                            continuation?.finish()
+                            continue
+                        } else {
+                            let error = SubprocessError(
+                                code: .init(.asyncIOFailed("GetQueuedCompletionStatus failed")),
+                                underlyingError: .init(rawValue: lastError)
+                            )
+                            reportError(error)
+                            break
                         }
-                        continuation?.finish()
-                        continue
-                    } else {
-                        let error = SubprocessError(
-                            code: .init(.asyncIOFailed("GetQueuedCompletionStatus failed")),
-                            underlyingError: .init(rawValue: lastError)
-                        )
-                        reportError(error)
+                    }
+
+                    // Breakout the monitor loop if we received shutdown from the shutdownFD
+                    if targetFileDescriptor == shutdownPort {
                         break
                     }
-                }
-
-                // Breakout the monitor loop if we received shutdown from the shutdownFD
-                if targetFileDescriptor == shutdownPort {
-                    break
-                }
-                // Notify the continuations
-                let continuation = _registration.withLock { store -> SignalStream.Continuation? in
-                    if let continuation = store[targetFileDescriptor] {
-                        return continuation
+                    // Notify the continuations
+                    let continuation = _registration.withLock { store -> SignalStream.Continuation? in
+                        if let continuation = store[targetFileDescriptor] {
+                            return continuation
+                        }
+                        return nil
                     }
-                    return nil
+                    continuation?.yield(bytesTransferred)
                 }
-                continuation?.yield(bytesTransferred)
-            }
-            return 0
-        }, threadContextPtr.toOpaque(), 0, nil)
+                return 0
+            }, threadContextPtr.toOpaque(), 0, nil)
         guard threadHandleValue > 0,
-            let threadHandle = HANDLE(bitPattern: threadHandleValue) else {
+            let threadHandle = HANDLE(bitPattern: threadHandleValue)
+        else {
             // _beginthreadex uses errno instead of GetLastError()
             let capturedError = _subprocess_windows_get_errno()
             let error = SubprocessError(
@@ -164,7 +172,8 @@ final class AsyncIO: @unchecked Sendable {
 
     internal func shutdown() {
         guard case .success(let ioPort) = ioCompletionPort,
-              case .success(let monitorThreadHandle) = monitorThread else {
+            case .success(let monitorThreadHandle) = monitorThread
+        else {
             return
         }
         // Make sure we don't shutdown the same instance twice
@@ -174,10 +183,10 @@ final class AsyncIO: @unchecked Sendable {
         }
         // Post status to shutdown HANDLE
         PostQueuedCompletionStatus(
-            ioPort,         // CompletionPort
-            0,              // Number of bytes transferred.
-            shutdownPort,   // Completion key to post status
-            nil             // Overlapped
+            ioPort, // CompletionPort
+            0, // Number of bytes transferred.
+            shutdownPort, // Completion key to post status
+            nil // Overlapped
         )
         // Wait for monitor thread to exit
         WaitForSingleObject(monitorThreadHandle, INFINITE)
@@ -215,9 +224,11 @@ final class AsyncIO: @unchecked Sendable {
 
                 // Windows Documentation: The function returns the handle
                 // of the existing I/O completion port if successful
-                guard CreateIoCompletionPort(
-                    handle, ioPort, completionKey, 0
-                ) == ioPort else {
+                guard
+                    CreateIoCompletionPort(
+                        handle, ioPort, completionKey, 0
+                    ) == ioPort
+                else {
                     let error = SubprocessError(
                         code: .init(.asyncIOFailed("CreateIoCompletionPort failed")),
                         underlyingError: .init(rawValue: GetLastError())
@@ -347,7 +358,7 @@ final class AsyncIO: @unchecked Sendable {
         return try await self._write(array, to: diskIO)
     }
 
-#if SubprocessSpan
+    #if SubprocessSpan
     func write(
         _ span: borrowing RawSpan,
         to diskIO: borrowing IOChannel
@@ -401,7 +412,7 @@ final class AsyncIO: @unchecked Sendable {
             }
         }
     }
-#endif // SubprocessSpan
+    #endif // SubprocessSpan
 
     func _write<Bytes: _ContiguousBytes>(
         _ bytes: Bytes,
@@ -469,7 +480,6 @@ final class AsyncIO: @unchecked Sendable {
     }
 }
 
-extension Array : AsyncIO._ContiguousBytes where Element == UInt8 {}
+extension Array: AsyncIO._ContiguousBytes where Element == UInt8 {}
 
 #endif
-

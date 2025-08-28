@@ -53,7 +53,7 @@ extension SubprocessUnixTests {
         )
     )
     func testSubprocessPlatformOptionsUserID() async throws {
-        let expectedUserID = uid_t(Int.random(in: 1000...2000))
+        let expectedUserID = uid_t(Int.random(in: 1000 ... 2000))
         var platformOptions = PlatformOptions()
         platformOptions.userID = expectedUserID
         try await self.assertID(
@@ -71,7 +71,7 @@ extension SubprocessUnixTests {
         )
     )
     func testSubprocessPlatformOptionsGroupID() async throws {
-        let expectedGroupID = gid_t(Int.random(in: 1000...2000))
+        let expectedGroupID = gid_t(Int.random(in: 1000 ... 2000))
         var platformOptions = PlatformOptions()
         platformOptions.groupID = expectedGroupID
         try await self.assertID(
@@ -90,8 +90,8 @@ extension SubprocessUnixTests {
     )
     func testSubprocessPlatformOptionsSupplementaryGroups() async throws {
         var expectedGroups: Set<gid_t> = Set()
-        for _ in 0..<Int.random(in: 5...10) {
-            expectedGroups.insert(gid_t(Int.random(in: 1000...2000)))
+        for _ in 0 ..< Int.random(in: 5 ... 10) {
+            expectedGroups.insert(gid_t(Int.random(in: 1000 ... 2000)))
         }
         var platformOptions = PlatformOptions()
         platformOptions.supplementaryGroups = Array(expectedGroups)
@@ -256,18 +256,18 @@ extension SubprocessUnixTests {
                         .name("bash"),
                         arguments: [
                             "-c",
-                        """
-                        set -e
-                        # The following /usr/bin/yes is the runaway grand child.
-                        # It runs in the background forever until this script kills it
-                        /usr/bin/yes "Runaway process from \(#function), please file a SwiftSubprocess bug." > /dev/null &
-                        child_pid=$! # Retrieve the grand child yes pid
-                        # When SIGINT is sent to the script, kill grand child now
-                        trap "echo >&2 'child: received signal, killing grand child ($child_pid)'; kill -s KILL $child_pid; exit 0" INT
-                        echo "$child_pid" # communicate the child pid to our parent
-                        echo "child: waiting for grand child, pid: $child_pid" >&2
-                        wait $child_pid # wait for runaway child to exit
-                        """
+                            """
+                            set -e
+                            # The following /usr/bin/yes is the runaway grand child.
+                            # It runs in the background forever until this script kills it
+                            /usr/bin/yes "Runaway process from \(#function), please file a SwiftSubprocess bug." > /dev/null &
+                            child_pid=$! # Retrieve the grand child yes pid
+                            # When SIGINT is sent to the script, kill grand child now
+                            trap "echo >&2 'child: received signal, killing grand child ($child_pid)'; kill -s KILL $child_pid; exit 0" INT
+                            echo "$child_pid" # communicate the child pid to our parent
+                            echo "child: waiting for grand child, pid: $child_pid" >&2
+                            wait $child_pid # wait for runaway child to exit
+                            """,
                         ],
                         platformOptions: platformOptions,
                         output: .string(limit: .max),
@@ -394,7 +394,7 @@ extension SubprocessUnixTests {
                         """
                         echo this string should be discarded >&\(pipe.writeEnd.rawValue);
                         echo wrote into \(pipe.writeEnd.rawValue), echo exit code $?;
-                        """
+                        """,
                     ],
                     input: .none,
                     output: .string(limit: 64),
@@ -410,8 +410,7 @@ extension SubprocessUnixTests {
             }
             #expect(readCount == 0)
             #expect(
-                result.standardOutput?.trimmingNewLineAndQuotes() ==
-                "wrote into \(pipe.writeEnd.rawValue), echo exit code 1"
+                result.standardOutput?.trimmingNewLineAndQuotes() == "wrote into \(pipe.writeEnd.rawValue), echo exit code 1"
             )
         }
     }
@@ -440,8 +439,8 @@ extension SubprocessUnixTests {
 
 internal func assertNewSessionCreated<Output: OutputProtocol>(
     with result: CollectedResult<
-    StringOutput<UTF8>,
-    Output
+        StringOutput<UTF8>,
+        Output
     >
 ) throws {
     try assertNewSessionCreated(
@@ -497,7 +496,7 @@ extension SubprocessUnixTests {
         try await withThrowingTaskGroup(of: Void.self) { group in
             var running = 0
             let byteCount = 1000
-            for _ in 0..<maxConcurrent {
+            for _ in 0 ..< maxConcurrent {
                 group.addTask {
                     // This invocation specifically requires bash semantics; sh (on FreeBSD at least) does not consistently support -s in this way
                     let r = try await Subprocess.run(
@@ -526,4 +525,4 @@ extension SubprocessUnixTests {
     #endif
 }
 
-#endif  // canImport(Darwin) || canImport(Glibc)
+#endif // canImport(Darwin) || canImport(Glibc)

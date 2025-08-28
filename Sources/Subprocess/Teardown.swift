@@ -52,7 +52,7 @@ public struct TeardownStep: Sendable, Hashable {
             )
         )
     }
-    #endif  // !os(Windows)
+    #endif // !os(Windows)
 
     /// Attempt to perform a graceful shutdown and allows
     /// `allowedDurationToNextStep` for the process to exit
@@ -177,7 +177,7 @@ extension Execution {
                     try? self.send(signal: signal, toProcessGroup: false)
                     return await group.next()!
                 }
-            #endif  // !os(Windows)
+            #endif // !os(Windows)
             case .kill:
                 #if os(Windows)
                 try? self.terminate(

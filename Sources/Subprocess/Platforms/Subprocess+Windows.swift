@@ -132,9 +132,9 @@ extension Configuration {
                                 CreateProcessW(
                                     applicationNameW,
                                     UnsafeMutablePointer<WCHAR>(mutating: commandAndArgsW),
-                                    nil,  // lpProcessAttributes
-                                    nil,  // lpThreadAttributes
-                                    true,  // bInheritHandles
+                                    nil, // lpProcessAttributes
+                                    nil, // lpThreadAttributes
+                                    true, // bInheritHandles
                                     createProcessFlags,
                                     UnsafeMutableRawPointer(mutating: environmentW),
                                     intendedWorkingDirW,
@@ -279,10 +279,12 @@ extension Configuration {
                 intendedWorkingDir
             ): (String?, String, String, String?)
             do {
-                (applicationName,
-                 commandAndArgs,
-                 environment,
-                 intendedWorkingDir) = try self.preSpawn(withPossibleExecutablePath: executablePath)
+                (
+                    applicationName,
+                    commandAndArgs,
+                    environment,
+                    intendedWorkingDir
+                ) = try self.preSpawn(withPossibleExecutablePath: executablePath)
             } catch {
                 try self.safelyCloseMultiple(
                     inputRead: inputReadFileDescriptor,
@@ -350,7 +352,6 @@ extension Configuration {
                     }
                 }
             }
-
 
             guard created else {
                 let windowsError = GetLastError()
@@ -992,7 +993,7 @@ extension Configuration {
         // On Windows, the PATH is required in order to locate dlls needed by
         // the process so we should also pass that to the child
         if env.pathValue() == nil,
-           let parentPath = Environment.currentEnvironmentValues().pathValue()
+            let parentPath = Environment.currentEnvironmentValues().pathValue()
         {
             env["Path"] = parentPath
         }
@@ -1357,7 +1358,7 @@ extension String {
             // not add the \\?\ prefix required by other functions under these conditions).
             let dwLength: DWORD = GetFullPathNameW(pwszPath, 0, nil, nil)
             return try withUnsafeTemporaryAllocation(of: WCHAR.self, capacity: Int(dwLength)) { pwszFullPath in
-                guard (1..<dwLength).contains(GetFullPathNameW(pwszPath, DWORD(pwszFullPath.count), pwszFullPath.baseAddress, nil)) else {
+                guard (1 ..< dwLength).contains(GetFullPathNameW(pwszPath, DWORD(pwszFullPath.count), pwszFullPath.baseAddress, nil)) else {
                     throw SubprocessError(
                         code: .init(.invalidWindowsPath(self)),
                         underlyingError: .init(rawValue: GetLastError())
@@ -1369,7 +1370,8 @@ extension String {
                     base[0] == UInt16(UInt8._backslash),
                     base[1] == UInt16(UInt8._backslash),
                     base[2] == UInt16(UInt8._period),
-                    base[3] == UInt16(UInt8._backslash) {
+                    base[3] == UInt16(UInt8._backslash)
+                {
                     return try body(base)
                 }
 
@@ -1432,7 +1434,7 @@ extension UInt8 {
     static var _period: UInt8 { UInt8(ascii: ".") }
 
     var isLetter: Bool? {
-        return (0x41...0x5a) ~= self || (0x61...0x7a) ~= self
+        return (0x41 ... 0x5a) ~= self || (0x61 ... 0x7a) ~= self
     }
 }
 
@@ -1450,20 +1452,23 @@ internal func fillNullTerminatedWideStringBuffer(
 ) throws -> String {
     var bufferCount = max(1, min(initialSize, maxSize))
     while bufferCount <= maxSize {
-        if let result = try withUnsafeTemporaryAllocation(of: WCHAR.self, capacity: Int(bufferCount), { buffer in
-            let count = try body(buffer)
-            switch count {
-            case 0:
-                throw SubprocessError.UnderlyingError(rawValue: GetLastError())
-            case 1..<DWORD(buffer.count):
-                let result = String(decodingCString: buffer.baseAddress!, as: UTF16.self)
-                assert(result.utf16.count == count, "Parsed UTF-16 count \(result.utf16.count) != reported UTF-16 count \(count)")
-                return result
-            default:
-                bufferCount *= 2
-                return nil
-            }
-        }) {
+        if let result = try withUnsafeTemporaryAllocation(
+            of: WCHAR.self, capacity: Int(bufferCount),
+            { buffer in
+                let count = try body(buffer)
+                switch count {
+                case 0:
+                    throw SubprocessError.UnderlyingError(rawValue: GetLastError())
+                case 1 ..< DWORD(buffer.count):
+                    let result = String(decodingCString: buffer.baseAddress!, as: UTF16.self)
+                    assert(result.utf16.count == count, "Parsed UTF-16 count \(result.utf16.count) != reported UTF-16 count \(count)")
+                    return result
+                default:
+                    bufferCount *= 2
+                    return nil
+                }
+            })
+        {
             return result
         }
     }
@@ -1477,5 +1482,4 @@ extension Dictionary where Key == String, Value == String {
     }
 }
 
-
-#endif  // canImport(WinSDK)
+#endif // canImport(WinSDK)

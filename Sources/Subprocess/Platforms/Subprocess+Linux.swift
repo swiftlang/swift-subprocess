@@ -153,7 +153,7 @@ internal func monitorProcessTermination(
 }
 
 #if canImport(Musl)
-extension pthread_t: @retroactive @unchecked Sendable { }
+extension pthread_t: @retroactive @unchecked Sendable {}
 #endif
 
 private enum ProcessMonitorState {
@@ -161,7 +161,7 @@ private enum ProcessMonitorState {
         let epollFileDescriptor: CInt
         let shutdownFileDescriptor: CInt
         let monitorThread: pthread_t
-        var continuations: [PlatformFileDescriptor : CheckedContinuation<TerminationStatus, any Error>]
+        var continuations: [PlatformFileDescriptor: CheckedContinuation<TerminationStatus, any Error>]
     }
 
     case notStarted
@@ -205,7 +205,6 @@ private func shutdown() {
     // Cleanup the monitor thread
     pthread_join(storage.monitorThread, nil)
 }
-
 
 /// See the following page for the complete list of `async-signal-safe` functions
 /// https://man7.org/linux/man-pages/man7/signal-safety.7.html
@@ -385,10 +384,11 @@ private let setup: () = {
         thread = t
     case let .failure(error):
         _processMonitorState.withLock { state in
-            state = .failed(SubprocessError(
-                code: .init(.failedToMonitorProcess),
-                underlyingError: error
-            ))
+            state = .failed(
+                SubprocessError(
+                    code: .init(.failedToMonitorProcess),
+                    underlyingError: error
+                ))
         }
         return
     }
@@ -408,7 +408,6 @@ private let setup: () = {
         shutdown()
     }
 }()
-
 
 internal func _setupMonitorSignalHandler() {
     // Only executed once
@@ -434,15 +433,17 @@ private func _blockAndWaitForProcessDescriptor(_ pidfd: CInt, context: MonitorTh
     )
     if rc != 0 {
         let epollErrno = errno
-        terminationStatus = .failure(SubprocessError(
-            code: .init(.failedToMonitorProcess),
-            underlyingError: .init(rawValue: epollErrno)
-        ))
+        terminationStatus = .failure(
+            SubprocessError(
+                code: .init(.failedToMonitorProcess),
+                underlyingError: .init(rawValue: epollErrno)
+            ))
     }
     // Notify the continuation
     let continuation = _processMonitorState.withLock { state -> CheckedContinuation<TerminationStatus, any Error>? in
         guard case .started(let storage) = state,
-              let continuation = storage.continuations[pidfd] else {
+            let continuation = storage.continuations[pidfd]
+        else {
             return nil
         }
         // Remove registration
@@ -466,7 +467,7 @@ private func _reapAllKnownChildProcesses(_ signalFd: CInt, context: MonitorThrea
 
     // Drain the signalFd
     var buffer: UInt8 = 0
-    while _subprocess_read(signalFd, &buffer, 1) > 0 { /* noop, drain the pipe  */ }
+    while _subprocess_read(signalFd, &buffer, 1) > 0 { /* noop, drain the pipe  */  }
 
     let resumingContinuations: [ResultContinuation] = _processMonitorState.withLock { state in
         guard case .started(let storage) = state else {
@@ -528,4 +529,4 @@ internal func _isWaitprocessDescriptorSupported() -> Bool {
     return errno == ECHILD
 }
 
-#endif  // canImport(Glibc) || canImport(Android) || canImport(Musl)
+#endif // canImport(Glibc) || canImport(Android) || canImport(Musl)

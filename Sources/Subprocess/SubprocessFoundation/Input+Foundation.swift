@@ -17,7 +17,7 @@ import Foundation
 #else
 // On other platforms prefer FoundationEssentials
 import FoundationEssentials
-#endif  // canImport(Darwin)
+#endif // canImport(Darwin)
 
 #if canImport(System)
 @preconcurrency import System
@@ -128,7 +128,6 @@ extension StandardInputWriter {
     }
 }
 
-
 #if SUBPROCESS_ASYNCIO_DISPATCH
 extension AsyncIO {
     internal func write(
@@ -158,7 +157,7 @@ extension AsyncIO {
     }
 }
 #else
-extension Data : AsyncIO._ContiguousBytes { }
+extension Data: AsyncIO._ContiguousBytes {}
 
 extension AsyncIO {
     internal func write(
@@ -170,4 +169,4 @@ extension AsyncIO {
 }
 #endif // SUBPROCESS_ASYNCIO_DISPATCH
 
-#endif  // SubprocessFoundation
+#endif // SubprocessFoundation

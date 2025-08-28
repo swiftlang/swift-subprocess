@@ -58,4 +58,4 @@ extension Data {
     }
 }
 
-#endif  // SubprocessFoundation
+#endif // SubprocessFoundation
