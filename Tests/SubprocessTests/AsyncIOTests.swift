@@ -54,13 +54,13 @@ extension SubprocessAsyncIOTests {
 
     @Test func testMultipleSequentialReadWrite() async throws {
         var _chunks: [[UInt8]] = []
-        for _ in 0 ..< 10 {
+        for _ in 0..<10 {
             // Generate some that's short
-            _chunks.append(randomData(count: Int.random(in: 1 ..< 512)))
+            _chunks.append(randomData(count: Int.random(in: 1..<512)))
         }
-        for _ in 0 ..< 10 {
+        for _ in 0..<10 {
             // Generate some that are longer than buffer size
-            _chunks.append(randomData(count: Int.random(in: Subprocess.readBufferSize ..< Subprocess.readBufferSize * 3)))
+            _chunks.append(randomData(count: Int.random(in: Subprocess.readBufferSize..<Subprocess.readBufferSize * 3)))
         }
         _chunks.shuffle()
         let chunks = _chunks

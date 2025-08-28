@@ -182,11 +182,12 @@ final class AsyncIO: @unchecked Sendable {
             return
         }
         // Post status to shutdown HANDLE
+        // swift-format-ignore
         PostQueuedCompletionStatus(
-            ioPort, // CompletionPort
-            0, // Number of bytes transferred.
+            ioPort,       // CompletionPort
+            0,            // Number of bytes transferred.
             shutdownPort, // Completion key to post status
-            nil // Overlapped
+            nil           // Overlapped
         )
         // Wait for monitor thread to exit
         WaitForSingleObject(monitorThreadHandle, INFINITE)

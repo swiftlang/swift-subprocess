@@ -678,11 +678,11 @@ extension SubprocessIntegrationTests {
             DispatchQueue.global().async {
                 var currentStart = 0
                 while currentStart + chunkSize < expected.count {
-                    continuation.yield(expected[currentStart ..< currentStart + chunkSize])
+                    continuation.yield(expected[currentStart..<currentStart + chunkSize])
                     currentStart += chunkSize
                 }
                 if expected.count - currentStart > 0 {
-                    continuation.yield(expected[currentStart ..< expected.count])
+                    continuation.yield(expected[currentStart..<expected.count])
                 }
                 continuation.finish()
             }
@@ -1480,7 +1480,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        for _ in 0 ..< 128 {
+        for _ in 0..<128 {
             let result = try await _run(
                 setup,
                 input: .none,
@@ -1506,7 +1506,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        for _ in 0 ..< 128 {
+        for _ in 0..<128 {
             let result = try await _run(
                 setup,
                 input: .none,
@@ -1657,20 +1657,20 @@ extension SubprocessIntegrationTests {
         // Generate test cases
         func generateString(size: TestCaseSize) -> [UInt8] {
             // Basic Latin has the range U+0020 ... U+007E
-            let range: ClosedRange<UInt8> = 0x20 ... 0x7E
+            let range: ClosedRange<UInt8> = 0x20...0x7E
 
             let length: Int
             switch size {
             case .large:
-                length = Int(Double.random(in: 1.0 ..< 2.0) * Double(readBufferSize)) + 1
+                length = Int(Double.random(in: 1.0..<2.0) * Double(readBufferSize)) + 1
             case .medium:
-                length = Int(Double.random(in: 0.2 ..< 1.0) * Double(readBufferSize)) + 1
+                length = Int(Double.random(in: 0.2..<1.0) * Double(readBufferSize)) + 1
             case .small:
-                length = Int.random(in: 1 ..< 16)
+                length = Int.random(in: 1..<16)
             }
 
             var buffer: [UInt8] = Array(repeating: 0, count: length)
-            for index in 0 ..< length {
+            for index in 0..<length {
                 buffer[index] = UInt8.random(in: range)
             }
             // Buffer cannot be empty or a line with a \r ending followed by an empty one with a \n ending would be indistinguishable.
@@ -1789,7 +1789,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
         try await withThrowingTaskGroup(of: Void.self) { group in
-            for _ in 0 ..< 8 {
+            for _ in 0..<8 {
                 group.addTask {
                     let r = try await _run(
                         setup,
@@ -1821,7 +1821,7 @@ extension SubprocessIntegrationTests {
             arguments: ["-f", "/dev/null"]
         )
         #endif
-        for i in 0 ..< 100 {
+        for i in 0..<100 {
             let terminationStatus = try await withThrowingTaskGroup(
                 of: TerminationStatus?.self,
                 returning: TerminationStatus.self
@@ -1839,7 +1839,7 @@ extension SubprocessIntegrationTests {
                     ).terminationStatus
                 }
                 group.addTask {
-                    let waitNS = UInt64.random(in: 0 ..< 10_000_000)
+                    let waitNS = UInt64.random(in: 0..<10_000_000)
                     try? await Task.sleep(nanoseconds: waitNS)
                     return nil
                 }
@@ -1860,7 +1860,7 @@ extension SubprocessIntegrationTests {
     }
 
     @Test func testExitCode() async throws {
-        for exitCode in UInt8.min ..< UInt8.max {
+        for exitCode in UInt8.min..<UInt8.max {
             #if os(Windows)
             let setup = TestSetup(
                 executable: .name("cmd.exe"),

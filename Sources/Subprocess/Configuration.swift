@@ -410,9 +410,9 @@ extension Environment: CustomStringConvertible, CustomDebugStringConvertible {
                     continue
                 }
 
-                let key = String(environmentString[environmentString.startIndex ..< delimiter])
+                let key = String(environmentString[environmentString.startIndex..<delimiter])
                 let value = String(
-                    environmentString[environmentString.index(after: delimiter) ..< environmentString.endIndex]
+                    environmentString[environmentString.index(after: delimiter)..<environmentString.endIndex]
                 )
                 results[key] = value
             }

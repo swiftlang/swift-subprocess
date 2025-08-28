@@ -31,7 +31,6 @@ jobs:
       linux_build_command: 'swift-format lint -s -r --configuration ./.swift-format . && swift test && swift test --disable-default-traits'
       windows_swift_versions: '["6.1", "nightly-main"]'
       windows_build_command: |
-        Invoke-Program swift-format lint -s -r --configuration .\.swift-format .
         Invoke-Program swift test
         Invoke-Program swift test --disable-default-traits
       enable_macos_checks: true

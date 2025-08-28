@@ -77,6 +77,7 @@ extension AsyncBufferSequence.Buffer {
     }
 
     #if SubprocessSpan
+    // swift-format-ignore
     // Access the storage backing this Buffer
     public var bytes: RawSpan {
         @lifetime(borrow self)

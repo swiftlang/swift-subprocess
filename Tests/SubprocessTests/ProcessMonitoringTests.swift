@@ -273,11 +273,11 @@ extension SubprocessProcessMonitoringTests {
     @Test func testCanMonitorProcessConcurrently() async throws {
         let testCount = 100
         try await withThrowingTaskGroup { group in
-            for _ in 0 ..< testCount {
+            for _ in 0..<testCount {
                 group.addTask {
                     // Sleep for different random time intervals
                     let config = self.longRunningProcess(
-                        withTimeOutSeconds: Double.random(in: 0 ..< 1.0)
+                        withTimeOutSeconds: Double.random(in: 0..<1.0)
                     )
 
                     try await withSpawnedExecution(config: config) { execution in
@@ -305,7 +305,7 @@ extension SubprocessProcessMonitoringTests {
             }
         }
 
-        for _ in 0 ..< testCount {
+        for _ in 0..<testCount {
             let config = self.immediateExitProcess(withExitCode: 0)
             let spawnResult = try config.spawn(
                 withInput: self.devNullInputPipe(),

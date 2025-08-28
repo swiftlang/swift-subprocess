@@ -161,7 +161,7 @@ final class AsyncIO: Sendable {
                         break monitorLoop
                     }
 
-                    for index in 0 ..< Int(eventCount) {
+                    for index in 0..<Int(eventCount) {
                         let event = events[index]
                         let targetFileDescriptor = event.data.fd
                         // Breakout the monitor loop if we received shutdown

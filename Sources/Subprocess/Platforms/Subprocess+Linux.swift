@@ -264,7 +264,7 @@ private func monitorThreadFunc(context: MonitorThreadContext) {
             break monitorLoop
         }
 
-        for index in 0 ..< Int(eventCount) {
+        for index in 0..<Int(eventCount) {
             let event = events[index]
             let targetFileDescriptor = event.data.fd
 

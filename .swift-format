@@ -21,7 +21,6 @@
         ]
     },
     "prioritizeKeepingFunctionOutputTogether": false,
-    "reflowMultilineStringLiterals": "never",
     "respectsExistingLineBreaks": true,
     "rules": {
         "AllPublicDeclarationsHaveDocumentation": false,
@@ -68,7 +67,7 @@
         "UseWhereClausesInForLoops": false,
         "ValidateDocumentationComments": false
     },
-    "spacesAroundRangeFormationOperators": true,
+    "spacesAroundRangeFormationOperators": false,
     "spacesBeforeEndOfLineComments": 1,
     "tabWidth": 4,
     "version": 1

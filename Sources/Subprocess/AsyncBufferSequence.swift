@@ -285,7 +285,7 @@ extension AsyncBufferSequence {
                             continue
                         }
                         return yield()
-                    case lineFeed ..< carriageReturn, newLine1, lineSeparator1, paragraphSeparator1:
+                    case lineFeed..<carriageReturn, newLine1, lineSeparator1, paragraphSeparator1:
                         return yield()
                     default:
                         continue

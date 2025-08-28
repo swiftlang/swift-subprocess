@@ -1358,7 +1358,7 @@ extension String {
             // not add the \\?\ prefix required by other functions under these conditions).
             let dwLength: DWORD = GetFullPathNameW(pwszPath, 0, nil, nil)
             return try withUnsafeTemporaryAllocation(of: WCHAR.self, capacity: Int(dwLength)) { pwszFullPath in
-                guard (1 ..< dwLength).contains(GetFullPathNameW(pwszPath, DWORD(pwszFullPath.count), pwszFullPath.baseAddress, nil)) else {
+                guard (1..<dwLength).contains(GetFullPathNameW(pwszPath, DWORD(pwszFullPath.count), pwszFullPath.baseAddress, nil)) else {
                     throw SubprocessError(
                         code: .init(.invalidWindowsPath(self)),
                         underlyingError: .init(rawValue: GetLastError())
@@ -1434,7 +1434,7 @@ extension UInt8 {
     static var _period: UInt8 { UInt8(ascii: ".") }
 
     var isLetter: Bool? {
-        return (0x41 ... 0x5a) ~= self || (0x61 ... 0x7a) ~= self
+        return (0x41...0x5a) ~= self || (0x61...0x7a) ~= self
     }
 }
 
@@ -1459,7 +1459,7 @@ internal func fillNullTerminatedWideStringBuffer(
                 switch count {
                 case 0:
                     throw SubprocessError.UnderlyingError(rawValue: GetLastError())
-                case 1 ..< DWORD(buffer.count):
+                case 1..<DWORD(buffer.count):
                     let result = String(decodingCString: buffer.baseAddress!, as: UTF16.self)
                     assert(result.utf16.count == count, "Parsed UTF-16 count \(result.utf16.count) != reported UTF-16 count \(count)")
                     return result

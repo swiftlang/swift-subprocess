@@ -53,7 +53,7 @@ extension SubprocessUnixTests {
         )
     )
     func testSubprocessPlatformOptionsUserID() async throws {
-        let expectedUserID = uid_t(Int.random(in: 1000 ... 2000))
+        let expectedUserID = uid_t(Int.random(in: 1000...2000))
         var platformOptions = PlatformOptions()
         platformOptions.userID = expectedUserID
         try await self.assertID(
@@ -71,7 +71,7 @@ extension SubprocessUnixTests {
         )
     )
     func testSubprocessPlatformOptionsGroupID() async throws {
-        let expectedGroupID = gid_t(Int.random(in: 1000 ... 2000))
+        let expectedGroupID = gid_t(Int.random(in: 1000...2000))
         var platformOptions = PlatformOptions()
         platformOptions.groupID = expectedGroupID
         try await self.assertID(
@@ -90,8 +90,8 @@ extension SubprocessUnixTests {
     )
     func testSubprocessPlatformOptionsSupplementaryGroups() async throws {
         var expectedGroups: Set<gid_t> = Set()
-        for _ in 0 ..< Int.random(in: 5 ... 10) {
-            expectedGroups.insert(gid_t(Int.random(in: 1000 ... 2000)))
+        for _ in 0..<Int.random(in: 5...10) {
+            expectedGroups.insert(gid_t(Int.random(in: 1000...2000)))
         }
         var platformOptions = PlatformOptions()
         platformOptions.supplementaryGroups = Array(expectedGroups)
@@ -279,7 +279,7 @@ extension SubprocessUnixTests {
                     // Make sure the grand child `/usr/bin/yes` actually exited
                     // This is unfortunately racy because the pid isn't immediately invalided
                     // once `kill` returns. Allow a few failures and delay to counter this
-                    for _ in 0 ..< 10 {
+                    for _ in 0..<10 {
                         let rc = kill(grandChildPid, 0)
                         if rc == 0 {
                             // Wait for a small delay
@@ -496,7 +496,7 @@ extension SubprocessUnixTests {
         try await withThrowingTaskGroup(of: Void.self) { group in
             var running = 0
             let byteCount = 1000
-            for _ in 0 ..< maxConcurrent {
+            for _ in 0..<maxConcurrent {
                 group.addTask {
                     // This invocation specifically requires bash semantics; sh (on FreeBSD at least) does not consistently support -s in this way
                     let r = try await Subprocess.run(
