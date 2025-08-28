@@ -64,7 +64,6 @@ extension CollectedResult: Equatable where Output.OutputType: Equatable, Error.O
 
 extension CollectedResult: Hashable where Output.OutputType: Hashable, Error.OutputType: Hashable {}
 
-
 extension CollectedResult: CustomStringConvertible
 where Output.OutputType: CustomStringConvertible, Error.OutputType: CustomStringConvertible {
     public var description: String {

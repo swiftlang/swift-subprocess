@@ -404,7 +404,7 @@ extension Environment: CustomStringConvertible, CustomDebugStringConvertible {
                 if environmentString.utf8.first == Character("=").utf8.first {
                     continue
                 }
-                #endif  // os(Windows)
+                #endif // os(Windows)
 
                 guard let delimiter = environmentString.firstIndex(of: "=") else {
                     continue
@@ -509,17 +509,17 @@ internal enum StringOrRawBytes: Sendable, Hashable {
     func createRawBytes() -> UnsafeMutablePointer<CChar> {
         switch self {
         case .string(let string):
-#if os(Windows)
+            #if os(Windows)
             return _strdup(string)
-#else
+            #else
             return strdup(string)
-#endif
+            #endif
         case .rawBytes(let rawBytes):
-#if os(Windows)
+            #if os(Windows)
             return _strdup(rawBytes)
-#else
+            #else
             return strdup(rawBytes)
-#endif
+            #endif
         }
     }
 
@@ -1026,11 +1026,10 @@ internal struct _OrderedSet<Element: Hashable & Sendable>: Hashable, Sendable {
     }
 }
 
-extension _OrderedSet : Sequence {
+extension _OrderedSet: Sequence {
     typealias Iterator = Array<Element>.Iterator
 
     internal func makeIterator() -> Iterator {
         return self.elements.makeIterator()
     }
 }
-

@@ -40,7 +40,7 @@ private func enableLintingTest() -> Bool {
 struct SubprocessLintingTest {
     @Test(
         .enabled(
-            if: false/* enableLintingTest() */,
+            if: false /* enableLintingTest() */,
             "Skipped until we decide on the rules"
         )
     )

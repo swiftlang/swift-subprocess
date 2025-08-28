@@ -130,4 +130,4 @@ extension FileDescriptor {
     }
 }
 
-#endif  // canImport(Darwin)
+#endif // canImport(Darwin)

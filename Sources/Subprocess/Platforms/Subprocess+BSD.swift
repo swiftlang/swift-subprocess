@@ -43,17 +43,18 @@ internal func monitorProcessTermination(
         )
         source.setEventHandler {
             source.cancel()
-            continuation.resume(with: Result(catching: { () throws(SubprocessError.UnderlyingError) -> TerminationStatus in
-                // NOTE_EXIT may be delivered slightly before the process becomes reapable,
-                // so we must call waitid without WNOHANG to avoid a narrow possibility of a race condition.
-                // If waitid does block, it won't do so for very long at all.
-                try processIdentifier.blockingReap()
-            }).mapError { underlyingError in
-                SubprocessError(    
-                    code: .init(.failedToMonitorProcess),
-                    underlyingError: underlyingError
-                )
-            })
+            continuation.resume(
+                with: Result(catching: { () throws(SubprocessError.UnderlyingError) -> TerminationStatus in
+                    // NOTE_EXIT may be delivered slightly before the process becomes reapable,
+                    // so we must call waitid without WNOHANG to avoid a narrow possibility of a race condition.
+                    // If waitid does block, it won't do so for very long at all.
+                    try processIdentifier.blockingReap()
+                }).mapError { underlyingError in
+                    SubprocessError(
+                        code: .init(.failedToMonitorProcess),
+                        underlyingError: underlyingError
+                    )
+                })
         }
         source.resume()
     }

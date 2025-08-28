@@ -31,7 +31,7 @@ import Foundation
 import FoundationEssentials
 #endif
 
-#endif  // SubprocessFoundation
+#endif // SubprocessFoundation
 
 // MARK: - PlatformOptions
 
@@ -488,7 +488,7 @@ public struct ProcessIdentifier: Sendable, Hashable {
         self.value = value
     }
 
-    internal func close() { /* No-op on Darwin */ }
+    internal func close() { /* No-op on Darwin */  }
 }
 
 extension ProcessIdentifier: CustomStringConvertible, CustomDebugStringConvertible {
@@ -497,4 +497,4 @@ extension ProcessIdentifier: CustomStringConvertible, CustomDebugStringConvertib
     public var debugDescription: String { "\(self.value)" }
 }
 
-#endif  // canImport(Darwin)
+#endif // canImport(Darwin)

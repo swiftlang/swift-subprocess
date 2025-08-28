@@ -27,7 +27,7 @@ final class AsyncIO: Sendable {
 
     internal init() {}
 
-    internal func shutdown() { /* noop on Darwin */ }
+    internal func shutdown() { /* noop on Darwin */  }
 
     internal func read(
         from diskIO: borrowing IOChannel,
@@ -104,7 +104,7 @@ final class AsyncIO: Sendable {
             }
         }
     }
-    #endif  // SubprocessSpan
+    #endif // SubprocessSpan
 
     internal func write(
         _ array: [UInt8],
@@ -167,7 +167,7 @@ final class AsyncIO: Sendable {
 }
 
 #if !canImport(Darwin)
-extension DispatchData: @retroactive @unchecked Sendable { }
+extension DispatchData: @retroactive @unchecked Sendable {}
 #endif
 
 #endif

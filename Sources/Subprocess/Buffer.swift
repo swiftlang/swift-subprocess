@@ -13,7 +13,6 @@
 @preconcurrency internal import Dispatch
 #endif
 
-
 extension AsyncBufferSequence {
     /// A immutable collection of bytes
     public struct Buffer: Sendable {
@@ -33,7 +32,7 @@ extension AsyncBufferSequence {
             if _fastPath(slices.count == 1) {
                 return [.init(data: slices[0], backingData: data)]
             }
-            return slices.map{ .init(data: $0, backingData: data) }
+            return slices.map { .init(data: $0, backingData: data) }
         }
         #else
         internal let data: [UInt8]
@@ -78,6 +77,7 @@ extension AsyncBufferSequence.Buffer {
     }
 
     #if SubprocessSpan
+    // swift-format-ignore
     // Access the storage backing this Buffer
     public var bytes: RawSpan {
         @lifetime(borrow self)
@@ -87,7 +87,7 @@ extension AsyncBufferSequence.Buffer {
             return _overrideLifetime(of: bytes, to: self)
         }
     }
-    #endif  // SubprocessSpan
+    #endif // SubprocessSpan
 }
 
 // MARK: - Hashable, Equatable

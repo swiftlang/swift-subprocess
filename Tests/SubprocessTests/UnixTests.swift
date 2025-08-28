@@ -256,18 +256,18 @@ extension SubprocessUnixTests {
                         .name("bash"),
                         arguments: [
                             "-c",
-                        """
-                        set -e
-                        # The following /usr/bin/yes is the runaway grand child.
-                        # It runs in the background forever until this script kills it
-                        /usr/bin/yes "Runaway process from \(#function), please file a SwiftSubprocess bug." > /dev/null &
-                        child_pid=$! # Retrieve the grand child yes pid
-                        # When SIGINT is sent to the script, kill grand child now
-                        trap "echo >&2 'child: received signal, killing grand child ($child_pid)'; kill -s KILL $child_pid; exit 0" INT
-                        echo "$child_pid" # communicate the child pid to our parent
-                        echo "child: waiting for grand child, pid: $child_pid" >&2
-                        wait $child_pid # wait for runaway child to exit
-                        """
+                            """
+                            set -e
+                            # The following /usr/bin/yes is the runaway grand child.
+                            # It runs in the background forever until this script kills it
+                            /usr/bin/yes "Runaway process from \(#function), please file a SwiftSubprocess bug." > /dev/null &
+                            child_pid=$! # Retrieve the grand child yes pid
+                            # When SIGINT is sent to the script, kill grand child now
+                            trap "echo >&2 'child: received signal, killing grand child ($child_pid)'; kill -s KILL $child_pid; exit 0" INT
+                            echo "$child_pid" # communicate the child pid to our parent
+                            echo "child: waiting for grand child, pid: $child_pid" >&2
+                            wait $child_pid # wait for runaway child to exit
+                            """,
                         ],
                         platformOptions: platformOptions,
                         output: .string(limit: .max),
@@ -279,7 +279,7 @@ extension SubprocessUnixTests {
                     // Make sure the grand child `/usr/bin/yes` actually exited
                     // This is unfortunately racy because the pid isn't immediately invalided
                     // once `kill` returns. Allow a few failures and delay to counter this
-                    for _ in 0 ..< 10 {
+                    for _ in 0..<10 {
                         let rc = kill(grandChildPid, 0)
                         if rc == 0 {
                             // Wait for a small delay
@@ -394,7 +394,7 @@ extension SubprocessUnixTests {
                         """
                         echo this string should be discarded >&\(pipe.writeEnd.rawValue);
                         echo wrote into \(pipe.writeEnd.rawValue), echo exit code $?;
-                        """
+                        """,
                     ],
                     input: .none,
                     output: .string(limit: 64),
@@ -410,8 +410,7 @@ extension SubprocessUnixTests {
             }
             #expect(readCount == 0)
             #expect(
-                result.standardOutput?.trimmingNewLineAndQuotes() ==
-                "wrote into \(pipe.writeEnd.rawValue), echo exit code 1"
+                result.standardOutput?.trimmingNewLineAndQuotes() == "wrote into \(pipe.writeEnd.rawValue), echo exit code 1"
             )
         }
     }
@@ -440,8 +439,8 @@ extension SubprocessUnixTests {
 
 internal func assertNewSessionCreated<Output: OutputProtocol>(
     with result: CollectedResult<
-    StringOutput<UTF8>,
-    Output
+        StringOutput<UTF8>,
+        Output
     >
 ) throws {
     try assertNewSessionCreated(
@@ -526,4 +525,4 @@ extension SubprocessUnixTests {
     #endif
 }
 
-#endif  // canImport(Darwin) || canImport(Glibc)
+#endif // canImport(Darwin) || canImport(Glibc)

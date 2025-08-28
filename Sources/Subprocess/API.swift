@@ -133,8 +133,7 @@ public func run<
         standardError: result.value.standardError
     )
 }
-#endif  // SubprocessSpan
-
+#endif // SubprocessSpan
 
 // MARK: - Custom Execution Body
 

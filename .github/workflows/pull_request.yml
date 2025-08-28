@@ -28,14 +28,14 @@ jobs:
           # Test dependencies
           yum install -y procps
         fi
-      linux_build_command: 'swift test && swift test --disable-default-traits'
+      linux_build_command: 'swift-format lint -s -r --configuration ./.swift-format . && swift test && swift test --disable-default-traits'
       windows_swift_versions: '["6.1", "nightly-main"]'
       windows_build_command: |
         Invoke-Program swift test
         Invoke-Program swift test --disable-default-traits
       enable_macos_checks: true
       macos_xcode_versions: '["16.3"]'
-      macos_build_command: 'xcrun swift test && xcrun swift test --disable-default-traits'
+      macos_build_command: 'xcrun swift-format lint -s -r --configuration ./.swift-format . && xcrun swift test && xcrun swift test --disable-default-traits'
       enable_linux_static_sdk_build: true
       linux_static_sdk_versions: '["6.1", "nightly-6.2"]'
       linux_static_sdk_build_command: |

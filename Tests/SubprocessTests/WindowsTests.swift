@@ -284,7 +284,7 @@ extension SubprocessWindowsTests {
         defer { #expect(CloseHandle(hJob)) }
         var info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
         info.BasicLimitInformation.LimitFlags = DWORD(JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)
-        #expect(SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &info,     DWORD(MemoryLayout<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>.size)))
+        #expect(SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &info, DWORD(MemoryLayout<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>.size)))
 
         var platformOptions = PlatformOptions()
         platformOptions.preSpawnProcessConfigurator = { (createProcessFlags, startupInfo) in
@@ -375,7 +375,7 @@ extension SubprocessWindowsTests {
         guard
             AllocateAndInitializeSid(
                 &netAuthority,
-                2,  // nSubAuthorityCount
+                2, // nSubAuthorityCount
                 DWORD(SECURITY_BUILTIN_DOMAIN_RID),
                 DWORD(DOMAIN_ALIAS_RID_ADMINS),
                 0,
@@ -470,4 +470,4 @@ extension FileDescriptor {
     }
 }
 
-#endif  // canImport(WinSDK)
+#endif // canImport(WinSDK)

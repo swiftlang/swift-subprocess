@@ -242,7 +242,6 @@ extension OutputProtocol {
     }
 }
 
-
 extension OutputProtocol where Self == BytesOutput {
     /// Create a `Subprocess` output that collects output as
     /// `Buffer` with a buffer limit in bytes. Subprocess throws
@@ -264,7 +263,6 @@ extension OutputProtocol {
     }
 }
 #endif
-
 
 // MARK: - Default Implementations
 extension OutputProtocol {

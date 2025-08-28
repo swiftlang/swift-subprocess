@@ -103,11 +103,11 @@ struct SubprocessLinuxTests {
             if subprocess.processIdentifier.processDescriptor > 0 {
                 var statinfo = stat()
                 try #require(fstat(subprocess.processIdentifier.processDescriptor, &statinfo) == 0)
-                
+
                 // In kernel 6.9+, st_ino globally uniquely identifies the process
                 #expect(statinfo.st_ino > 0)
             }
         }
     }
 }
-#endif  // canImport(Glibc) || canImport(Bionic) || canImport(Musl)
+#endif // canImport(Glibc) || canImport(Bionic) || canImport(Musl)

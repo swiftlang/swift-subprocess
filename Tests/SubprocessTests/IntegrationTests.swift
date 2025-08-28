@@ -89,9 +89,7 @@ extension SubprocessIntegrationTests {
 
     @Test func testExecutableAtPath() async throws {
         #if os(Windows)
-        let cmdExe = ProcessInfo.processInfo.environment["COMSPEC"] ??
-            ProcessInfo.processInfo.environment["ComSpec"] ??
-            ProcessInfo.processInfo.environment["comspec"]
+        let cmdExe = ProcessInfo.processInfo.environment["COMSPEC"] ?? ProcessInfo.processInfo.environment["ComSpec"] ?? ProcessInfo.processInfo.environment["comspec"]
 
         let setup = TestSetup(
             executable: .path(FilePath(try #require(cmdExe))),
@@ -255,9 +253,7 @@ extension SubprocessIntegrationTests {
         #expect(result.terminationStatus.isSuccess)
         let pathValue = try #require(result.standardOutput)
         #if os(Windows)
-        let expectedPathValue = ProcessInfo.processInfo.environment["Path"] ??
-            ProcessInfo.processInfo.environment["PATH"] ??
-            ProcessInfo.processInfo.environment["path"]
+        let expectedPathValue = ProcessInfo.processInfo.environment["Path"] ?? ProcessInfo.processInfo.environment["PATH"] ?? ProcessInfo.processInfo.environment["path"]
         let expected = try #require(expectedPathValue)
         #else
         let expected = try #require(ProcessInfo.processInfo.environment["PATH"])
@@ -274,7 +270,7 @@ extension SubprocessIntegrationTests {
         // rdar://138670128
         // https://github.com/swiftlang/swift/issues/77235
         #expect(
-             pathList == expectedList
+            pathList == expectedList
         )
     }
 
@@ -320,9 +316,7 @@ extension SubprocessIntegrationTests {
     )
     func testEnvironmentCustom() async throws {
         #if os(Windows)
-        let pathValue = ProcessInfo.processInfo.environment["Path"] ??
-            ProcessInfo.processInfo.environment["PATH"] ??
-            ProcessInfo.processInfo.environment["path"]
+        let pathValue = ProcessInfo.processInfo.environment["Path"] ?? ProcessInfo.processInfo.environment["PATH"] ?? ProcessInfo.processInfo.environment["path"]
         let setup = TestSetup(
             executable: .name("cmd.exe"),
             arguments: ["/c", "set"],
@@ -510,7 +504,7 @@ extension SubprocessIntegrationTests {
             executable: .name("powershell.exe"),
             arguments: [
                 "-Command",
-                "while (($c = [Console]::In.Read()) -ne -1) { [Console]::Out.Write([char]$c);  [Console]::Out.Flush() }"
+                "while (($c = [Console]::In.Read()) -ne -1) { [Console]::Out.Write([char]$c);  [Console]::Out.Flush() }",
             ]
         )
         #else
@@ -554,8 +548,7 @@ extension SubprocessIntegrationTests {
         #expect(catResult.terminationStatus.isSuccess)
         // Output should match the input content
         #expect(
-            catResult.standardOutput?.trimmingNewLineAndQuotes() ==
-            content.trimmingNewLineAndQuotes()
+            catResult.standardOutput?.trimmingNewLineAndQuotes() == content.trimmingNewLineAndQuotes()
         )
     }
 
@@ -757,7 +750,7 @@ extension SubprocessIntegrationTests {
                     Write-Output "unexpected input $line"
                 }
                 exit 0
-                """
+                """,
             ]
         )
         #else
@@ -771,7 +764,7 @@ extension SubprocessIntegrationTests {
                     echo "unexpected input $line"
                 done
                 exit 0
-                """
+                """,
             ]
         )
         #endif
@@ -844,10 +837,11 @@ extension SubprocessIntegrationTests {
             catResult.standardOutput?.trimmingNewLineAndQuotes()
         )
         #expect(
-            output == String(
-                decoding: expected,
-                as: Unicode.UTF8.self
-            ).trimmingNewLineAndQuotes()
+            output
+                == String(
+                    decoding: expected,
+                    as: Unicode.UTF8.self
+                ).trimmingNewLineAndQuotes()
         )
     }
     #endif
@@ -859,7 +853,7 @@ extension SubprocessIntegrationTests {
             arguments: [
                 "/c",
                 "findstr x*",
-                theMysteriousIsland.string
+                theMysteriousIsland.string,
             ]
         )
         #else
@@ -923,7 +917,7 @@ extension SubprocessIntegrationTests {
             arguments: [
                 "/c",
                 "findstr x*",
-                theMysteriousIsland.string
+                theMysteriousIsland.string,
             ]
         )
         #else
@@ -1073,7 +1067,7 @@ extension SubprocessIntegrationTests {
             arguments: [
                 "/c",
                 "findstr x*",
-                theMysteriousIsland.string
+                theMysteriousIsland.string,
             ]
         )
         #else
@@ -1129,10 +1123,11 @@ extension SubprocessIntegrationTests {
             catResult.standardError?.trimmingNewLineAndQuotes()
         )
         #expect(
-            output == String(
-                decoding: expected,
-                as: Unicode.UTF8.self
-            ).trimmingNewLineAndQuotes()
+            output
+                == String(
+                    decoding: expected,
+                    as: Unicode.UTF8.self
+                ).trimmingNewLineAndQuotes()
         )
     }
     #endif
@@ -1433,7 +1428,7 @@ extension SubprocessIntegrationTests {
     #endif
 
     @Test func testStreamingErrorOutput() async throws {
-#if os(Windows)
+        #if os(Windows)
         let setup = TestSetup(
             executable: .name("cmd.exe"),
             arguments: [
@@ -1441,12 +1436,12 @@ extension SubprocessIntegrationTests {
                 "findstr x* 1>&2",
             ]
         )
-#else
+        #else
         let setup = TestSetup(
             executable: .path("/bin/sh"),
             arguments: ["-c", "cat 1>&2"]
         )
-#endif
+        #endif
         let expected: Data = try Data(
             contentsOf: URL(filePath: theMysteriousIsland.string)
         )
@@ -1485,7 +1480,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        for _ in 0 ..< 128 {
+        for _ in 0..<128 {
             let result = try await _run(
                 setup,
                 input: .none,
@@ -1511,7 +1506,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        for _ in 0 ..< 128 {
+        for _ in 0..<128 {
             let result = try await _run(
                 setup,
                 input: .none,
@@ -1556,7 +1551,7 @@ extension SubprocessIntegrationTests {
                 $data = New-Object byte[] $size
                 [Console]::OpenStandardOutput().Write($data, 0, $data.Length)
                 [Console]::OpenStandardError().Write($data, 0, $data.Length)
-                """
+                """,
             ]
         )
         #else
@@ -1564,7 +1559,7 @@ extension SubprocessIntegrationTests {
             executable: .path("/bin/sh"),
             arguments: [
                 "-c",
-                "/bin/dd if=/dev/zero bs=\(1024*1024) count=1; /bin/dd >&2 if=/dev/zero bs=\(1024*1024) count=1;"
+                "/bin/dd if=/dev/zero bs=\(1024*1024) count=1; /bin/dd >&2 if=/dev/zero bs=\(1024*1024) count=1;",
             ]
         )
         #endif
@@ -1643,39 +1638,39 @@ extension SubprocessIntegrationTests {
     @Test func testLineSequence() async throws {
         typealias TestCase = (value: String, count: Int, newLine: String)
         enum TestCaseSize: CaseIterable {
-            case large      // (1.0 ~ 2.0) * buffer size
-            case medium     // (0.2 ~ 1.0) * buffer size
-            case small      // Less than 16 characters
+            case large // (1.0 ~ 2.0) * buffer size
+            case medium // (0.2 ~ 1.0) * buffer size
+            case small // Less than 16 characters
         }
 
         let newLineCharacters: [[UInt8]] = [
-            [0x0A],             // Line feed
-            [0x0B],             // Vertical tab
-            [0x0C],             // Form feed
-            [0x0D],             // Carriage return
-            [0x0D, 0x0A],       // Carriage return + Line feed
-            [0xC2, 0x85],       // New line
+            [0x0A], // Line feed
+            [0x0B], // Vertical tab
+            [0x0C], // Form feed
+            [0x0D], // Carriage return
+            [0x0D, 0x0A], // Carriage return + Line feed
+            [0xC2, 0x85], // New line
             [0xE2, 0x80, 0xA8], // Line Separator
-            [0xE2, 0x80, 0xA9]  // Paragraph separator
+            [0xE2, 0x80, 0xA9], // Paragraph separator
         ]
 
         // Generate test cases
         func generateString(size: TestCaseSize) -> [UInt8] {
             // Basic Latin has the range U+0020 ... U+007E
-            let range: ClosedRange<UInt8> = 0x20 ... 0x7E
+            let range: ClosedRange<UInt8> = 0x20...0x7E
 
             let length: Int
             switch size {
             case .large:
-                length = Int(Double.random(in: 1.0 ..< 2.0) * Double(readBufferSize)) + 1
+                length = Int(Double.random(in: 1.0..<2.0) * Double(readBufferSize)) + 1
             case .medium:
-                length = Int(Double.random(in: 0.2 ..< 1.0) * Double(readBufferSize)) + 1
+                length = Int(Double.random(in: 0.2..<1.0) * Double(readBufferSize)) + 1
             case .small:
-                length = Int.random(in: 1 ..< 16)
+                length = Int.random(in: 1..<16)
             }
 
             var buffer: [UInt8] = Array(repeating: 0, count: length)
-            for index in 0 ..< length {
+            for index in 0..<length {
                 buffer[index] = UInt8.random(in: range)
             }
             // Buffer cannot be empty or a line with a \r ending followed by an empty one with a \n ending would be indistinguishable.
@@ -1703,11 +1698,12 @@ extension SubprocessIntegrationTests {
                 // Choose a random new line
                 let newLine = try #require(newLineCharacters.randomElement())
                 let string = String(decoding: components + newLine, as: UTF8.self)
-                testCases.append((
-                    value: string,
-                    count: components.count + newLine.count,
-                    newLine: String(decoding: newLine, as: UTF8.self)
-                ))
+                testCases.append(
+                    (
+                        value: string,
+                        count: components.count + newLine.count,
+                        newLine: String(decoding: newLine, as: UTF8.self)
+                    ))
             }
             return testCases
         }
@@ -1783,7 +1779,7 @@ extension SubprocessIntegrationTests {
             executable: .name("powershell.exe"),
             arguments: [
                 "-Command",
-                "while (($c = [Console]::In.Read()) -ne -1) { [Console]::Out.Write([char]$c); [Console]::Error.Write([char]$c); [Console]::Out.Flush(); [Console]::Error.Flush() }"
+                "while (($c = [Console]::In.Read()) -ne -1) { [Console]::Out.Write([char]$c); [Console]::Error.Write([char]$c); [Console]::Out.Flush(); [Console]::Error.Flush() }",
             ]
         )
         #else
@@ -1793,7 +1789,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
         try await withThrowingTaskGroup(of: Void.self) { group in
-            for _ in 0 ..< 8 {
+            for _ in 0..<8 {
                 group.addTask {
                     let r = try await _run(
                         setup,
@@ -1825,7 +1821,7 @@ extension SubprocessIntegrationTests {
             arguments: ["-f", "/dev/null"]
         )
         #endif
-        for i in 0 ..< 100 {
+        for i in 0..<100 {
             let terminationStatus = try await withThrowingTaskGroup(
                 of: TerminationStatus?.self,
                 returning: TerminationStatus.self
@@ -1864,7 +1860,7 @@ extension SubprocessIntegrationTests {
     }
 
     @Test func testExitCode() async throws {
-        for exitCode in UInt8.min ..< UInt8.max {
+        for exitCode in UInt8.min..<UInt8.max {
             #if os(Windows)
             let setup = TestSetup(
                 executable: .name("cmd.exe"),
@@ -1975,10 +1971,10 @@ extension SubprocessIntegrationTests {
         var readHandle: HANDLE? = nil
         var writeHandle: HANDLE? = nil
         guard CreatePipe(&readHandle, &writeHandle, nil, 0),
-              readHandle != INVALID_HANDLE_VALUE,
-              writeHandle != INVALID_HANDLE_VALUE,
-              let readHandle: HANDLE = readHandle,
-              let writeHandle: HANDLE = writeHandle
+            readHandle != INVALID_HANDLE_VALUE,
+            writeHandle != INVALID_HANDLE_VALUE,
+            let readHandle: HANDLE = readHandle,
+            let writeHandle: HANDLE = writeHandle
         else {
             throw SubprocessError(
                 code: .init(.failedToCreatePipe),
@@ -2001,13 +1997,15 @@ extension SubprocessIntegrationTests {
                 )
                 // Set write handle to be inheritable only
                 var writeEndHandle: HANDLE? = nil
-                guard DuplicateHandle(
-                    GetCurrentProcess(),
-                    pipe.writeEnd,
-                    GetCurrentProcess(),
-                    &writeEndHandle,
-                    0, true, DWORD(DUPLICATE_SAME_ACCESS)
-                ) else {
+                guard
+                    DuplicateHandle(
+                        GetCurrentProcess(),
+                        pipe.writeEnd,
+                        GetCurrentProcess(),
+                        &writeEndHandle,
+                        0, true, DWORD(DUPLICATE_SAME_ACCESS)
+                    )
+                else {
                     throw SubprocessError(
                         code: .init(.failedToCreatePipe),
                         underlyingError: .init(rawValue: GetLastError())
@@ -2052,13 +2050,15 @@ extension SubprocessIntegrationTests {
                 )
                 // Set read handle to be inheritable only
                 var readEndHandle: HANDLE? = nil
-                guard DuplicateHandle(
-                    GetCurrentProcess(),
-                    pipe.readEnd,
-                    GetCurrentProcess(),
-                    &readEndHandle,
-                    0, true, DWORD(DUPLICATE_SAME_ACCESS)
-                ) else {
+                guard
+                    DuplicateHandle(
+                        GetCurrentProcess(),
+                        pipe.readEnd,
+                        GetCurrentProcess(),
+                        &readEndHandle,
+                        0, true, DWORD(DUPLICATE_SAME_ACCESS)
+                    )
+                else {
                     throw SubprocessError(
                         code: .init(.failedToCreatePipe),
                         underlyingError: .init(rawValue: GetLastError())
@@ -2309,4 +2309,3 @@ extension FileDescriptor {
         return result
     }
 }
-

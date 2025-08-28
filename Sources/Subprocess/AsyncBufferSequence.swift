@@ -192,10 +192,10 @@ extension AsyncBufferSequence {
                 }
 
                 // https://en.wikipedia.org/wiki/Newline#Unicode
-                let lineFeed            = Encoding.CodeUnit(0x0A)
+                let lineFeed = Encoding.CodeUnit(0x0A)
                 /// let verticalTab     = Encoding.CodeUnit(0x0B)
                 /// let formFeed        = Encoding.CodeUnit(0x0C)
-                let carriageReturn      = Encoding.CodeUnit(0x0D)
+                let carriageReturn = Encoding.CodeUnit(0x0D)
                 // carriageReturn + lineFeed
                 let newLine1: Encoding.CodeUnit
                 let newLine2: Encoding.CodeUnit
@@ -207,24 +207,24 @@ extension AsyncBufferSequence {
                 let paragraphSeparator3: Encoding.CodeUnit
                 switch Encoding.CodeUnit.self {
                 case is UInt8.Type:
-                    newLine1            = Encoding.CodeUnit(0xC2)
-                    newLine2            = Encoding.CodeUnit(0x85)
+                    newLine1 = Encoding.CodeUnit(0xC2)
+                    newLine2 = Encoding.CodeUnit(0x85)
 
-                    lineSeparator1      = Encoding.CodeUnit(0xE2)
-                    lineSeparator2      = Encoding.CodeUnit(0x80)
-                    lineSeparator3      = Encoding.CodeUnit(0xA8)
+                    lineSeparator1 = Encoding.CodeUnit(0xE2)
+                    lineSeparator2 = Encoding.CodeUnit(0x80)
+                    lineSeparator3 = Encoding.CodeUnit(0xA8)
 
                     paragraphSeparator1 = Encoding.CodeUnit(0xE2)
                     paragraphSeparator2 = Encoding.CodeUnit(0x80)
                     paragraphSeparator3 = Encoding.CodeUnit(0xA9)
                 case is UInt16.Type, is UInt32.Type:
                     // UTF16 and UTF32 use one byte for all
-                    newLine1            = Encoding.CodeUnit(0x0085)
-                    newLine2            = Encoding.CodeUnit(0x0085)
+                    newLine1 = Encoding.CodeUnit(0x0085)
+                    newLine2 = Encoding.CodeUnit(0x0085)
 
-                    lineSeparator1      = Encoding.CodeUnit(0x2028)
-                    lineSeparator2      = Encoding.CodeUnit(0x2028)
-                    lineSeparator3      = Encoding.CodeUnit(0x2028)
+                    lineSeparator1 = Encoding.CodeUnit(0x2028)
+                    lineSeparator2 = Encoding.CodeUnit(0x2028)
+                    lineSeparator3 = Encoding.CodeUnit(0x2028)
 
                     paragraphSeparator1 = Encoding.CodeUnit(0x2029)
                     paragraphSeparator2 = Encoding.CodeUnit(0x2029)
@@ -285,7 +285,7 @@ extension AsyncBufferSequence {
                             continue
                         }
                         return yield()
-                    case lineFeed ..< carriageReturn, newLine1, lineSeparator1, paragraphSeparator1:
+                    case lineFeed..<carriageReturn, newLine1, lineSeparator1, paragraphSeparator1:
                         return yield()
                     default:
                         continue
@@ -361,7 +361,7 @@ private let _pageSize: Int = Int(getpagesize())
 private let _pageSize: Int = Int(getpagesize())
 #elseif canImport(C)
 private let _pageSize: Int = Int(getpagesize())
-#endif  // canImport(Darwin)
+#endif // canImport(Darwin)
 
 @inline(__always)
 internal var readBufferSize: Int {

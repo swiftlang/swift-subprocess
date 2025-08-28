@@ -33,9 +33,10 @@ import Synchronization
 
 private typealias SignalStream = AsyncThrowingStream<Bool, any Error>
 private let _epollEventSize = 256
-private let _registration: Mutex<
-    [PlatformFileDescriptor : SignalStream.Continuation]
-> = Mutex([:])
+private let _registration:
+    Mutex<
+        [PlatformFileDescriptor: SignalStream.Continuation]
+    > = Mutex([:])
 
 final class AsyncIO: Sendable {
 
@@ -105,8 +106,9 @@ final class AsyncIO: Sendable {
         )
         guard rc == 0 else {
             let error = SubprocessError(
-                code: .init(.asyncIOFailed(
-                    "failed to add shutdown fd \(shutdownFileDescriptor) to epoll list")
+                code: .init(
+                    .asyncIOFailed(
+                        "failed to add shutdown fd \(shutdownFileDescriptor) to epoll list")
                 ),
                 underlyingError: .init(rawValue: errno)
             )
@@ -149,8 +151,9 @@ final class AsyncIO: Sendable {
                         }
                         // Report other errors
                         let error = SubprocessError(
-                            code: .init(.asyncIOFailed(
-                                "epoll_wait failed")
+                            code: .init(
+                                .asyncIOFailed(
+                                    "epoll_wait failed")
                             ),
                             underlyingError: .init(rawValue: errno)
                         )
@@ -158,7 +161,7 @@ final class AsyncIO: Sendable {
                         break monitorLoop
                     }
 
-                    for index in 0 ..< Int(eventCount) {
+                    for index in 0..<Int(eventCount) {
                         let event = events[index]
                         let targetFileDescriptor = event.data.fd
                         // Breakout the monitor loop if we received shutdown
@@ -239,8 +242,9 @@ final class AsyncIO: Sendable {
                 let flags = fcntl(fileDescriptor.rawValue, F_GETFD)
                 guard flags != -1 else {
                     let error = SubprocessError(
-                        code: .init(.asyncIOFailed(
-                            "failed to get flags for \(fileDescriptor.rawValue)")
+                        code: .init(
+                            .asyncIOFailed(
+                                "failed to get flags for \(fileDescriptor.rawValue)")
                         ),
                         underlyingError: .init(rawValue: errno)
                     )
@@ -249,8 +253,9 @@ final class AsyncIO: Sendable {
                 }
                 guard fcntl(fileDescriptor.rawValue, F_SETFL, flags | O_NONBLOCK) != -1 else {
                     let error = SubprocessError(
-                        code: .init(.asyncIOFailed(
-                            "failed to set \(fileDescriptor.rawValue) to be non-blocking")
+                        code: .init(
+                            .asyncIOFailed(
+                                "failed to set \(fileDescriptor.rawValue) to be non-blocking")
                         ),
                         underlyingError: .init(rawValue: errno)
                     )
@@ -288,8 +293,9 @@ final class AsyncIO: Sendable {
 
                     let capturedError = errno
                     let error = SubprocessError(
-                        code: .init(.asyncIOFailed(
-                            "failed to add \(fileDescriptor.rawValue) to epoll list")
+                        code: .init(
+                            .asyncIOFailed(
+                                "failed to add \(fileDescriptor.rawValue) to epoll list")
                         ),
                         underlyingError: .init(rawValue: capturedError)
                     )
@@ -314,8 +320,9 @@ final class AsyncIO: Sendable {
             )
             guard rc == 0 else {
                 throw SubprocessError(
-                    code: .init(.asyncIOFailed(
-                        "failed to remove \(fileDescriptor.rawValue) to epoll list")
+                    code: .init(
+                        .asyncIOFailed(
+                            "failed to remove \(fileDescriptor.rawValue) to epoll list")
                     ),
                     underlyingError: .init(rawValue: errno)
                 )
@@ -503,7 +510,7 @@ extension AsyncIO {
         return 0
     }
 
-#if SubprocessSpan
+    #if SubprocessSpan
     func write(
         _ span: borrowing RawSpan,
         to diskIO: borrowing IOChannel
@@ -563,7 +570,7 @@ extension AsyncIO {
         }
         return 0
     }
-#endif
+    #endif
 
     @inline(__always)
     private func shouldWaitForNextSignal(with error: CInt) -> Bool {
@@ -571,6 +578,6 @@ extension AsyncIO {
     }
 }
 
-extension Array : AsyncIO._ContiguousBytes where Element == UInt8 {}
+extension Array: AsyncIO._ContiguousBytes where Element == UInt8 {}
 
 #endif // canImport(Glibc) || canImport(Android) || canImport(Musl)
