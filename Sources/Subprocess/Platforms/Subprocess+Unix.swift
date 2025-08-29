@@ -33,8 +33,8 @@ import Musl
 
 // MARK: - Signals
 
-/// Signals are standardized messages sent to a running program
-/// to trigger specific behavior, such as quitting or error handling.
+/// Signals are standardized messages sent to a running program to
+/// trigger specific behavior, such as quitting or error handling.
 public struct Signal: Hashable, Sendable {
     /// The underlying platform specific value for the signal
     public let rawValue: Int32
@@ -571,12 +571,13 @@ extension Configuration {
 
 // MARK:  - ProcessIdentifier
 
-/// A platform independent identifier for a Subprocess.
+/// A platform-independent identifier for a Subprocess
 public struct ProcessIdentifier: Sendable, Hashable {
     /// The platform specific process identifier value
     public let value: pid_t
 
     #if os(Linux) || os(Android) || os(FreeBSD)
+    /// Process file Descriptor (pidfd) for the running execution
     public let processDescriptor: CInt
     #else
     internal let processDescriptor: CInt // not used on other platforms
@@ -595,8 +596,9 @@ public struct ProcessIdentifier: Sendable, Hashable {
 }
 
 extension ProcessIdentifier: CustomStringConvertible, CustomDebugStringConvertible {
+    /// A textual representation of this `ProcessIdentifier`.
     public var description: String { "\(self.value)" }
-
+    /// A textual representation of this `ProcessIdentifier`.
     public var debugDescription: String { "\(self.value)" }
 }
 
@@ -628,7 +630,7 @@ public struct PlatformOptions: Sendable {
     /// the child process terminates.
     /// Always ends in sending a `.kill` signal at the end.
     public var teardownSequence: [TeardownStep] = []
-
+    /// Initialize a `PlatformOptions` with default options.
     public init() {}
 }
 
@@ -646,10 +648,12 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
             """
     }
 
+    /// A textual representation of this `PlatformOptions`.
     public var description: String {
         return self.description(withIndent: 0)
     }
 
+    /// A textual representation of this `PlatformOptions`.
     public var debugDescription: String {
         return self.description(withIndent: 0)
     }

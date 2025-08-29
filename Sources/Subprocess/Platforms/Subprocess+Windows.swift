@@ -21,7 +21,7 @@ internal import Dispatch
 
 import _SubprocessCShims
 
-// Windows specific implementation
+// Windows-specific implementation
 extension Configuration {
     internal func spawn(
         withInput inputPipe: consuming CreatedPipe,
@@ -443,13 +443,13 @@ public struct PlatformOptions: Sendable {
     /// A `UserCredentials` to use spawning the subprocess
     /// as a different user
     public struct UserCredentials: Sendable, Hashable {
-        // The name of the user. This is the name
-        // of the user account to run as.
+        /// The name of the user. This is the name
+        /// of the user account to run as.
         public var username: String
-        // The clear-text password for the account.
+        /// The clear-text password for the account.
         public var password: String
-        // The name of the domain or server whose account database
-        // contains the account.
+        /// The name of the domain or server whose account database
+        /// contains the account.
         public var domain: String?
     }
 
@@ -553,6 +553,7 @@ public struct PlatformOptions: Sendable {
             ) throws -> Void
         )? = nil
 
+    /// Initialize PlatformOptions with default options
     public init() {}
 }
 
@@ -570,10 +571,12 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
             """
     }
 
+    /// A textual representation of this PlatformOptions.
     public var description: String {
         return self.description(withIndent: 0)
     }
 
+    /// A textual representation of this PlatformOptions.
     public var debugDescription: String {
         return self.description(withIndent: 0)
     }
@@ -936,11 +939,13 @@ extension Environment {
 
 // MARK: - ProcessIdentifier
 
-/// A platform independent identifier for a subprocess.
+/// A platform-independent identifier for a subprocess
 public struct ProcessIdentifier: Sendable, Hashable {
     /// Windows specific process identifier value
     public let value: DWORD
+    /// Process handle for current execution
     public nonisolated(unsafe) let processDescriptor: HANDLE
+    /// Main thread handle for current execution
     public nonisolated(unsafe) let threadHandle: HANDLE
 
     internal init(value: DWORD, processDescriptor: HANDLE, threadHandle: HANDLE) {
@@ -960,10 +965,12 @@ public struct ProcessIdentifier: Sendable, Hashable {
 }
 
 extension ProcessIdentifier: CustomStringConvertible, CustomDebugStringConvertible {
+    /// A textual representation of this `ProcessIdentifier`.
     public var description: String {
         return "(processID: \(self.value))"
     }
 
+    /// A textual representation of this `ProcessIdentifier`.
     public var debugDescription: String {
         return description
     }
@@ -1416,8 +1423,8 @@ fileprivate func SUCCEEDED(_ hr: HRESULT) -> Bool {
     hr >= 0
 }
 
-// This is a non-standard extension to the Windows SDK that allows us to convert
-// an HRESULT to a Win32 error code.
+// This is a non-standard extension to the Windows SDK that allows us to convert an
+// HRESULT to a Win32 error code.
 @inline(__always)
 fileprivate func WIN32_FROM_HRESULT(_ hr: HRESULT) -> DWORD {
     if SUCCEEDED(hr) { return DWORD(ERROR_SUCCESS) }
@@ -1443,8 +1450,8 @@ extension UInt8 {
 /// - parameter initialSize: Initial size of the buffer (including the null terminator) to allocate to hold the returned string.
 /// - parameter maxSize: Maximum size of the buffer (including the null terminator) to allocate to hold the returned string.
 /// - parameter body: Closure to call the Win32 API function to populate the provided buffer.
-///   Should return the number of UTF-16 code units (not including the null terminator) copied, 0 to indicate an error.
-///   If the buffer is not of sufficient size, should return a value greater than or equal to the size of the buffer.
+/// Should return the number of UTF-16 code units (not including the null terminator) copied, 0 to indicate an error.
+/// If the buffer is not of sufficient size, should return a value greater than or equal to the size of the buffer.
 internal func fillNullTerminatedWideStringBuffer(
     initialSize: DWORD,
     maxSize: DWORD,

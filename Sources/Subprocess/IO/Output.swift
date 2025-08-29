@@ -23,11 +23,11 @@ internal import Dispatch
 
 // MARK: - Output
 
-/// `OutputProtocol` specifies the set of methods that a type
-/// must implement to serve as the output target for a subprocess.
-/// Instead of developing custom implementations of `OutputProtocol`,
-/// it is recommended to utilize the default implementations provided
-/// by the `Subprocess` library to specify the output handling requirements.
+/// `OutputProtocol` specifies the set of methods that a type must implement to
+/// serve as the output target for a subprocess. Instead of developing custom
+/// implementations of `OutputProtocol`, it is recommended to utilize the
+/// default implementations provided by the `Subprocess` library to specify the
+/// output handling requirements.
 public protocol OutputProtocol: Sendable, ~Copyable {
     associatedtype OutputType: Sendable
 
@@ -48,13 +48,13 @@ extension OutputProtocol {
     public var maxSize: Int { 128 * 1024 }
 }
 
-/// A concrete `Output` type for subprocesses that indicates that
-/// the `Subprocess` should not collect or redirect output
-/// from the child process. On Unix-like systems, `DiscardedOutput`
-/// redirects the standard output of the subprocess to `/dev/null`,
-/// while on Windows, it does not bind any file handle to the
-/// subprocess standard output handle.
+/// A concrete `Output` type for subprocesses that indicates that the
+/// `Subprocess` should not collect or redirect output from the child
+/// process. On Unix-like systems, `DiscardedOutput` redirects the
+/// standard output of the subprocess to `/dev/null`, while on Windows,
+/// redirects the output to `NUL`.
 public struct DiscardedOutput: OutputProtocol {
+    /// The output type for this output option
     public typealias OutputType = Void
 
     internal func createPipe() throws -> CreatedPipe {
@@ -74,12 +74,12 @@ public struct DiscardedOutput: OutputProtocol {
     internal init() {}
 }
 
-/// A concrete `Output` type for subprocesses that
-/// writes output to a specified `FileDescriptor`.
-/// Developers have the option to instruct the `Subprocess` to
-/// automatically close the provided `FileDescriptor`
-/// after the subprocess is spawned.
+/// A concrete `Output` type for subprocesses that writes output
+/// to a specified `FileDescriptor`. Developers have the option to
+/// instruct the `Subprocess` to automatically close the provided
+/// `FileDescriptor` after the subprocess is spawned.
 public struct FileDescriptorOutput: OutputProtocol {
+    /// The output type for this output option
     public typealias OutputType = Void
 
     private let closeAfterSpawningProcess: Bool
@@ -111,13 +111,14 @@ public struct FileDescriptorOutput: OutputProtocol {
 
 /// A concrete `Output` type for subprocesses that collects output
 /// from the subprocess as `String` with the given encoding.
-/// This option must be used with he `run()` method that
-/// returns a `CollectedResult`.
 public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol {
+    /// The output type for this output option
     public typealias OutputType = String?
+    /// The max number of bytes to collect
     public let maxSize: Int
 
     #if SubprocessSpan
+    /// Create a String from `RawSpawn`
     public func output(from span: RawSpan) throws -> String? {
         // FIXME: Span to String
         var array: [UInt8] = []
@@ -127,6 +128,8 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol {
         return String(decodingBytes: array, as: Encoding.self)
     }
     #endif
+
+    /// Create a String from `Sequence<UInt8>`
     public func output(from buffer: some Sequence<UInt8>) throws -> String? {
         // FIXME: Span to String
         let array = Array(buffer)
@@ -138,11 +141,12 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol {
     }
 }
 
-/// A concrete `Output` type for subprocesses that collects output
-/// from the subprocess as `[UInt8]`. This option must be used with
-/// the `run()` method that returns a `CollectedResult`
+/// A concrete `Output` type for subprocesses that collects output from
+/// the subprocess as `[UInt8]`.
 public struct BytesOutput: OutputProtocol {
+    /// The output type for this output option
     public typealias OutputType = [UInt8]
+    /// The max number of bytes to collect
     public let maxSize: Int
 
     internal func captureOutput(
@@ -181,10 +185,14 @@ public struct BytesOutput: OutputProtocol {
     }
 
     #if SubprocessSpan
+    /// Create an Array from `RawSpawn`.
+    /// Not implemented
     public func output(from span: RawSpan) throws -> [UInt8] {
         fatalError("Not implemented")
     }
     #endif
+    /// Create an Array from `Sequence<UInt8>`.
+    /// Not implemented
     public func output(from buffer: some Sequence<UInt8>) throws -> [UInt8] {
         fatalError("Not implemented")
     }
@@ -194,11 +202,12 @@ public struct BytesOutput: OutputProtocol {
     }
 }
 
-/// A concrete `Output` type for subprocesses that redirects
-/// the child output to the `.standardOutput` (a sequence) or `.standardError`
-/// property of `Execution`. This output type is
-/// only applicable to the `run()` family that takes a custom closure.
+/// A concrete `Output` type for subprocesses that redirects the child output to
+/// the `.standardOutput` (a sequence) or `.standardError` property of
+/// `Execution`. This output type is only applicable to the `run()` family that
+/// takes a custom closure.
 internal struct SequenceOutput: OutputProtocol {
+    /// The output type for this output option
     public typealias OutputType = Void
 
     internal init() {}
@@ -254,6 +263,7 @@ extension OutputProtocol where Self == BytesOutput {
 // MARK: - Span Default Implementations
 #if SubprocessSpan
 extension OutputProtocol {
+    /// Create an Array from `Sequence<UInt8>`.
     public func output(from buffer: some Sequence<UInt8>) throws -> OutputType {
         guard let rawBytes: UnsafeRawBufferPointer = buffer as? UnsafeRawBufferPointer else {
             fatalError("Unexpected input type passed: \(type(of: buffer))")
@@ -338,12 +348,12 @@ extension OutputProtocol where OutputType == Void {
     internal func captureOutput(from fileDescriptor: consuming IOChannel?) async throws {}
 
     #if SubprocessSpan
-    /// Convert the output from Data to expected output type
+    /// Convert the output from `RawSpan` to expected output type
     public func output(from span: RawSpan) throws {
         // noop
     }
     #endif
-
+    /// Convert the output from `Sequence<UInt8>` to expected output type
     public func output(from buffer: some Sequence<UInt8>) throws {
         // noop
     }

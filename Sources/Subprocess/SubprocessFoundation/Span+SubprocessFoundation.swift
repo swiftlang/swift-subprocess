@@ -26,7 +26,7 @@ extension Data {
         self = s.withUnsafeBytes { Data($0) }
     }
 
-    public var bytes: RawSpan {
+    internal var bytes: RawSpan {
         // FIXME: For demo purpose only
         let ptr = self.withUnsafeBytes { ptr in
             return ptr

@@ -23,7 +23,7 @@
     "prioritizeKeepingFunctionOutputTogether": false,
     "respectsExistingLineBreaks": true,
     "rules": {
-        "AllPublicDeclarationsHaveDocumentation": false,
+        "AllPublicDeclarationsHaveDocumentation": true,
         "AlwaysUseLiteralForEmptyCollectionInit": false,
         "AlwaysUseLowerCamelCase": false,
         "AmbiguousTrailingClosureOverload": false,

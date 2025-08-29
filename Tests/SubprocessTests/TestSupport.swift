@@ -64,6 +64,7 @@ internal func directory(_ lhs: String, isSameAs rhs: String) -> Bool {
 }
 
 extension Trait where Self == ConditionTrait {
+    /// This test requires bash to run (instead of sh)
     public static var requiresBash: Self {
         enabled(
             if: (try? Executable.name("bash").resolveExecutablePath(in: .inherit)) != nil,

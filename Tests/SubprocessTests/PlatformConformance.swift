@@ -23,12 +23,11 @@ import Musl
 import WinSDK
 #endif
 
-/// This file defines protocols for platform-specific structs
-/// and adds retroactive conformances to them to ensure they all
-/// conform to a uniform shape. We opted to keep these protocols
-/// in the test target as opposed to making them public APIs
-/// because we don't directly use them in public APIs.
-
+/// This file defines protocols for platform-specific structs and
+/// adds retroactive conformances to them to ensure they all conform
+/// to a uniform shape. We opted to keep these protocols in the test
+/// target as opposed to making them public APIs because we don't
+/// directly use them in public APIs.
 protocol ProcessIdentifierProtocol: Sendable, Hashable, CustomStringConvertible, CustomDebugStringConvertible {
     #if os(Windows)
     var value: DWORD { get }

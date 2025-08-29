@@ -179,9 +179,9 @@ private struct MonitorThreadContext: Sendable {
     }
 }
 
-// Okay to be unlocked global mutable because this value is only set once like dispatch_once
+// Okay to be unlocked global mutable state because this value is only set once, like dispatch_once
 private nonisolated(unsafe) var _signalPipe: (readEnd: CInt, writeEnd: CInt) = (readEnd: -1, writeEnd: -1)
-// Okay to be unlocked global mutable because this value is only set once like dispatch_once
+// Okay to be unlocked global mutable state because this value is only set once, like dispatch_once
 private nonisolated(unsafe) var _waitProcessDescriptorSupported = false
 private let _processMonitorState: Mutex<ProcessMonitorState> = .init(.notStarted)
 
@@ -455,7 +455,7 @@ private func _blockAndWaitForProcessDescriptor(_ pidfd: CInt, context: MonitorTh
     continuation?.resume(with: terminationStatus)
 }
 
-// On older kernel, fallback to using signal handlers
+// On older kernels, fall back to using signal handlers
 private typealias ResultContinuation = (
     result: Result<TerminationStatus, SubprocessError>,
     continuation: CheckedContinuation<TerminationStatus, any Error>
