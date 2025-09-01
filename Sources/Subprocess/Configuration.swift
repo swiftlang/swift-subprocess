@@ -61,6 +61,22 @@ public struct Configuration: Sendable {
         self.platformOptions = platformOptions
     }
 
+    public init(
+        _ executable: Executable,
+        arguments: Arguments = [],
+        environment: Environment = .inherit,
+        workingDirectory: FilePath? = nil,
+        platformOptions: PlatformOptions = PlatformOptions()
+    ) {
+        self.init(
+            executable: executable,
+            arguments: arguments,
+            environment: environment,
+            workingDirectory: workingDirectory,
+            platformOptions: platformOptions
+        )
+    }
+
     internal func run<Result>(
         input: consuming CreatedPipe,
         output: consuming CreatedPipe,

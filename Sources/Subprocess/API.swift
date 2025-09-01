@@ -87,50 +87,18 @@ public func run<
     output: Output,
     error: Error = .discarded
 ) async throws -> CollectedResult<Output, Error> {
-    typealias RunResult = (
-        processIdentifier: ProcessIdentifier,
-        standardOutput: Output.OutputType,
-        standardError: Error.OutputType
-    )
-
-    let customInput = CustomWriteInput()
-    let result = try await Configuration(
+    let configuration = Configuration(
         executable: executable,
         arguments: arguments,
         environment: environment,
         workingDirectory: workingDirectory,
         platformOptions: platformOptions
-    ).run(
-        input: try customInput.createPipe(),
-        output: try output.createPipe(),
-        error: try error.createPipe()
-    ) { execution, inputIO, outputIO, errorIO in
-        var inputIOBox: IOChannel? = consume inputIO
-        var outputIOBox: IOChannel? = consume outputIO
-        var errorIOBox: IOChannel? = consume errorIO
-
-        // Write input, capture output and error in parallel
-        async let stdout = try output.captureOutput(from: outputIOBox.take())
-        async let stderr = try error.captureOutput(from: errorIOBox.take())
-        // Write span at the same isolation
-        if let writeFd = inputIOBox.take() {
-            let writer = StandardInputWriter(diskIO: writeFd)
-            _ = try await writer.write(input._bytes)
-            try await writer.finish()
-        }
-
-        return (
-            processIdentifier: execution.processIdentifier,
-            standardOutput: try await stdout,
-            standardError: try await stderr
-        )
-    }
-
-    return CollectedResult(
-        processIdentifier: result.value.processIdentifier,
-        terminationStatus: result.terminationStatus,
-        standardOutput: result.value.standardOutput,
-        standardError: result.value.standardError
+    )
+    return try await run(
+        configuration,
+        input: input,
+        output: output,
+        error: error
     )
 }
 #endif // SubprocessSpan
@@ -165,37 +133,20 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol, Error: Out
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution) async throws -> Result)
 ) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
-    return try await Configuration(
+    let configuration = Configuration(
         executable: executable,
-        arguments: arguments,
         environment: environment,
         workingDirectory: workingDirectory,
         platformOptions: platformOptions
-    ).run(
-        input: try input.createPipe(),
-        output: try output.createPipe(),
-        error: try error.createPipe()
-    ) { execution, inputIO, outputIO, errorIO in
-        var inputIOBox: IOChannel? = consume inputIO
-        return try await withThrowingTaskGroup(
-            of: Void.self,
-            returning: Result.self
-        ) { group in
-            var inputIOContainer: IOChannel? = inputIOBox.take()
-            group.addTask {
-                if let inputIO = inputIOContainer.take() {
-                    let writer = StandardInputWriter(diskIO: inputIO)
-                    try await input.write(with: writer)
-                    try await writer.finish()
-                }
-            }
-
-            // Body runs in the same isolation
-            let result = try await body(execution)
-            try await group.waitForAll()
-            return result
-        }
-    }
+    )
+    return try await run(
+        configuration,
+        input: input,
+        output: output,
+        error: error,
+        isolation: isolation,
+        body: body
+    )
 }
 
 /// Run an executable with given parameters and a custom closure
@@ -224,40 +175,20 @@ public func run<Result, Input: InputProtocol, Error: OutputProtocol>(
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, AsyncBufferSequence) async throws -> Result)
 ) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
-    let output = SequenceOutput()
-    return try await Configuration(
+    let configuration = Configuration(
         executable: executable,
         arguments: arguments,
         environment: environment,
         workingDirectory: workingDirectory,
         platformOptions: platformOptions
-    ).run(
-        input: try input.createPipe(),
-        output: try output.createPipe(),
-        error: try error.createPipe()
-    ) { execution, inputIO, outputIO, errorIO in
-        var inputIOBox: IOChannel? = consume inputIO
-        var outputIOBox: IOChannel? = consume outputIO
-        return try await withThrowingTaskGroup(
-            of: Void.self,
-            returning: Result.self
-        ) { group in
-            var inputIOContainer: IOChannel? = inputIOBox.take()
-            group.addTask {
-                if let inputIO = inputIOContainer.take() {
-                    let writer = StandardInputWriter(diskIO: inputIO)
-                    try await input.write(with: writer)
-                    try await writer.finish()
-                }
-            }
-
-            // Body runs in the same isolation
-            let outputSequence = AsyncBufferSequence(diskIO: outputIOBox.take()!.consumeIOChannel())
-            let result = try await body(execution, outputSequence)
-            try await group.waitForAll()
-            return result
-        }
-    }
+    )
+    return try await run(
+        configuration,
+        input: input,
+        error: error,
+        isolation: isolation,
+        body: body
+    )
 }
 
 /// Run an executable with given parameters and a custom closure
@@ -286,40 +217,20 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, AsyncBufferSequence) async throws -> Result)
 ) async throws -> ExecutionResult<Result> where Output.OutputType == Void {
-    let error = SequenceOutput()
-    return try await Configuration(
+    let configuration = Configuration(
         executable: executable,
         arguments: arguments,
         environment: environment,
         workingDirectory: workingDirectory,
         platformOptions: platformOptions
-    ).run(
-        input: try input.createPipe(),
-        output: try output.createPipe(),
-        error: try error.createPipe()
-    ) { execution, inputIO, outputIO, errorIO in
-        var inputIOBox: IOChannel? = consume inputIO
-        var errorIOBox: IOChannel? = consume errorIO
-        return try await withThrowingTaskGroup(
-            of: Void.self,
-            returning: Result.self
-        ) { group in
-            var inputIOContainer: IOChannel? = inputIOBox.take()
-            group.addTask {
-                if let inputIO = inputIOContainer.take() {
-                    let writer = StandardInputWriter(diskIO: inputIO)
-                    try await input.write(with: writer)
-                    try await writer.finish()
-                }
-            }
-
-            // Body runs in the same isolation
-            let errorSequence = AsyncBufferSequence(diskIO: errorIOBox.take()!.consumeIOChannel())
-            let result = try await body(execution, errorSequence)
-            try await group.waitForAll()
-            return result
-        }
-    }
+    )
+    return try await run(
+        configuration,
+        input: input,
+        output: output,
+        isolation: isolation,
+        body: body
+    )
 }
 
 /// Run an executable with given parameters and a custom closure
@@ -347,24 +258,19 @@ public func run<Result, Error: OutputProtocol>(
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
 ) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
-    let input = CustomWriteInput()
-    let output = SequenceOutput()
-    return try await Configuration(
+    let configuration = Configuration(
         executable: executable,
         arguments: arguments,
         environment: environment,
         workingDirectory: workingDirectory,
         platformOptions: platformOptions
     )
-    .run(
-        input: try input.createPipe(),
-        output: try output.createPipe(),
-        error: try error.createPipe()
-    ) { execution, inputIO, outputIO, errorIO in
-        let writer = StandardInputWriter(diskIO: inputIO!)
-        let outputSequence = AsyncBufferSequence(diskIO: outputIO!.consumeIOChannel())
-        return try await body(execution, writer, outputSequence)
-    }
+    return try await run(
+        configuration,
+        error: error,
+        isolation: isolation,
+        body: body
+    )
 }
 
 /// Run an executable with given parameters and a custom closure
@@ -392,24 +298,19 @@ public func run<Result, Output: OutputProtocol>(
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
 ) async throws -> ExecutionResult<Result> where Output.OutputType == Void {
-    let input = CustomWriteInput()
-    let error = SequenceOutput()
-    return try await Configuration(
+    let configuration = Configuration(
         executable: executable,
         arguments: arguments,
         environment: environment,
         workingDirectory: workingDirectory,
         platformOptions: platformOptions
     )
-    .run(
-        input: try input.createPipe(),
-        output: try output.createPipe(),
-        error: try error.createPipe()
-    ) { execution, inputIO, outputIO, errorIO in
-        let writer = StandardInputWriter(diskIO: inputIO!)
-        let errorSequence = AsyncBufferSequence(diskIO: errorIO!.consumeIOChannel())
-        return try await body(execution, writer, errorSequence)
-    }
+    return try await run(
+        configuration,
+        output: output,
+        isolation: isolation,
+        body: body
+    )
 }
 
 /// Run an executable with given parameters and a custom closure
@@ -449,23 +350,75 @@ public func run<Result>(
         workingDirectory: workingDirectory,
         platformOptions: platformOptions
     )
-    let input = CustomWriteInput()
-    let output = SequenceOutput()
-    let error = SequenceOutput()
-
-    return try await configuration.run(
-        input: try input.createPipe(),
-        output: try output.createPipe(),
-        error: try error.createPipe()
-    ) { execution, inputIO, outputIO, errorIO in
-        let writer = StandardInputWriter(diskIO: inputIO!)
-        let outputSequence = AsyncBufferSequence(diskIO: outputIO!.consumeIOChannel())
-        let errorSequence = AsyncBufferSequence(diskIO: errorIO!.consumeIOChannel())
-        return try await body(execution, writer, outputSequence, errorSequence)
-    }
+    return try await run(
+        configuration,
+        isolation: isolation,
+        body: body
+    )
 }
 
 // MARK: - Configuration Based
+
+#if SubprocessSpan
+/// Run an executable with given configuration asynchronously and returns
+/// a `CollectedResult` containing the output of the child process.
+/// - Parameters:
+///   - configuration: The configuration to run.
+///   - input: span to write to subprocess' standard input.
+///   - output: The method to use for redirecting the standard output.
+///   - error: The method to use for redirecting the standard error.
+/// - Returns a CollectedResult containing the result of the run.
+public func run<
+    InputElement: BitwiseCopyable,
+    Output: OutputProtocol,
+    Error: OutputProtocol
+>(
+    _ configuration: Configuration,
+    input: borrowing Span<InputElement>,
+    output: Output,
+    error: Error = .discarded
+) async throws -> CollectedResult<Output, Error> {
+    typealias RunResult = (
+        processIdentifier: ProcessIdentifier,
+        standardOutput: Output.OutputType,
+        standardError: Error.OutputType
+    )
+
+    let customInput = CustomWriteInput()
+    let result = try await configuration.run(
+        input: try customInput.createPipe(),
+        output: try output.createPipe(),
+        error: try error.createPipe()
+    ) { execution, inputIO, outputIO, errorIO in
+        var inputIOBox: IOChannel? = consume inputIO
+        var outputIOBox: IOChannel? = consume outputIO
+        var errorIOBox: IOChannel? = consume errorIO
+
+        // Write input, capture output and error in parallel
+        async let stdout = try output.captureOutput(from: outputIOBox.take())
+        async let stderr = try error.captureOutput(from: errorIOBox.take())
+        // Write span at the same isolation
+        if let writeFd = inputIOBox.take() {
+            let writer = StandardInputWriter(diskIO: writeFd)
+            _ = try await writer.write(input._bytes)
+            try await writer.finish()
+        }
+
+        return (
+            processIdentifier: execution.processIdentifier,
+            standardOutput: try await stdout,
+            standardError: try await stderr
+        )
+    }
+
+    return CollectedResult(
+        processIdentifier: result.value.processIdentifier,
+        terminationStatus: result.terminationStatus,
+        standardOutput: result.value.standardOutput,
+        standardError: result.value.standardError
+    )
+}
+#endif
 
 /// Run a `Configuration` asynchronously and returns
 /// a `CollectedResult` containing the output of the child process.
@@ -554,6 +507,204 @@ public func run<
         standardOutput: result.value.standardOutput,
         standardError: result.value.standardError
     )
+}
+
+/// Run an executable with given `Configuration` and a custom closure
+/// to manage the running subprocess' lifetime.
+/// - Parameters:
+///   - configuration: The configuration to run.
+///   - input: The input to send to the executable.
+///   - output: How to manager executable standard output.
+///   - error: How to manager executable standard error.
+///   - isolation: the isolation context to run the body closure.
+///   - body: The custom execution body to manually control the running process
+/// - Returns an executableResult type containing the return value
+///     of the closure.
+public func run<Result, Input: InputProtocol, Output: OutputProtocol, Error: OutputProtocol>(
+    _ configuration: Configuration,
+    input: Input = .none,
+    output: Output = .discarded,
+    error: Error = .discarded,
+    isolation: isolated (any Actor)? = #isolation,
+    body: ((Execution) async throws -> Result)
+) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
+    return try await configuration.run(
+        input: try input.createPipe(),
+        output: try output.createPipe(),
+        error: try error.createPipe()
+    ) { execution, inputIO, outputIO, errorIO in
+        var inputIOBox: IOChannel? = consume inputIO
+        return try await withThrowingTaskGroup(
+            of: Void.self,
+            returning: Result.self
+        ) { group in
+            var inputIOContainer: IOChannel? = inputIOBox.take()
+            group.addTask {
+                if let inputIO = inputIOContainer.take() {
+                    let writer = StandardInputWriter(diskIO: inputIO)
+                    try await input.write(with: writer)
+                    try await writer.finish()
+                }
+            }
+
+            // Body runs in the same isolation
+            let result = try await body(execution)
+            try await group.waitForAll()
+            return result
+        }
+    }
+}
+
+/// Run an executable with given `Configuration` and a custom closure
+/// to manage the running subprocess' lifetime and stream its standard output.
+/// - Parameters:
+///   - configuration: The configuration to run.
+///   - input: The input to send to the executable.
+///   - error: How to manager executable standard error.
+///   - isolation: the isolation context to run the body closure.
+///   - body: The custom execution body to manually control the running process
+/// - Returns an executableResult type containing the return value
+///     of the closure.
+public func run<Result, Input: InputProtocol, Error: OutputProtocol>(
+    _ configuration: Configuration,
+    input: Input = .none,
+    error: Error = .discarded,
+    isolation: isolated (any Actor)? = #isolation,
+    body: ((Execution, AsyncBufferSequence) async throws -> Result)
+) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
+    let output = SequenceOutput()
+    return try await configuration.run(
+        input: try input.createPipe(),
+        output: try output.createPipe(),
+        error: try error.createPipe()
+    ) { execution, inputIO, outputIO, errorIO in
+        var inputIOBox: IOChannel? = consume inputIO
+        var outputIOBox: IOChannel? = consume outputIO
+        return try await withThrowingTaskGroup(
+            of: Void.self,
+            returning: Result.self
+        ) { group in
+            var inputIOContainer: IOChannel? = inputIOBox.take()
+            group.addTask {
+                if let inputIO = inputIOContainer.take() {
+                    let writer = StandardInputWriter(diskIO: inputIO)
+                    try await input.write(with: writer)
+                    try await writer.finish()
+                }
+            }
+
+            // Body runs in the same isolation
+            let outputSequence = AsyncBufferSequence(diskIO: outputIOBox.take()!.consumeIOChannel())
+            let result = try await body(execution, outputSequence)
+            try await group.waitForAll()
+            return result
+        }
+    }
+}
+
+/// Run an executable with given `Configuration` and a custom closure
+/// to manage the running subprocess' lifetime and stream its standard error.
+/// - Parameters:
+///   - configuration: The configuration to run.
+///   - input: The input to send to the executable.
+///   - output: How to manager executable standard output.
+///   - isolation: the isolation context to run the body closure.
+///   - body: The custom execution body to manually control the running process
+/// - Returns an executableResult type containing the return value
+///     of the closure.
+public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
+    _ configuration: Configuration,
+    input: Input = .none,
+    output: Output,
+    isolation: isolated (any Actor)? = #isolation,
+    body: ((Execution, AsyncBufferSequence) async throws -> Result)
+) async throws -> ExecutionResult<Result> where Output.OutputType == Void {
+    let error = SequenceOutput()
+    return try await configuration.run(
+        input: try input.createPipe(),
+        output: try output.createPipe(),
+        error: try error.createPipe()
+    ) { execution, inputIO, outputIO, errorIO in
+        var inputIOBox: IOChannel? = consume inputIO
+        var errorIOBox: IOChannel? = consume errorIO
+        return try await withThrowingTaskGroup(
+            of: Void.self,
+            returning: Result.self
+        ) { group in
+            var inputIOContainer: IOChannel? = inputIOBox.take()
+            group.addTask {
+                if let inputIO = inputIOContainer.take() {
+                    let writer = StandardInputWriter(diskIO: inputIO)
+                    try await input.write(with: writer)
+                    try await writer.finish()
+                }
+            }
+
+            // Body runs in the same isolation
+            let errorSequence = AsyncBufferSequence(diskIO: errorIOBox.take()!.consumeIOChannel())
+            let result = try await body(execution, errorSequence)
+            try await group.waitForAll()
+            return result
+        }
+    }
+}
+
+/// Run an executable with given `Configuration` and a custom closure
+/// to manage the running subprocess' lifetime, write to its
+/// standard input, and stream its standard output.
+/// - Parameters:
+///   - configuration: The `Configuration` to run.
+///   - error: How to manager executable standard error.
+///   - isolation: the isolation context to run the body closure.
+///   - body: The custom execution body to manually control the running process
+/// - Returns an executableResult type containing the return value
+///     of the closure.
+public func run<Result, Error: OutputProtocol>(
+    _ configuration: Configuration,
+    error: Error = .discarded,
+    isolation: isolated (any Actor)? = #isolation,
+    body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
+) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
+    let input = CustomWriteInput()
+    let output = SequenceOutput()
+    return try await configuration.run(
+        input: try input.createPipe(),
+        output: try output.createPipe(),
+        error: try error.createPipe()
+    ) { execution, inputIO, outputIO, errorIO in
+        let writer = StandardInputWriter(diskIO: inputIO!)
+        let outputSequence = AsyncBufferSequence(diskIO: outputIO!.consumeIOChannel())
+        return try await body(execution, writer, outputSequence)
+    }
+}
+
+/// Run an executable with given `Configuration` and a custom closure
+/// to manage the running subprocess' lifetime, write to its
+/// standard input, and stream its standard error.
+/// - Parameters:
+///   - configuration: The `Configuration` to run.
+///   - output: How to manager executable standard output.
+///   - isolation: the isolation context to run the body closure.
+///   - body: The custom execution body to manually control the running process
+/// - Returns an executableResult type containing the return value
+///     of the closure.
+public func run<Result, Output: OutputProtocol>(
+    _ configuration: Configuration,
+    output: Output,
+    isolation: isolated (any Actor)? = #isolation,
+    body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
+) async throws -> ExecutionResult<Result> where Output.OutputType == Void {
+    let input = CustomWriteInput()
+    let error = SequenceOutput()
+    return try await configuration.run(
+        input: try input.createPipe(),
+        output: try output.createPipe(),
+        error: try error.createPipe()
+    ) { execution, inputIO, outputIO, errorIO in
+        let writer = StandardInputWriter(diskIO: inputIO!)
+        let errorSequence = AsyncBufferSequence(diskIO: errorIO!.consumeIOChannel())
+        return try await body(execution, writer, errorSequence)
+    }
 }
 
 /// Run an executable with given parameters specified by a `Configuration`
