@@ -135,6 +135,7 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol, Error: Out
 ) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
     let configuration = Configuration(
         executable: executable,
+        arguments: arguments,
         environment: environment,
         workingDirectory: workingDirectory,
         platformOptions: platformOptions
