@@ -653,7 +653,7 @@ internal func _safelyClose(_ target: _CloseTarget) throws {
 
 /// An IO descriptor wraps platform-specific file descriptor, which establishes a
 /// connection to the standard input/output (IO) system during the process of
-/// spawning a child process. 
+/// spawning a child process.
 ///
 /// Unlike a file descriptor, the `IODescriptor` does not support
 /// data read/write operations; its primary function is to facilitate the spawning of
@@ -970,7 +970,7 @@ extension Optional where Wrapped == String {
 /// Runs the body close, then runs the on-cleanup closure if the body closure throws an error
 /// or if the parent task is cancelled.
 ///
-/// In the latter case, `onCleanup` may be run concurrently with `body`. 
+/// In the latter case, `onCleanup` may be run concurrently with `body`.
 /// The `body` closure is guaranteed to run exactly once.
 /// The `onCleanup` closure is guaranteed to run only once, or not at all.
 internal func withAsyncTaskCleanupHandler<Result>(
