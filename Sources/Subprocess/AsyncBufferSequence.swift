@@ -19,11 +19,11 @@
 internal import Dispatch
 #endif
 
-/// A synchronous sequence of `Buffer`s used to stream output from subprocess.
+/// A synchronous sequence of buffers used to stream output from subprocess.
 public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
-    /// The failure type for this `AsyncSequence`
+    /// The failure type for the asynchronous sequence.
     public typealias Failure = any Swift.Error
-    /// The element type for this `AsyncSequence`
+    /// The element type for the asynchronous sequence.
     public typealias Element = Buffer
 
     #if SUBPROCESS_ASYNCIO_DISPATCH
@@ -37,7 +37,7 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
     /// Iterator for `AsyncBufferSequence`.
     @_nonSendable
     public struct Iterator: AsyncIteratorProtocol {
-        /// The element type for this iterator
+        /// The element type for the iterator.
         public typealias Element = Buffer
 
         private let diskIO: DiskIO
@@ -48,8 +48,8 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
             self.buffer = []
         }
 
-        /// Retrieve the next `Buffer` in the sequence, nor `nil` if
-        /// the sequence has ended,
+        /// Retrieve the next buffer in the sequence, or `nil` if
+        /// the sequence has ended.
         public mutating func next() async throws -> Buffer? {
             // If we have more left in buffer, use that
             guard self.buffer.isEmpty else {
@@ -89,12 +89,12 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
         self.diskIO = diskIO
     }
 
-    /// Creates a iterator for this `AsyncSequence`
+    /// Creates a iterator for this asynchronous sequence.
     public func makeAsyncIterator() -> Iterator {
         return Iterator(diskIO: self.diskIO)
     }
 
-    /// Creates a line sequence to iterate through this `AsyncBufferSequence` line by line
+    /// Creates a line sequence to iterate through this `AsyncBufferSequence` line by line.
     public func lines() -> LineSequence<UTF8> {
         return LineSequence(
             underlying: self,
@@ -103,7 +103,7 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
         )
     }
 
-    /// Creates a line sequence to iterate through this `AsyncBufferSequence` line by line
+    /// Creates a line sequence to iterate through a `AsyncBufferSequence` line by line.
     /// - Parameters:
     ///   - encoding: The taget encoding to encoding Strings to
     ///   - bufferingPolicy: How should back-pressure be handled
@@ -118,19 +118,19 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
 
 // MARK: - LineSequence
 extension AsyncBufferSequence {
-    /// An asynchronous sequence of `String` which each String representing a line
-    /// `LineSequence` parses and splits `AsyncBufferSequence` into lines. It is the
-    /// preferred method to convert `Buffer` to `String`
+    /// Line sequence parses and splits an asynchronous sequence of buffers into lines.
+    ///
+    /// It is the preferred method to convert `Buffer` to `String`
     public struct LineSequence<Encoding: _UnicodeEncoding>: AsyncSequence, Sendable {
-        /// The element type for this `AsyncSequence`
+        /// The element type for the asynchronous sequence.
         public typealias Element = String
 
         private let base: AsyncBufferSequence
         private let bufferingPolicy: BufferingPolicy
 
-        /// The iterator for `LineSequence`
+        /// The iterator for line sequence.
         public struct AsyncIterator: AsyncIteratorProtocol {
-            /// The element type for this Iterator
+            /// The element type for this Iterator.
             public typealias Element = String
 
             private var source: AsyncBufferSequence.AsyncIterator
@@ -152,7 +152,7 @@ extension AsyncBufferSequence {
                 self.bufferingPolicy = bufferingPolicy
             }
 
-            /// Retrieve the next line
+            /// Retrieves the next line, or returns nil if the sequence ends.
             public mutating func next() async throws -> String? {
 
                 func loadBuffer() async throws -> [Encoding.CodeUnit]? {
@@ -327,7 +327,7 @@ extension AsyncBufferSequence {
             }
         }
 
-        /// Creates a iterator for this `LineSequence`
+        /// Creates a iterator for this line sequence.
         public func makeAsyncIterator() -> AsyncIterator {
             return AsyncIterator(
                 underlyingIterator: self.base.makeAsyncIterator(),
@@ -347,7 +347,7 @@ extension AsyncBufferSequence {
 }
 
 extension AsyncBufferSequence.LineSequence {
-    /// A strategy that handles exhaustion of a buffer’s capacity.
+    /// A strategy that handles the exhaustion of a buffer’s capacity.
     public enum BufferingPolicy: Sendable {
         /// Continue to add to the buffer, without imposing a limit
         /// on the number of buffered elements (line length).

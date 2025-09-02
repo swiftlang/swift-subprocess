@@ -83,7 +83,7 @@ public struct PlatformOptions: Sendable {
             ) throws -> Void
         )? = nil
 
-    /// Initialize a PlatformOptions with default options
+    /// Create platform options with the default values.
     public init() {}
 }
 
@@ -145,12 +145,12 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
             """
     }
 
-    /// A textual representation of this `PlatformOptions`.
+    /// A textual representation of the platform options.
     public var description: String {
         return self.description(withIndent: 0)
     }
 
-    /// A textual representation of this `PlatformOptions`.
+    /// A debug oriented textual representation of the platform options.
     public var debugDescription: String {
         return self.description(withIndent: 0)
     }
@@ -484,12 +484,12 @@ extension Configuration {
 
 // MARK: - ProcessIdentifier
 
-/// A platform-independent identifier for a Subprocess
+/// A platform-independent identifier for a Subprocess.
 public struct ProcessIdentifier: Sendable, Hashable {
     /// The platform specific process identifier value
     public let value: pid_t
 
-    /// Initialize a `ProcessIdentifier` with the given value
+    /// Initialize a process identifier with the value you provide.
     public init(value: pid_t) {
         self.value = value
     }
@@ -498,9 +498,9 @@ public struct ProcessIdentifier: Sendable, Hashable {
 }
 
 extension ProcessIdentifier: CustomStringConvertible, CustomDebugStringConvertible {
-    /// A textual representation of this `ProcessIdentifier`.
+    /// A textual representation of the process identifier.
     public var description: String { "\(self.value)" }
-    /// A textual representation of this `ProcessIdentifier`.
+    /// A debug-oriented textual representation of the process identifier.
     public var debugDescription: String { "\(self.value)" }
 }
 

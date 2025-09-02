@@ -443,8 +443,9 @@ public struct PlatformOptions: Sendable {
     /// A `UserCredentials` to use spawning the subprocess
     /// as a different user
     public struct UserCredentials: Sendable, Hashable {
-        /// The name of the user. This is the name
-        /// of the user account to run as.
+        /// The name of the user.
+        ///
+        /// This is the name of the user account to run as.
         public var username: String
         /// The clear-text password for the account.
         public var password: String
@@ -553,7 +554,7 @@ public struct PlatformOptions: Sendable {
             ) throws -> Void
         )? = nil
 
-    /// Initialize PlatformOptions with default options
+    /// Create platform options with the default values.
     public init() {}
 }
 
@@ -571,12 +572,12 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
             """
     }
 
-    /// A textual representation of this PlatformOptions.
+    /// A textual representation of the platform options.
     public var description: String {
         return self.description(withIndent: 0)
     }
 
-    /// A textual representation of this PlatformOptions.
+    /// A debug-oriented textual representation of the platform options.
     public var debugDescription: String {
         return self.description(withIndent: 0)
     }
@@ -939,13 +940,13 @@ extension Environment {
 
 // MARK: - ProcessIdentifier
 
-/// A platform-independent identifier for a subprocess
+/// A platform-independent identifier for a subprocess.
 public struct ProcessIdentifier: Sendable, Hashable {
     /// Windows specific process identifier value
     public let value: DWORD
-    /// Process handle for current execution
+    /// Process handle for current execution.
     public nonisolated(unsafe) let processDescriptor: HANDLE
-    /// Main thread handle for current execution
+    /// Main thread handle for current execution.
     public nonisolated(unsafe) let threadHandle: HANDLE
 
     internal init(value: DWORD, processDescriptor: HANDLE, threadHandle: HANDLE) {
@@ -965,12 +966,12 @@ public struct ProcessIdentifier: Sendable, Hashable {
 }
 
 extension ProcessIdentifier: CustomStringConvertible, CustomDebugStringConvertible {
-    /// A textual representation of this `ProcessIdentifier`.
+    /// A textual representation of the process identifier.
     public var description: String {
         return "(processID: \(self.value))"
     }
 
-    /// A textual representation of this `ProcessIdentifier`.
+    /// A debug-oriented textual representation of the process identifier.
     public var debugDescription: String {
         return description
     }

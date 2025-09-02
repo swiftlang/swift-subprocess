@@ -27,13 +27,12 @@ import FoundationEssentials
 
 internal import Dispatch
 
-/// A concrete input type for subprocesses that reads input from
-/// a given `Data`.
+/// A concrete input type for subprocesses that reads input from data.
 public struct DataInput: InputProtocol {
     private let data: Data
 
     /// Asynchronously write the input to the subprocess using the
-    /// write file descriptor
+    /// write file descriptor.
     public func write(with writer: StandardInputWriter) async throws {
         _ = try await writer.write(self.data)
     }
@@ -44,14 +43,14 @@ public struct DataInput: InputProtocol {
 }
 
 /// A concrete input type for subprocesses that accepts input from
-/// a specified sequence of `Data`.
+/// a specified sequence of data.
 public struct DataSequenceInput<
     InputSequence: Sequence & Sendable
 >: InputProtocol where InputSequence.Element == Data {
     private let sequence: InputSequence
 
     /// Asynchronously write the input to the subprocess using the
-    /// write file descriptor
+    /// write file descriptor.
     public func write(with writer: StandardInputWriter) async throws {
         var buffer = Data()
         for chunk in self.sequence {
@@ -77,7 +76,7 @@ public struct DataAsyncSequenceInput<
     }
 
     /// Asynchronously write the input to the subprocess using the
-    /// write file descriptor
+    /// write file descriptor.
     public func write(with writer: StandardInputWriter) async throws {
         for try await chunk in self.sequence {
             try await self.writeChunk(chunk, with: writer)

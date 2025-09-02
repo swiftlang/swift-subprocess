@@ -23,9 +23,10 @@ internal import Dispatch
 
 // MARK: - Output
 
-/// `OutputProtocol` specifies the set of methods that a type must implement to
-/// serve as the output target for a subprocess. Instead of developing custom
-/// implementations of `OutputProtocol`, it is recommended to utilize the
+/// Output protocol specifies the set of methods that a type must implement to
+/// serve as the output target for a subprocess.
+
+/// Instead of developing custom implementations of `OutputProtocol`, use the
 /// default implementations provided by the `Subprocess` library to specify the
 /// output handling requirements.
 public protocol OutputProtocol: Sendable, ~Copyable {
@@ -48,13 +49,15 @@ extension OutputProtocol {
     public var maxSize: Int { 128 * 1024 }
 }
 
-/// A concrete `Output` type for subprocesses that indicates that the
-/// `Subprocess` should not collect or redirect output from the child
-/// process. On Unix-like systems, `DiscardedOutput` redirects the
+/// A concrete output type for subprocesses that indicates that the
+/// subprocess should not collect or redirect output from the child
+/// process.
+
+/// On Unix-like systems, `DiscardedOutput` redirects the
 /// standard output of the subprocess to `/dev/null`, while on Windows,
 /// redirects the output to `NUL`.
 public struct DiscardedOutput: OutputProtocol {
-    /// The output type for this output option
+    /// The type for the output.
     public typealias OutputType = Void
 
     internal func createPipe() throws -> CreatedPipe {
@@ -74,12 +77,13 @@ public struct DiscardedOutput: OutputProtocol {
     internal init() {}
 }
 
-/// A concrete `Output` type for subprocesses that writes output
-/// to a specified `FileDescriptor`. Developers have the option to
-/// instruct the `Subprocess` to automatically close the provided
-/// `FileDescriptor` after the subprocess is spawned.
+/// A concrete output type for subprocesses that writes output
+/// to a specified file descriptor.
+
+/// Developers have the option to instruct the `Subprocess` to automatically
+/// close the related `FileDescriptor` after the subprocess is spawned.
 public struct FileDescriptorOutput: OutputProtocol {
-    /// The output type for this output option
+    /// The type for this output.
     public typealias OutputType = Void
 
     private let closeAfterSpawningProcess: Bool
@@ -112,13 +116,13 @@ public struct FileDescriptorOutput: OutputProtocol {
 /// A concrete `Output` type for subprocesses that collects output
 /// from the subprocess as `String` with the given encoding.
 public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol {
-    /// The output type for this output option
+    /// The type for this output.
     public typealias OutputType = String?
-    /// The max number of bytes to collect
+    /// The max number of bytes to collect.
     public let maxSize: Int
 
     #if SubprocessSpan
-    /// Create a String from `RawSpawn`
+    /// Create a string from a raw span.
     public func output(from span: RawSpan) throws -> String? {
         // FIXME: Span to String
         var array: [UInt8] = []
@@ -129,7 +133,7 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol {
     }
     #endif
 
-    /// Create a String from `Sequence<UInt8>`
+    /// Create a String from a sequence of 8-bit unsigned integers.
     public func output(from buffer: some Sequence<UInt8>) throws -> String? {
         // FIXME: Span to String
         let array = Array(buffer)
@@ -348,12 +352,12 @@ extension OutputProtocol where OutputType == Void {
     internal func captureOutput(from fileDescriptor: consuming IOChannel?) async throws {}
 
     #if SubprocessSpan
-    /// Convert the output from `RawSpan` to expected output type
+    /// Convert the output from raw span to expected output type
     public func output(from span: RawSpan) throws {
         // noop
     }
     #endif
-    /// Convert the output from `Sequence<UInt8>` to expected output type
+    /// Convert the output from a sequence of 8-bit unsigned integers to expected output type.
     public func output(from buffer: some Sequence<UInt8>) throws {
         // noop
     }

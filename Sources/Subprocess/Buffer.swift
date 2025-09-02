@@ -95,7 +95,7 @@ extension AsyncBufferSequence.Buffer {
 // MARK: - Hashable, Equatable
 extension AsyncBufferSequence.Buffer: Equatable, Hashable {
     #if SUBPROCESS_ASYNCIO_DISPATCH
-    /// Returns a Boolean value indicating whether two `AsyncBufferSequence.Buffer`s are equal.
+    /// Returns a Boolean value that indicates whether two buffers are equal.
     public static func == (lhs: AsyncBufferSequence.Buffer, rhs: AsyncBufferSequence.Buffer) -> Bool {
         return lhs.data == rhs.data
     }

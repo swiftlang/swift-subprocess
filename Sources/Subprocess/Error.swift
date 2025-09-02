@@ -53,7 +53,7 @@ extension SubprocessError {
             case invalidWindowsPath(String)
         }
 
-        /// The numeric value of this `Code`
+        /// The numeric value of this code.
         public var value: Int {
             switch self.storage {
             case .spawnFailed:
@@ -99,7 +99,7 @@ extension SubprocessError {
 
 // MARK: - Description
 extension SubprocessError: CustomStringConvertible, CustomDebugStringConvertible {
-    /// A textual representation of this `SubprocessError`.
+    /// A textual representation of this subprocess error.
     public var description: String {
         switch self.code.storage {
         case .spawnFailed:
@@ -135,7 +135,7 @@ extension SubprocessError: CustomStringConvertible, CustomDebugStringConvertible
         }
     }
 
-    /// A textual representation of this `SubprocessError`.
+    /// A debug-oriented textual representation of this subprocess error.
     public var debugDescription: String { self.description }
 }
 
@@ -145,14 +145,14 @@ extension SubprocessError {
     /// - On Windows, `UnderlyingError` wraps Windows Error code
     public struct UnderlyingError: Swift.Error, RawRepresentable, Hashable, Sendable {
         #if os(Windows)
-        /// The type of raw value for this UnderlyingError
+        /// The type for the raw value of the underlying error.
         public typealias RawValue = DWORD
         #else
-        /// The type of raw value for this UnderlyingError
+        /// The type for the raw value of the underlying error.
         public typealias RawValue = Int32
         #endif
 
-        /// The platform specific value for this `UnderlyingError`
+        /// The platform specific value for this underlying error.
         public let rawValue: RawValue
         /// Initialize a `UnderlyingError` with given error value
         public init(rawValue: RawValue) {

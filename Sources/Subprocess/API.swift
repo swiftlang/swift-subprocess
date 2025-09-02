@@ -17,8 +17,8 @@
 
 // MARK: - Collected Result
 
-/// Run an executable with given parameters asynchronously and returns a
-/// `CollectedResult` containing the output of the child process.
+/// Run an executable with given parameters asynchronously and return a
+/// collected result that contains the output of the child process.
 /// - Parameters:
 ///   - executable: The executable to run.
 ///   - arguments: The arguments to pass to the executable.
@@ -59,8 +59,8 @@ public func run<
 }
 
 #if SubprocessSpan
-/// Run an executable with given parameters asynchronously and returns a
-/// `CollectedResult` containing the output of the child process.
+/// Run an executable with given parameters asynchronously and return a
+/// collected result that contains the output of the child process.
 /// - Parameters:
 ///   - executable: The executable to run.
 ///   - arguments: The arguments to pass to the executable.
