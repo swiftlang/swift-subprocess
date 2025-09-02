@@ -288,7 +288,7 @@ final class AsyncIO: Sendable {
                 )
                 if rc != 0 {
                     _registration.withLock { storage in
-                        storage.removeValue(forKey: fileDescriptor.rawValue)
+                        _ = storage.removeValue(forKey: fileDescriptor.rawValue)
                     }
 
                     let capturedError = errno

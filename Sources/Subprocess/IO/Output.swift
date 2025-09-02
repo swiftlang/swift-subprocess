@@ -231,6 +231,28 @@ extension OutputProtocol where Self == FileDescriptorOutput {
     ) -> Self {
         return .init(fileDescriptor: fd, closeAfterSpawningProcess: closeAfterSpawningProcess)
     }
+
+    /// Create a Subprocess output that writes output to the standard output of
+    /// current process.
+    ///
+    /// The file descriptor isn't closed afterwards.
+    public static var standardOutput: Self {
+        return Self.fileDescriptor(
+            .standardOutput,
+            closeAfterSpawningProcess: false
+        )
+    }
+
+    /// Create a Subprocess output that write output to the standard error of
+    /// current process.
+    ///
+    /// The file descriptor isn't closed afterwards.
+    public static var standardError: Self {
+        return Self.fileDescriptor(
+            .standardError,
+            closeAfterSpawningProcess: false
+        )
+    }
 }
 
 extension OutputProtocol where Self == StringOutput<UTF8> {

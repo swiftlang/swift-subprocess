@@ -103,6 +103,10 @@ public struct Configuration: Sendable {
         var _spawnResult = spawnResultBox!.take()!
 
         let execution = _spawnResult.execution
+        defer {
+            // Close process file descriptor now we finished monitoring
+            execution.processIdentifier.close()
+        }
 
         return try await withAsyncTaskCleanupHandler {
             let inputIO = _spawnResult.inputWriteEnd()
@@ -126,9 +130,6 @@ public struct Configuration: Sendable {
             let terminationStatus = try await monitorProcessTermination(
                 for: execution.processIdentifier
             )
-
-            // Close process file descriptor now we finished monitoring
-            execution.processIdentifier.close()
 
             return ExecutionResult(
                 terminationStatus: terminationStatus,
