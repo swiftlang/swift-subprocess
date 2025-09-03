@@ -106,7 +106,7 @@ private final class WorkQueue: Sendable {
         #if canImport(WinSDK)
         EnterCriticalSection(self.mutex)
         defer {
-            LeaveCriticalSection(self.mutex);
+            LeaveCriticalSection(self.mutex)
         }
         #else
         pthread_mutex_lock(self.mutex)
@@ -140,7 +140,7 @@ private final class WorkQueue: Sendable {
         self.withLock { queue in
             queue.append(workItem)
             #if canImport(WinSDK)
-            WakeConditionVariable(self.waitCondition);
+            WakeConditionVariable(self.waitCondition)
             #else
             pthread_cond_signal(self.waitCondition)
             #endif
@@ -151,7 +151,7 @@ private final class WorkQueue: Sendable {
         self.withLock { queue in
             queue.removeAll()
             #if canImport(WinSDK)
-            WakeConditionVariable(self.waitCondition);
+            WakeConditionVariable(self.waitCondition)
             #else
             pthread_cond_signal(self.waitCondition)
             #endif
@@ -209,8 +209,8 @@ private func _shutdownWorkerThread() {
     }
     _workQueue.shutdown()
     #if canImport(WinSDK)
-    WaitForSingleObject(thread, INFINITE);
-    CloseHandle(thread);
+    WaitForSingleObject(thread, INFINITE)
+    CloseHandle(thread)
     DeleteCriticalSection(_workQueue.mutex)
     // We do not need to destroy CONDITION_VARIABLE
     #else
@@ -225,7 +225,7 @@ private func _shutdownWorkerThread() {
 // MARK: - AtomicCounter
 
 #if canImport(Darwin)
-// Unfortunately on Darwin we can unconditionally use Atomic since it requires macOS 15
+// Unfortunately on Darwin we cannot unconditionally use Atomic since it requires macOS 15
 internal struct AtomicCounter: ~Copyable {
     private let storage: OSAllocatedUnfairLock<UInt8>
 
