@@ -25,7 +25,7 @@ internal import Dispatch
 
 /// Output protocol specifies the set of methods that a type must implement to
 /// serve as the output target for a subprocess.
-
+///
 /// Instead of developing custom implementations of `OutputProtocol`, use the
 /// default implementations provided by the `Subprocess` library to specify the
 /// output handling requirements.
@@ -52,7 +52,7 @@ extension OutputProtocol {
 /// A concrete output type for subprocesses that indicates that the
 /// subprocess should not collect or redirect output from the child
 /// process.
-
+///
 /// On Unix-like systems, `DiscardedOutput` redirects the
 /// standard output of the subprocess to `/dev/null`, while on Windows,
 /// redirects the output to `NUL`.
@@ -79,7 +79,7 @@ public struct DiscardedOutput: OutputProtocol {
 
 /// A concrete output type for subprocesses that writes output
 /// to a specified file descriptor.
-
+///
 /// Developers have the option to instruct the `Subprocess` to automatically
 /// close the related `FileDescriptor` after the subprocess is spawned.
 public struct FileDescriptorOutput: OutputProtocol {
@@ -354,12 +354,12 @@ extension OutputProtocol where OutputType == Void {
     #if SubprocessSpan
     /// Convert the output from raw span to expected output type
     public func output(from span: RawSpan) throws {
-        // noop
+        fatalError("Unexpected call to \(#function)")
     }
     #endif
     /// Convert the output from a sequence of 8-bit unsigned integers to expected output type.
     public func output(from buffer: some Sequence<UInt8>) throws {
-        // noop
+        fatalError("Unexpected call to \(#function)")
     }
 }
 
