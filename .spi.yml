@@ -1,6 +1,4 @@
 version: 1
-metadata:
-  authors: Apple Inc.
 builder:
   configs:
     - swift_version: 6.1
