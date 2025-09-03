@@ -187,33 +187,73 @@ extension Configuration {
     ) throws {
         var possibleError: (any Swift.Error)? = nil
 
+        // To avoid closing the same descriptor multiple times,
+        // keep track of the list of descriptors that we have
+        // already closed. If a `IODescriptor.Descriptor` is
+        // already closed, mark that `IODescriptor` as closed
+        // as opposed to actually try to close it.
+        var remainingSet: Set<IODescriptor.Descriptor> = Set(
+            optionalSequence: [
+                inputRead?.descriptor,
+                inputWrite?.descriptor,
+                outputRead?.descriptor,
+                outputWrite?.descriptor,
+                errorRead?.descriptor,
+                errorWrite?.descriptor,
+            ]
+        )
+
         do {
-            try inputRead?.safelyClose()
+            if remainingSet.tryRemove(inputRead?.descriptor) {
+                try inputRead?.safelyClose()
+            } else {
+                try inputRead?.markAsClosed()
+            }
         } catch {
             possibleError = error
         }
         do {
-            try inputWrite?.safelyClose()
+            if remainingSet.tryRemove(inputWrite?.descriptor) {
+                try inputWrite?.safelyClose()
+            } else {
+                try inputWrite?.markAsClosed()
+            }
         } catch {
             possibleError = error
         }
         do {
-            try outputRead?.safelyClose()
+            if remainingSet.tryRemove(outputRead?.descriptor) {
+                try outputRead?.safelyClose()
+            } else {
+                try outputRead?.markAsClosed()
+            }
         } catch {
             possibleError = error
         }
         do {
-            try outputWrite?.safelyClose()
+            if remainingSet.tryRemove(outputWrite?.descriptor) {
+                try outputWrite?.safelyClose()
+            } else {
+                try outputWrite?.markAsClosed()
+            }
         } catch {
             possibleError = error
         }
         do {
-            try errorRead?.safelyClose()
+            if remainingSet.tryRemove(errorRead?.descriptor) {
+                try errorRead?.safelyClose()
+            } else {
+                try errorRead?.markAsClosed()
+            }
         } catch {
             possibleError = error
         }
         do {
-            try errorWrite?.safelyClose()
+            if remainingSet.tryRemove(errorWrite?.descriptor) {
+                try errorWrite?.safelyClose()
+            } else {
+                try errorWrite?.markAsClosed()
+            }
         } catch {
             possibleError = error
         }
@@ -733,6 +773,10 @@ internal struct IODescriptor: ~Copyable {
         #endif
     }
 
+    internal mutating func markAsClosed() throws {
+        self.closeWhenDone = false
+    }
+
     deinit {
         guard self.closeWhenDone else {
             return
@@ -1079,5 +1123,19 @@ extension _OrderedSet: Sequence {
 
     internal func makeIterator() -> Iterator {
         return self.elements.makeIterator()
+    }
+}
+
+extension Set {
+    init<S>(optionalSequence sequence: S) where S: Sequence, S.Element == Optional<Self.Element> {
+        let sequence: [Self.Element] = sequence.compactMap(\.self)
+        self.init(sequence)
+    }
+
+    mutating func tryRemove(_ element: Self.Element?) -> Bool {
+        guard let element else {
+            return false
+        }
+        return self.remove(element) != nil
     }
 }

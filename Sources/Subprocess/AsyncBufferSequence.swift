@@ -143,6 +143,7 @@ extension AsyncBufferSequence {
             private var source: AsyncBufferSequence.AsyncIterator
             private var buffer: [Encoding.CodeUnit]
             private var underlyingBuffer: [Encoding.CodeUnit]
+            private var underlyingBufferIndex: Array<Encoding.CodeUnit>.Index
             private var leftover: Encoding.CodeUnit?
             private var eofReached: Bool
             private let bufferingPolicy: BufferingPolicy
@@ -154,6 +155,7 @@ extension AsyncBufferSequence {
                 self.source = underlyingIterator
                 self.buffer = []
                 self.underlyingBuffer = []
+                self.underlyingBufferIndex = self.underlyingBuffer.startIndex
                 self.leftover = nil
                 self.eofReached = false
                 self.bufferingPolicy = bufferingPolicy
@@ -208,13 +210,16 @@ extension AsyncBufferSequence {
                 }
 
                 func nextFromSource() async throws -> Encoding.CodeUnit? {
-                    if underlyingBuffer.isEmpty {
+                    if underlyingBufferIndex >= underlyingBuffer.count {
                         guard let buf = try await loadBuffer() else {
                             return nil
                         }
                         underlyingBuffer = buf
+                        underlyingBufferIndex = buf.startIndex
                     }
-                    return underlyingBuffer.removeFirst()
+                    let result = underlyingBuffer[underlyingBufferIndex]
+                    underlyingBufferIndex = underlyingBufferIndex.advanced(by: 1)
+                    return result
                 }
 
                 func nextCodeUnit() async throws -> Encoding.CodeUnit? {
