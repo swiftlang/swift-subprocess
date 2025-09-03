@@ -41,11 +41,13 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
         public typealias Element = Buffer
 
         private let diskIO: DiskIO
+        private let preferredBufferSize: Int
         private var buffer: [Buffer]
 
-        internal init(diskIO: DiskIO) {
+        internal init(diskIO: DiskIO, preferredBufferSize: Int?) {
             self.diskIO = diskIO
             self.buffer = []
+            self.preferredBufferSize = preferredBufferSize ?? readBufferSize
         }
 
         /// Retrieve the next buffer in the sequence, or `nil` if
@@ -58,7 +60,7 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
             // Read more data
             let data = try await AsyncIO.shared.read(
                 from: self.diskIO,
-                upTo: readBufferSize
+                upTo: self.preferredBufferSize
             )
             guard let data else {
                 // We finished reading. Close the file descriptor now
@@ -84,14 +86,19 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
     }
 
     private let diskIO: DiskIO
+    private let preferredBufferSize: Int?
 
-    internal init(diskIO: DiskIO) {
+    internal init(diskIO: DiskIO, preferredBufferSize: Int?) {
         self.diskIO = diskIO
+        self.preferredBufferSize = preferredBufferSize
     }
 
     /// Creates a iterator for this asynchronous sequence.
     public func makeAsyncIterator() -> Iterator {
-        return Iterator(diskIO: self.diskIO)
+        return Iterator(
+            diskIO: self.diskIO,
+            preferredBufferSize: self.preferredBufferSize
+        )
     }
 
     /// Creates a line sequence to iterate through this `AsyncBufferSequence` line by line.

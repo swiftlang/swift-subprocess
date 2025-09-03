@@ -1589,6 +1589,54 @@ extension SubprocessIntegrationTests {
         #expect(result.standardOutput?.trimmingNewLineAndQuotes() == "")
         #expect(result.standardError?.trimmingNewLineAndQuotes() == "")
     }
+
+    @Test func testCustomStreamingBufferSize() async throws {
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: [
+                "/c",
+                """
+                @echo off
+                echo one
+                :loop
+                timeout /t 1 >nul
+                goto loop
+                """,
+            ]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: [
+                "-c",
+                """
+                echo one;
+                while true; do sleep 1; done
+                """,
+            ]
+        )
+        #endif
+        _ = try await _run(
+            setup,
+            input: .none,
+            error: .discarded,
+            preferredBufferSize: 1
+        ) { execution, standardOutput in
+            for try await line in standardOutput.lines() {
+                // If we use default buffer size this test will hang
+                // because Subprocess is stuck on waiting 16k worth of
+                // output when there are only 3.
+                #expect(line.trimmingNewLineAndQuotes() == "one")
+                // Kill the child process since it intentionally hang
+                #if os(Windows)
+                try execution.terminate(withExitCode: 0)
+                #else
+                try execution.send(signal: .terminate)
+                #endif
+            }
+        }
+    }
 }
 
 // MARK: - Other Tests
@@ -2222,6 +2270,7 @@ func _run<
     _ setup: TestSetup,
     input: Input,
     error: Error,
+    preferredBufferSize: Int? = nil,
     body: ((Execution, AsyncBufferSequence) async throws -> Result)
 ) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
     return try await Subprocess.run(
@@ -2231,6 +2280,7 @@ func _run<
         workingDirectory: setup.workingDirectory,
         input: input,
         error: error,
+        preferredBufferSize: preferredBufferSize,
         body: body
     )
 }
