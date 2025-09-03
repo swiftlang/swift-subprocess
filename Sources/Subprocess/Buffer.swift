@@ -9,6 +9,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+// swift-format-ignore-file
+
 #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl)
 @preconcurrency internal import Dispatch
 #endif
@@ -93,10 +95,12 @@ extension AsyncBufferSequence.Buffer {
 // MARK: - Hashable, Equatable
 extension AsyncBufferSequence.Buffer: Equatable, Hashable {
     #if SUBPROCESS_ASYNCIO_DISPATCH
+    /// Returns a Boolean value that indicates whether two buffers are equal.
     public static func == (lhs: AsyncBufferSequence.Buffer, rhs: AsyncBufferSequence.Buffer) -> Bool {
         return lhs.data == rhs.data
     }
 
+    /// Hashes the essential components of this value by feeding them into the given hasher.
     public func hash(into hasher: inout Hasher) {
         return self.data.hash(into: &hasher)
     }

@@ -15,7 +15,7 @@ dependencies: [
     .package(url: "https://github.com/swiftlang/swift-subprocess.git", branch: "main")
 ]
 ```
-Then, adding the `Subprocess` module to your target dependencies:
+Then, add the `Subprocess` module to your target dependencies:
 
 ```swift
 .target(
@@ -29,27 +29,27 @@ Then, adding the `Subprocess` module to your target dependencies:
 `Subprocess` offers two [package traits](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0450-swiftpm-package-traits.md):
 
 - `SubprocessFoundation`: includes a dependency on `Foundation` and adds extensions on Foundation types like `Data`. This trait is enabled by default.
-- `SubprocessSpan`: makes Subprocess’ API, mainly `OutputProtocol`, `RawSpan` based. This trait is enabled whenever `RawSpan` is available and should only be disabled when `RawSpan` is not available.
+- `SubprocessSpan`: makes Subprocess's API, mainly `OutputProtocol`, `RawSpan`-based. This trait is enabled whenever `RawSpan` is available and should only be disabled when `RawSpan` is not available.
 
 Please find the API proposal [here](https://github.com/swiftlang/swift-foundation/blob/main/Proposals/0007-swift-subprocess.md).
 
 ### Swift Versions
 
-The minimal supported Swift version is **Swift 6.1**.
+The minimum supported Swift version is **Swift 6.1**.
 
 To experiment with the `SubprocessSpan` trait, Swift 6.2 is required. Currently, you can download the Swift 6.2 toolchain (`main` development snapshot) [here](https://www.swift.org/install/macos/#development-snapshots).
 
 
 ## Feature Overview
 
-### Run and Asynchonously Collect Output
+### Run and Asynchronously Collect Output
 
 The easiest way to spawn a process with `Subprocess` is to simply run it and await its `CollectedResult`:
 
 ```swift
 import Subprocess
 
-let result = try await run(.name("ls"))
+let result = try await run(.name("ls"), output: .string(limit: 4096))
 
 print(result.processIdentifier) // prints 1234
 print(result.terminationStatus) // prints exited(0)
@@ -69,7 +69,7 @@ async let monitorResult = run(
     .path("/usr/bin/tail"),
     arguments: ["-f", "/path/to/nginx.log"]
 ) { execution, standardOutput in
-    for try await line in standardOutput.lines(encoding: UTF8.self) {
+    for try await line in standardOutput.lines() {
         // Parse the log text
         if line.contains("500") {
             // Oh no, 500 error
@@ -92,6 +92,7 @@ let result = try await run(
     // add `NewKey=NewValue` 
     environment: .inherit.updating(["NewKey": "NewValue"]),
     workingDirectory: "/Users/",
+    output: .string(limit: 4096)
 )
 ```
 
@@ -127,9 +128,9 @@ let result = try await run(.path("/bin/exe"), platformOptions: platformOptions)
 ### Flexible Input and Output Configurations
 
 By default, `Subprocess`:
-- Doesn’t send any input to the child process’s standard input
-- Asks the user how to capture the output
-- Ignores the child process’s standard error
+- Doesn't send any input to the child process's standard input
+- Requires you to specify how to capture the output
+- Ignores the child process's standard error
 
 You can tailor how `Subprocess` handles the standard input, standard output, and standard error by setting the `input`, `output`, and `error` parameters:
 
@@ -137,10 +138,10 @@ You can tailor how `Subprocess` handles the standard input, standard output, and
 let content = "Hello Subprocess"
 
 // Send "Hello Subprocess" to the standard input of `cat`
-let result = try await run(.name("cat"), input: .string(content, using: UTF8.self))
+let result = try await run(.name("cat"), input: .string(content), output: .string(limit: 4096))
 
 // Collect both standard error and standard output as Data
-let result = try await run(.name("cat"), output: .data, error: .data)
+let result = try await run(.name("cat"), output: .data(limit: 4096), error: .data(limit: 4096))
 ```
 
 `Subprocess` supports these input options:
@@ -155,13 +156,13 @@ Use it by setting `.none` for `input`.
 
 This option reads input from a specified `FileDescriptor`. If `closeAfterSpawningProcess` is set to `true`, the subprocess will close the file descriptor after spawning. If `false`, you are responsible for closing it, even if the subprocess fails to spawn.
 
-Use it by setting `.fileDescriptor(closeAfterSpawningProcess:)` for `input`.
+Use it by setting `.fileDescriptor(_:closeAfterSpawningProcess:)` for `input`.
 
 #### `StringInput`
 
 This option reads input from a type conforming to `StringProtocol` using the specified encoding.
 
-Use it by setting `.string(using:)` for `input`.
+Use it by setting `.string(_:)` or `.string(_:using:)` for `input`.
 
 #### `ArrayInput`
 
@@ -179,13 +180,13 @@ Use it by setting `.data` for `input`.
 
 This option reads input from a sequence of `Data`.
 
-Use it by setting `.sequence` for `input`.
+Use it by setting `.sequence(_:)` for `input`.
 
 #### `DataAsyncSequenceInput` (available with `SubprocessFoundation` trait)
 
 This option reads input from an async sequence of `Data`.
 
-Use it by setting `.asyncSequence` for `input`.
+Use it by setting `.sequence(_:)` for `input`.
 
 ---
 
@@ -201,19 +202,25 @@ Use it by setting `.discarded` for `output` or `error`.
 
 This option writes output to a specified `FileDescriptor`. You can choose to have the `Subprocess` close the file descriptor after spawning.
 
-Use it by setting `.fileDescriptor(closeAfterSpawningProcess:)` for `output` or `error`.
+Use it by setting `.fileDescriptor(_:closeAfterSpawningProcess:)` for `output` or `error`.
 
 #### `StringOutput`
 
 This option collects output as a `String` with the given encoding.
 
-Use it by setting `.string(limit:encoding:)` for `output` or `error`.
+Use it by setting `.string(limit:)` or `.string(limit:encoding:)` for `output` or `error`.
 
 #### `BytesOutput`
 
 This option collects output as `[UInt8]`.
 
-Use it by setting`.bytes(limit:)` for `output` or `error`.
+Use it by setting `.bytes(limit:)` for `output` or `error`.
+
+#### `DataOutput` (available with `SubprocessFoundation` trait)
+
+This option collects output as `Data`.
+
+Use it by setting `.data(limit:)` for `output` or `error`.
 
 
 ### Cross-platform support

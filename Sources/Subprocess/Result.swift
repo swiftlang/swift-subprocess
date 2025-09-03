@@ -18,8 +18,8 @@
 // MARK: - Result
 
 /// A simple wrapper around the generic result returned by the
-/// `run` closures with the corresponding `TerminationStatus`
-/// of the child process.
+/// `run` closure with the corresponding termination status of
+/// the child process.
 public struct ExecutionResult<Result> {
     /// The termination status of the child process
     public let terminationStatus: TerminationStatus
@@ -42,7 +42,9 @@ public struct CollectedResult<
     public let processIdentifier: ProcessIdentifier
     /// The termination status of the executed subprocess
     public let terminationStatus: TerminationStatus
+    /// The captured standard output of the executed subprocess.
     public let standardOutput: Output.OutputType
+    /// The captured standard error of the executed subprocess.
     public let standardError: Error.OutputType
 
     internal init(
@@ -66,6 +68,7 @@ extension CollectedResult: Hashable where Output.OutputType: Hashable, Error.Out
 
 extension CollectedResult: CustomStringConvertible
 where Output.OutputType: CustomStringConvertible, Error.OutputType: CustomStringConvertible {
+    /// A textual representation of the collected result.
     public var description: String {
         return """
             CollectedResult(
@@ -80,6 +83,7 @@ where Output.OutputType: CustomStringConvertible, Error.OutputType: CustomString
 
 extension CollectedResult: CustomDebugStringConvertible
 where Output.OutputType: CustomDebugStringConvertible, Error.OutputType: CustomDebugStringConvertible {
+    /// A debug-oriented textual representation of the collected result.
     public var debugDescription: String {
         return """
             CollectedResult(
@@ -98,6 +102,7 @@ extension ExecutionResult: Equatable where Result: Equatable {}
 extension ExecutionResult: Hashable where Result: Hashable {}
 
 extension ExecutionResult: CustomStringConvertible where Result: CustomStringConvertible {
+    /// A textual representation of the execution result.
     public var description: String {
         return """
             ExecutionResult(
@@ -109,6 +114,7 @@ extension ExecutionResult: CustomStringConvertible where Result: CustomStringCon
 }
 
 extension ExecutionResult: CustomDebugStringConvertible where Result: CustomDebugStringConvertible {
+    /// A debug-oriented textual representation of this execution result.
     public var debugDescription: String {
         return """
             ExecutionResult(

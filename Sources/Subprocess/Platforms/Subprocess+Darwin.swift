@@ -38,6 +38,7 @@ import FoundationEssentials
 /// The collection of platform-specific settings
 /// to configure the subprocess when running
 public struct PlatformOptions: Sendable {
+    /// Constants that indicate the nature and importance of work to the system.
     public var qualityOfService: QualityOfService = .default
     /// Set user ID for the subprocess
     public var userID: uid_t? = nil
@@ -82,11 +83,13 @@ public struct PlatformOptions: Sendable {
             ) throws -> Void
         )? = nil
 
+    /// Create platform options with the default values.
     public init() {}
 }
 
 extension PlatformOptions {
     #if SubprocessFoundation
+    /// Constants that indicate the nature and importance of work to the system.
     public typealias QualityOfService = Foundation.QualityOfService
     #else
     /// Constants that indicate the nature and importance of work to the system.
@@ -142,10 +145,12 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
             """
     }
 
+    /// A textual representation of the platform options.
     public var description: String {
         return self.description(withIndent: 0)
     }
 
+    /// A debug oriented textual representation of the platform options.
     public var debugDescription: String {
         return self.description(withIndent: 0)
     }
@@ -479,11 +484,12 @@ extension Configuration {
 
 // MARK: - ProcessIdentifier
 
-/// A platform independent identifier for a Subprocess.
+/// A platform-independent identifier for a Subprocess.
 public struct ProcessIdentifier: Sendable, Hashable {
     /// The platform specific process identifier value
     public let value: pid_t
 
+    /// Initialize a process identifier with the value you provide.
     public init(value: pid_t) {
         self.value = value
     }
@@ -492,8 +498,9 @@ public struct ProcessIdentifier: Sendable, Hashable {
 }
 
 extension ProcessIdentifier: CustomStringConvertible, CustomDebugStringConvertible {
+    /// A textual representation of the process identifier.
     public var description: String { "\(self.value)" }
-
+    /// A debug-oriented textual representation of the process identifier.
     public var debugDescription: String { "\(self.value)" }
 }
 

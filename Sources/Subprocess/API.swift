@@ -17,19 +17,18 @@
 
 // MARK: - Collected Result
 
-/// Run an executable with given parameters asynchronously and returns
-/// a `CollectedResult` containing the output of the child process.
+/// Run an executable with given parameters asynchronously and return a
+/// collected result that contains the output of the child process.
 /// - Parameters:
 ///   - executable: The executable to run.
 ///   - arguments: The arguments to pass to the executable.
 ///   - environment: The environment in which to run the executable.
 ///   - workingDirectory: The working directory in which to run the executable.
-///   - platformOptions: The platform specific options to use
-///     when running the executable.
+///   - platformOptions: The platform-specific options to use when running the executable.
 ///   - input: The input to send to the executable.
 ///   - output: The method to use for redirecting the standard output.
 ///   - error: The method to use for redirecting the standard error.
-/// - Returns a CollectedResult containing the result of the run.
+/// - Returns: a `CollectedResult` containing the result of the run.
 public func run<
     Input: InputProtocol,
     Output: OutputProtocol,
@@ -59,20 +58,19 @@ public func run<
     )
 }
 
-/// Run an executable with given parameters asynchronously and returns
-/// a `CollectedResult` containing the output of the child process.
+#if SubprocessSpan
+/// Run an executable with given parameters asynchronously and return a
+/// collected result that contains the output of the child process.
 /// - Parameters:
 ///   - executable: The executable to run.
 ///   - arguments: The arguments to pass to the executable.
 ///   - environment: The environment in which to run the executable.
 ///   - workingDirectory: The working directory in which to run the executable.
-///   - platformOptions: The platform specific options to use
-///     when running the executable.
+///   - platformOptions: The platform-specific options to use when running the executable.
 ///   - input: span to write to subprocess' standard input.
 ///   - output: The method to use for redirecting the standard output.
 ///   - error: The method to use for redirecting the standard error.
-/// - Returns a CollectedResult containing the result of the run.
-#if SubprocessSpan
+/// - Returns: a CollectedResult containing the result of the run.
 public func run<
     InputElement: BitwiseCopyable,
     Output: OutputProtocol,
@@ -106,21 +104,19 @@ public func run<
 // MARK: - Custom Execution Body
 
 /// Run an executable with given parameters and a custom closure
-/// to manage the running subprocess' lifetime and stream its standard output.
+/// to manage the running subprocess’ lifetime.
 /// - Parameters:
 ///   - executable: The executable to run.
 ///   - arguments: The arguments to pass to the executable.
 ///   - environment: The environment in which to run the executable.
 ///   - workingDirectory: The working directory in which to run the executable.
-///   - platformOptions: The platform specific options to use
-///     when running the executable.
+///   - platformOptions: The platform-specific options to use when running the executable.
 ///   - input: The input to send to the executable.
-///   - output: How to manager executable standard output.
-///   - error: How to manager executable standard error.
+///   - output: How to manage executable standard output.
+///   - error: How to manage executable standard error.
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom execution body to manually control the running process
-/// - Returns an executableResult type containing the return value
-///     of the closure.
+/// - Returns: an `ExecutableResult` type containing the return value of the closure.
 public func run<Result, Input: InputProtocol, Output: OutputProtocol, Error: OutputProtocol>(
     _ executable: Executable,
     arguments: Arguments = [],
@@ -150,21 +146,19 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol, Error: Out
     )
 }
 
-/// Run an executable with given parameters and a custom closure
-/// to manage the running subprocess' lifetime and stream its standard output.
+/// Run an executable with given parameters and a custom closure to manage the
+/// running subprocess' lifetime and stream its standard output.
 /// - Parameters:
 ///   - executable: The executable to run.
 ///   - arguments: The arguments to pass to the executable.
 ///   - environment: The environment in which to run the executable.
 ///   - workingDirectory: The working directory in which to run the executable.
-///   - platformOptions: The platform specific options to use
-///     when running the executable.
+///   - platformOptions: The platform-specific options to use when running the executable.
 ///   - input: The input to send to the executable.
-///   - error: How to manager executable standard error.
+///   - error: How to manage executable standard error.
 ///   - isolation: the isolation context to run the body closure.
-///   - body: The custom execution body to manually control the running process
-/// - Returns an executableResult type containing the return value
-///     of the closure.
+///   - body: The custom execution body to manually control the running process.
+/// - Returns: an `ExecutableResult` type containing the return value of the closure.
 public func run<Result, Input: InputProtocol, Error: OutputProtocol>(
     _ executable: Executable,
     arguments: Arguments = [],
@@ -192,21 +186,19 @@ public func run<Result, Input: InputProtocol, Error: OutputProtocol>(
     )
 }
 
-/// Run an executable with given parameters and a custom closure
-/// to manage the running subprocess' lifetime and stream its standard error.
+/// Run an executable with given parameters and a custom closure to manage the
+/// running subprocess' lifetime and stream its standard error.
 /// - Parameters:
 ///   - executable: The executable to run.
 ///   - arguments: The arguments to pass to the executable.
 ///   - environment: The environment in which to run the executable.
 ///   - workingDirectory: The working directory in which to run the executable.
-///   - platformOptions: The platform specific options to use
-///     when running the executable.
+///   - platformOptions: The platform-specific options to use when running the executable.
 ///   - input: The input to send to the executable.
-///   - output: How to manager executable standard output.
-///   - isolation: the isolation context to run the body closure.
+///   - output: How to manage executable standard output.
+///   - isolation: The isolation context to run the body closure.
 ///   - body: The custom execution body to manually control the running process
-/// - Returns an executableResult type containing the return value
-///     of the closure.
+/// - Returns: an `ExecutableResult` type containing the return value of the closure.
 public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
     _ executable: Executable,
     arguments: Arguments = [],
@@ -234,21 +226,18 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
     )
 }
 
-/// Run an executable with given parameters and a custom closure
-/// to manage the running subprocess' lifetime, write to its
-/// standard input, and stream its standard output.
+/// Run an executable with given parameters and a custom closure to manage the
+/// running subprocess' lifetime, write to its standard input, and stream its standard output.
 /// - Parameters:
 ///   - executable: The executable to run.
 ///   - arguments: The arguments to pass to the executable.
 ///   - environment: The environment in which to run the executable.
 ///   - workingDirectory: The working directory in which to run the executable.
-///   - platformOptions: The platform specific options to use
-///     when running the executable.
-///   - error: How to manager executable standard error.
+///   - platformOptions: The platform-specific options to use when running the executable.
+///   - error: How to manage executable standard error.
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom execution body to manually control the running process
-/// - Returns an executableResult type containing the return value
-///     of the closure.
+/// - Returns: An `ExecutableResult` type containing the return value of the closure.
 public func run<Result, Error: OutputProtocol>(
     _ executable: Executable,
     arguments: Arguments = [],
@@ -274,21 +263,18 @@ public func run<Result, Error: OutputProtocol>(
     )
 }
 
-/// Run an executable with given parameters and a custom closure
-/// to manage the running subprocess' lifetime, write to its
-/// standard input, and stream its standard error.
+/// Run an executable with given parameters and a custom closure to manage the
+/// running subprocess' lifetime, write to its standard input, and stream its standard error.
 /// - Parameters:
 ///   - executable: The executable to run.
 ///   - arguments: The arguments to pass to the executable.
 ///   - environment: The environment in which to run the executable.
 ///   - workingDirectory: The working directory in which to run the executable.
-///   - platformOptions: The platform specific options to use
-///     when running the executable.
-///   - output: How to manager executable standard output.
+///   - platformOptions: The platform-specific options to use when running the executable.
+///   - output: How to manage executable standard output.
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom execution body to manually control the running process
-/// - Returns an executableResult type containing the return value
-///     of the closure.
+/// - Returns: An `ExecutableResult` type containing the return value of the closure.
 public func run<Result, Output: OutputProtocol>(
     _ executable: Executable,
     arguments: Arguments = [],
@@ -315,19 +301,17 @@ public func run<Result, Output: OutputProtocol>(
 }
 
 /// Run an executable with given parameters and a custom closure
-/// to manage the running subprocess' lifetime, write to its
+/// to manage the running subprocess’ lifetime, write to its
 /// standard input, and stream its standard output and standard error.
 /// - Parameters:
 ///   - executable: The executable to run.
 ///   - arguments: The arguments to pass to the executable.
 ///   - environment: The environment in which to run the executable.
 ///   - workingDirectory: The working directory in which to run the executable.
-///   - platformOptions: The platform specific options to use
-///     when running the executable.
+///   - platformOptions: The platform-specific options to use when running the executable.
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom execution body to manually control the running process
-/// - Returns an executableResult type containing the return value
-///     of the closure.
+/// - Returns: an `ExecutableResult` type containing the return value of the closure.
 public func run<Result>(
     _ executable: Executable,
     arguments: Arguments = [],
@@ -428,7 +412,7 @@ public func run<
 ///   - input: The input to send to the executable.
 ///   - output: The method to use for redirecting the standard output.
 ///   - error: The method to use for redirecting the standard error.
-/// - Returns a CollectedResult containing the result of the run.
+/// - Returns: a `CollectedResult` containing the result of the run.
 public func run<
     Input: InputProtocol,
     Output: OutputProtocol,
@@ -714,9 +698,8 @@ public func run<Result, Output: OutputProtocol>(
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom configuration body to manually control
 ///       the running process, write to its standard input, stream
-///       its standard output and standard error.
-/// - Returns an executableResult type containing the return value
-///     of the closure.
+///       the standard output and standard error.
+/// - Returns: an `ExecutableResult` type containing the return value of the closure.
 public func run<Result>(
     _ configuration: Configuration,
     isolation: isolated (any Actor)? = #isolation,

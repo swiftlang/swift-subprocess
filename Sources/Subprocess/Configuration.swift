@@ -31,7 +31,7 @@ internal import Dispatch
 
 import Synchronization
 
-/// A collection of configurations parameters to use when
+/// A collection of configuration parameters to use when
 /// spawning a subprocess.
 public struct Configuration: Sendable {
     /// The executable to run.
@@ -41,12 +41,21 @@ public struct Configuration: Sendable {
     /// The environment to use when running the executable.
     public var environment: Environment
     /// The working directory to use when running the executable.
-    /// If this property is `nil`, the subprocess will inherit the working directory from the parent process.
+    ///
+    /// If this property is `nil`, the subprocess will inherit
+    /// the working directory from the parent process.
     public var workingDirectory: FilePath?
     /// The platform specific options to use when
     /// running the subprocess.
     public var platformOptions: PlatformOptions
 
+    /// Creates a Configuration with the parameters you provide.
+    /// - Parameters:
+    ///   - executable: the executable to run
+    ///   - arguments: the arguments to pass to the executable.
+    ///   - environment: the environment to use when running the executable.
+    ///   - workingDirectory: the working directory to use when running the executable.
+    ///   - platformOptions: The platform specific options to use when running subprocess.
     public init(
         executable: Executable,
         arguments: Arguments = [],
@@ -135,6 +144,7 @@ public struct Configuration: Sendable {
 }
 
 extension Configuration: CustomStringConvertible, CustomDebugStringConvertible {
+    /// A textual representation of this configuration.
     public var description: String {
         return """
             Configuration(
@@ -147,6 +157,7 @@ extension Configuration: CustomStringConvertible, CustomDebugStringConvertible {
             """
     }
 
+    /// A debug-oriented textual representation of this configuration.
     public var debugDescription: String {
         return """
             Configuration(
@@ -214,8 +225,7 @@ extension Configuration {
 
 // MARK: - Executable
 
-/// `Executable` defines how the executable should
-/// be looked up for execution.
+/// Executable defines how subprocess looks up the executable for execution.
 public struct Executable: Sendable, Hashable {
     internal enum Storage: Sendable, Hashable {
         case executable(String)
@@ -247,6 +257,7 @@ public struct Executable: Sendable, Hashable {
 }
 
 extension Executable: CustomStringConvertible, CustomDebugStringConvertible {
+    /// A textual representation of this executable.
     public var description: String {
         switch storage {
         case .executable(let executableName):
@@ -256,6 +267,7 @@ extension Executable: CustomStringConvertible, CustomDebugStringConvertible {
         }
     }
 
+    /// A debug-oriented textual representation of this executable.
     public var debugDescription: String {
         switch storage {
         case .executable(let string):
@@ -270,6 +282,7 @@ extension Executable: CustomStringConvertible, CustomDebugStringConvertible {
 
 /// A collection of arguments to pass to the subprocess.
 public struct Arguments: Sendable, ExpressibleByArrayLiteral, Hashable {
+    /// The type of the elements of an array literal.
     public typealias ArrayLiteralElement = String
 
     internal let storage: [StringOrRawBytes]
@@ -319,7 +332,7 @@ public struct Arguments: Sendable, ExpressibleByArrayLiteral, Hashable {
             self.executablePathOverride = nil
         }
     }
-
+    /// Create an arguments object using the array you provide.
     public init(_ array: [[UInt8]]) {
         self.storage = array.map { .rawBytes($0) }
         self.executablePathOverride = nil
@@ -328,6 +341,7 @@ public struct Arguments: Sendable, ExpressibleByArrayLiteral, Hashable {
 }
 
 extension Arguments: CustomStringConvertible, CustomDebugStringConvertible {
+    /// A textual representation of the arguments.
     public var description: String {
         var result: [String] = self.storage.map(\.description)
 
@@ -337,6 +351,7 @@ extension Arguments: CustomStringConvertible, CustomDebugStringConvertible {
         return result.description
     }
 
+    /// A debug-oriented textual representation of the arguments.
     public var debugDescription: String { return self.description }
 }
 
@@ -380,6 +395,7 @@ public struct Environment: Sendable, Hashable {
 }
 
 extension Environment: CustomStringConvertible, CustomDebugStringConvertible {
+    /// A textual representation of the environment.
     public var description: String {
         switch self.config {
         case .custom(let customDictionary):
@@ -402,6 +418,7 @@ extension Environment: CustomStringConvertible, CustomDebugStringConvertible {
         }
     }
 
+    /// A debug-oriented textual representation of the environment.
     public var debugDescription: String {
         return self.description
     }
@@ -443,8 +460,10 @@ extension Environment: CustomStringConvertible, CustomDebugStringConvertible {
 @frozen
 public enum TerminationStatus: Sendable, Hashable {
     #if canImport(WinSDK)
+    /// The type of the status code.
     public typealias Code = DWORD
     #else
+    /// The type of the status code.
     public typealias Code = CInt
     #endif
 
@@ -464,6 +483,7 @@ public enum TerminationStatus: Sendable, Hashable {
 }
 
 extension TerminationStatus: CustomStringConvertible, CustomDebugStringConvertible {
+    /// A textual representation of this termination status.
     public var description: String {
         switch self {
         case .exited(let code):
@@ -473,6 +493,7 @@ extension TerminationStatus: CustomStringConvertible, CustomDebugStringConvertib
         }
     }
 
+    /// A debug-oriented textual representation of this termination status.
     public var debugDescription: String {
         return self.description
     }
@@ -646,12 +667,13 @@ internal func _safelyClose(_ target: _CloseTarget) throws {
     }
 }
 
-/// `IODescriptor` wraps platform-specific `FileDescriptor`,
-/// which is used to establish a connection to the standard input/output (IO)
-/// system during the process of spawning a child process. Unlike `IODescriptor`,
-/// the `IODescriptor` does not support data read/write operations;
-/// its primary function is to facilitate the spawning of child processes
-/// by providing a platform-specific file descriptor.
+/// An IO descriptor wraps platform-specific file descriptor, which establishes a
+/// connection to the standard input/output (IO) system during the process of
+/// spawning a child process.
+///
+/// Unlike a file descriptor, the `IODescriptor` does not support
+/// data read/write operations; its primary function is to facilitate the spawning of
+/// child processes by providing a platform-specific file descriptor.
 internal struct IODescriptor: ~Copyable {
     #if canImport(WinSDK)
     typealias Descriptor = HANDLE
@@ -961,7 +983,12 @@ extension Optional where Wrapped == String {
     }
 }
 
-/// Runs `body`, and then runs `onCleanup` if body throws an error, or if the parent task is cancelled. In the latter case, `onCleanup` may be run concurrently with `body`. `body` is guaranteed to run exactly once. `onCleanup` is guaranteed to run only once, or not at all.
+/// Runs the body close, then runs the on-cleanup closure if the body closure throws an error
+/// or if the parent task is cancelled.
+///
+/// In the latter case, `onCleanup` may be run concurrently with `body`.
+/// The `body` closure is guaranteed to run exactly once.
+/// The `onCleanup` closure is guaranteed to run only once, or not at all.
 internal func withAsyncTaskCleanupHandler<Result>(
     _ body: () async throws -> Result,
     onCleanup handler: @Sendable @escaping () async -> Void,

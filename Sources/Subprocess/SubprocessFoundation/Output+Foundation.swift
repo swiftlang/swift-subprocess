@@ -20,17 +20,20 @@ import FoundationEssentials
 #endif
 
 /// A concrete `Output` type for subprocesses that collects output
-/// from the subprocess as `Data`. This option must be used with
-/// the `run()` method that returns a `CollectedResult`
+/// from the subprocess as data.
 public struct DataOutput: OutputProtocol {
+    /// The output type for this output option
     public typealias OutputType = Data
+    /// The maximum number of bytes to collect.
     public let maxSize: Int
 
     #if SubprocessSpan
+    /// Create data from a raw span.
     public func output(from span: RawSpan) throws -> Data {
         return Data(span)
     }
     #else
+    /// Create a data from sequence of 8-bit unsigned integers.
     public func output(from buffer: some Sequence<UInt8>) throws -> Data {
         return Data(buffer)
     }

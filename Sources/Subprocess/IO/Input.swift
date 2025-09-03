@@ -33,19 +33,21 @@ import FoundationEssentials
 
 // MARK: - Input
 
-/// `InputProtocol` defines the `write(with:)` method that a type
-/// must implement to serve as the input source for a subprocess.
+/// InputProtocol defines a type that serves as the input source for a subprocess.
+///
+/// The protocol defines the `write(with:)` method that a type must
+/// implement to serve as the input source.
 public protocol InputProtocol: Sendable, ~Copyable {
     /// Asynchronously write the input to the subprocess using the
     /// write file descriptor
     func write(with writer: StandardInputWriter) async throws
 }
 
-/// A concrete `Input` type for subprocesses that indicates
-/// the absence of input to the subprocess. On Unix-like systems,
-/// `NoInput` redirects the standard input of the subprocess
-/// to `/dev/null`, while on Windows, it does not bind any
-/// file handle to the subprocess standard input handle.
+/// A concrete input type for subprocesses that indicates the absence
+/// of input to the subprocess.
+///
+/// On Unix-like systems, `NoInput` redirects the standard input of the subprocess to /dev/null,
+/// while on Windows, it redirects to `NUL`.
 public struct NoInput: InputProtocol {
     internal func createPipe() throws -> CreatedPipe {
         #if os(Windows)
@@ -60,18 +62,19 @@ public struct NoInput: InputProtocol {
         )
     }
 
+    /// Asynchronously write the input to the subprocess that uses the
+    /// write file descriptor.
     public func write(with writer: StandardInputWriter) async throws {
-        // noop
+        fatalError("Unexpected call to \(#function)")
     }
 
     internal init() {}
 }
 
-/// A concrete `Input` type for subprocesses that
-/// reads input from a specified `FileDescriptor`.
-/// Developers have the option to instruct the `Subprocess` to
-/// automatically close the provided `FileDescriptor`
-/// after the subprocess is spawned.
+/// A concrete input type for subprocesses that reads input from a specified FileDescriptor.
+///
+/// Developers have the option to instruct the Subprocess to automatically close the provided
+/// FileDescriptor after the subprocess is spawned.
 public struct FileDescriptorInput: InputProtocol {
     private let fileDescriptor: FileDescriptor
     private let closeAfterSpawningProcess: Bool
@@ -91,8 +94,10 @@ public struct FileDescriptorInput: InputProtocol {
         )
     }
 
+    /// Asynchronously write the input to the subprocess that use the
+    /// write file descriptor.
     public func write(with writer: StandardInputWriter) async throws {
-        // noop
+        fatalError("Unexpected call to \(#function)")
     }
 
     internal init(
@@ -114,6 +119,8 @@ public struct StringInput<
 >: InputProtocol {
     private let string: InputString
 
+    /// Asynchronously write the input to the subprocess that use the
+    /// write file descriptor.
     public func write(with writer: StandardInputWriter) async throws {
         guard let array = self.string.byteArray(using: Encoding.self) else {
             return
@@ -126,11 +133,13 @@ public struct StringInput<
     }
 }
 
-/// A concrete `Input` type for subprocesses that reads input
-/// from a given `UInt8` Array.
+/// A concrete input type for subprocesses that reads input from
+/// a given `UInt8` Array.
 public struct ArrayInput: InputProtocol {
     private let array: [UInt8]
 
+    /// Asynchronously write the input to the subprocess using the
+    /// write file descriptor
     public func write(with writer: StandardInputWriter) async throws {
         _ = try await writer.write(self.array)
     }
@@ -140,11 +149,13 @@ public struct ArrayInput: InputProtocol {
     }
 }
 
-/// A concrete `Input` type for subprocess that indicates that
-/// the Subprocess should read its input from `StandardInputWriter`.
+/// A concrete input type that the run closure uses to write custom input
+/// into the subprocess.
 internal struct CustomWriteInput: InputProtocol {
+    /// Asynchronously write the input to the subprocess using the
+    /// write file descriptor.
     public func write(with writer: StandardInputWriter) async throws {
-        // noop
+        fatalError("Unexpected call to \(#function)")
     }
 
     internal init() {}
@@ -222,29 +233,30 @@ public final actor StandardInputWriter: Sendable {
         self.diskIO = diskIO
     }
 
-    /// Write an array of UInt8 to the standard input of the subprocess.
+    /// Write an array of 8-bit unsigned integers to the standard input of the subprocess.
     /// - Parameter array: The sequence of bytes to write.
-    /// - Returns number of bytes written.
+    /// - Returns: the number of bytes written.
     public func write(
         _ array: [UInt8]
     ) async throws -> Int {
         return try await AsyncIO.shared.write(array, to: self.diskIO)
     }
 
-    /// Write a `RawSpan` to the standard input of the subprocess.
-    /// - Parameter span: The span to write
-    /// - Returns number of bytes written
     #if SubprocessSpan
+    /// Write a raw span to the standard input of the subprocess.
+    ///
+    /// - Parameter `span`: The span to write.
+    /// - Returns: the number of bytes written.
     public func write(_ span: borrowing RawSpan) async throws -> Int {
         return try await AsyncIO.shared.write(span, to: self.diskIO)
     }
     #endif
 
-    /// Write a StringProtocol to the standard input of the subprocess.
+    /// Write a type that conforms to StringProtocol to the standard input of the subprocess.
     /// - Parameters:
     ///   - string: The string to write.
     ///   - encoding: The encoding to use when converting string to bytes
-    /// - Returns number of bytes written.
+    /// - Returns: number of bytes written.
     public func write<Encoding: Unicode.Encoding>(
         _ string: some StringProtocol,
         using encoding: Encoding.Type = UTF8.self
