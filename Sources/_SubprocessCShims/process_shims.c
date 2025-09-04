@@ -431,14 +431,13 @@ static int _positive_int_parse(const char *str) {
 }
 
 #if defined(__linux__)
-// Linux-specific version that uses syscalls directly and doesn't allocate heap memory.
-// Safe to use after vfork() and before execve()
-static int _highest_possibly_open_fd_dir_linux(const char *fd_dir) {
-    int highest_fd_so_far = 0;
+/// Set `FD_CLOEXEC` on all open file descriptors listed under `fd_dir` so
+/// they are automatically closed upon `execve()`.
+/// Safe to use after `vfork()` and before `execve()`
+static void _set_cloexec_to_open_fds(const char *fd_dir) {
     int dir_fd = open(fd_dir, O_RDONLY);
     if (dir_fd < 0) {
-        // errno set by `open`.
-        return -1;
+        return;
     }
 
     // Buffer for directory entries - allocated on stack, no heap allocation
@@ -450,49 +449,37 @@ static int _highest_possibly_open_fd_dir_linux(const char *fd_dir) {
             if (errno == EINTR) {
                 continue;
             } else {
-                // `errno` set by _getdents64.
-                highest_fd_so_far = -1;
                 close(dir_fd);
-                return highest_fd_so_far;
+                return;
             }
         }
         if (bytes_read == 0) {
             close(dir_fd);
-            return highest_fd_so_far;
+            return;
         }
         long offset = 0;
         while (offset < bytes_read) {
             struct linux_dirent64 *entry = (struct linux_dirent64 *)(buffer + offset);
-
             // Skip "." and ".." entries
             if (entry->d_name[0] != '.') {
-                int number = _positive_int_parse(entry->d_name);
-                if (number > highest_fd_so_far) {
-                    highest_fd_so_far = number;
+                int fd = _positive_int_parse(entry->d_name);
+                if (fd > STDERR_FILENO && fd != dir_fd) {
+                    int flags = fcntl(fd, F_GETFD);
+                    if (flags >= 0) {
+                        // Set FD_CLOEXEC on every open fd so they are closed after exec()
+                        fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+                    }
                 }
             }
-
             offset += entry->d_reclen;
         }
     }
-
-    close(dir_fd);
-    return highest_fd_so_far;
 }
 #endif
 
-// This function is only used on systems with Linux kernel 5.9 or lower.
-// On newer systems, `close_range` is used instead.
+// This function is only used on non-Linux systems.
 static int _highest_possibly_open_fd(void) {
-#if defined(__linux__)
-    int hi = _highest_possibly_open_fd_dir_linux("/dev/fd");
-    if (hi < 0) {
-        hi = sysconf(_SC_OPEN_MAX);
-    }
-#else
-    int hi = sysconf(_SC_OPEN_MAX);
-#endif
-    return hi;
+    return sysconf(_SC_OPEN_MAX);
 }
 
 int _subprocess_fork_exec(
@@ -681,8 +668,8 @@ int _subprocess_fork_exec(
         errno = ENOSYS;
         #if (__has_include(<linux/close_range.h>) && (!defined(__ANDROID__) || __ANDROID_API__  >= 34)) || defined(__FreeBSD__)
         // We must NOT close pipefd[1] for writing errors
-        rc = close_range(STDERR_FILENO + 1, pipefd[1] - 1, 0);
-        rc |= close_range(pipefd[1] + 1, ~0U, 0);
+        rc = close_range(STDERR_FILENO + 1, pipefd[1] - 1, CLOSE_RANGE_CLOEXEC);
+        rc |= close_range(pipefd[1] + 1, ~0U, CLOSE_RANGE_CLOEXEC);
         #elif defined(__OpenBSD__)
         // OpenBSD Supports closefrom, but not close_range
         // See https://man.openbsd.org/closefrom
@@ -692,13 +679,22 @@ int _subprocess_fork_exec(
         rc = closefrom(pipefd[1] + 1);
         #endif
         if (rc != 0) {
-            // close_range failed (or doesn't exist), fall back to close()
-            for (int fd = STDERR_FILENO + 1; fd <= _highest_possibly_open_fd(); fd++) {
+            #if defined(__linux__)
+            _set_cloexec_to_open_fds("/dev/fd");
+            #else
+            // close_range failed (or doesn't exist), fall back to setting FD_CLOEXEC
+            int highest_open_fd = _highest_possibly_open_fd();
+            for (int fd = STDERR_FILENO + 1; fd <= highest_open_fd; fd++) {
                 // We must NOT close pipefd[1] for writing errors
                 if (fd != pipefd[1]) {
-                    close(fd);
+                    int flags = fcntl(fd, F_GETFD);
+                    if (flags >= 0) {
+                        // Set FD_CLOEXEC on every open fd so they are closed after exec()
+                        fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+                    }
                 }
             }
+            #endif
         }
 
         // Finally, exec

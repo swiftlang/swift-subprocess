@@ -1337,22 +1337,19 @@ extension SubprocessIntegrationTests {
             options: .create,
             permissions: [.ownerReadWrite, .groupReadWrite]
         )
-        let echoResult = try await outputFile.closeAfter {
-            let echoResult = try await _run(
-                setup,
-                input: .none,
-                output: .fileDescriptor(
-                    outputFile,
-                    closeAfterSpawningProcess: false
-                ),
-                error: .fileDescriptor(
-                    outputFile,
-                    closeAfterSpawningProcess: false
-                )
+        let echoResult = try await _run(
+            setup,
+            input: .none,
+            output: .fileDescriptor(
+                outputFile,
+                closeAfterSpawningProcess: true
+            ),
+            error: .fileDescriptor(
+                outputFile,
+                closeAfterSpawningProcess: true
             )
-            #expect(echoResult.terminationStatus.isSuccess)
-            return echoResult
-        }
+        )
+        #expect(echoResult.terminationStatus.isSuccess)
         let outputData: Data = try Data(
             contentsOf: URL(filePath: outputFilePath.string)
         )
