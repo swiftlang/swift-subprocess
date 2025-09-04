@@ -33,10 +33,6 @@ function(emit_swift_interface target)
 
   target_compile_options(${target} PRIVATE
     "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-emit-module-path ${CMAKE_CURRENT_BINARY_DIR}/${module_name}.swiftmodule/${${PROJECT_NAME}_MODULE_TRIPLE}.swiftmodule>")
-  if(${PROJECT_NAME}_VARIANT_MODULE_TRIPLE)
-    target_compile_options(${target} PRIVATE
-      "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-emit-variant-module-path ${CMAKE_CURRENT_BINARY_DIR}/${module_name}.swiftmodule/${${PROJECT_NAME}_VARIANT_MODULE_TRIPLE}.swiftmodule>")
-  endif()
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${module_name}.swiftmodule/${${PROJECT_NAME}_MODULE_TRIPLE}.swiftmodule"
     DEPENDS ${target})
   target_sources(${target}
@@ -48,11 +44,6 @@ function(emit_swift_interface target)
     target_compile_options(${target} PRIVATE
       $<$<COMPILE_LANGUAGE:Swift>:-emit-module-interface-path$<SEMICOLON>${CMAKE_CURRENT_BINARY_DIR}/${module_name}.swiftmodule/${${PROJECT_NAME}_MODULE_TRIPLE}.swiftinterface>
       $<$<COMPILE_LANGUAGE:Swift>:-emit-private-module-interface-path$<SEMICOLON>${CMAKE_CURRENT_BINARY_DIR}/${module_name}.swiftmodule/${${PROJECT_NAME}_MODULE_TRIPLE}.private.swiftinterface>)
-    if(${PROJECT_NAME}_VARIANT_MODULE_TRIPLE)
-      target_compile_options(${target} PRIVATE
-        "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-emit-variant-module-interface-path ${CMAKE_CURRENT_BINARY_DIR}/${module_name}.swiftmodule/${${PROJECT_NAME}_VARIANT_MODULE_TRIPLE}.swiftinterface>"
-        "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-emit-variant-private-module-interface-path ${CMAKE_CURRENT_BINARY_DIR}/${module_name}.swiftmodule/${${PROJECT_NAME}_VARIANT_MODULE_TRIPLE}.private.swiftinterface>")
-    endif()
     target_compile_options(${target} PRIVATE
       $<$<COMPILE_LANGUAGE:Swift>:-library-level$<SEMICOLON>api>
       $<$<COMPILE_LANGUAGE:Swift>:-Xfrontend$<SEMICOLON>-require-explicit-availability=ignore>)
