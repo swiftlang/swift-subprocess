@@ -145,24 +145,22 @@ extension Execution {
 
 // MARK: - Environment Resolution
 extension Environment {
-    internal static let pathVariableName = "PATH"
-
     internal func pathValue() -> String? {
         switch self.config {
         case .inherit(let overrides):
             // If PATH value exists in overrides, use it
-            if let value = overrides[Self.pathVariableName] {
+            if let value = overrides[.path] {
                 return value
             }
             // Fall back to current process
-            return Self.currentEnvironmentValues()[Self.pathVariableName]
+            return Self.currentEnvironmentValues()[.path]
         case .custom(let fullEnvironment):
-            if let value = fullEnvironment[Self.pathVariableName] {
+            if let value = fullEnvironment[.path] {
                 return value
             }
             return nil
         case .rawBytes(let rawBytesArray):
-            let needle: [UInt8] = Array("\(Self.pathVariableName)=".utf8)
+            let needle: [UInt8] = Array("\(Key.path.rawValue)=".utf8)
             for row in rawBytesArray {
                 guard row.starts(with: needle) else {
                     continue

@@ -926,13 +926,13 @@ extension Environment {
         switch self.config {
         case .inherit(let overrides):
             // If PATH value exists in overrides, use it
-            if let value = overrides.pathValue() {
+            if let value = overrides[.path] {
                 return value
             }
             // Fall back to current process
-            return Self.currentEnvironmentValues().pathValue()
+            return Self.currentEnvironmentValues()[.path]
         case .custom(let fullEnvironment):
-            if let value = fullEnvironment.pathValue() {
+            if let value = fullEnvironment[.path] {
                 return value
             }
             return nil
@@ -1006,7 +1006,7 @@ extension Configuration {
         intendedWorkingDir: String?
     ) {
         // Prepare environment
-        var env: [String: String] = [:]
+        var env: [Environment.Key: String] = [:]
         switch self.environment.config {
         case .custom(let customValues):
             // Use the custom values directly
@@ -1020,17 +1020,17 @@ extension Configuration {
         }
         // On Windows, the PATH is required in order to locate dlls needed by
         // the process so we should also pass that to the child
-        if env.pathValue() == nil,
-            let parentPath = Environment.currentEnvironmentValues().pathValue()
+        if env[.path] == nil,
+            let parentPath = Environment.currentEnvironmentValues()[.path]
         {
-            env["Path"] = parentPath
+            env[.path] = parentPath
         }
         // The environment string must be terminated by a double
         // null-terminator.  Otherwise, CreateProcess will fail with
         // INVALID_PARMETER.
         let environmentString =
             env.map {
-                $0.key + "=" + $0.value
+                $0.key.rawValue + "=" + $0.value
             }.joined(separator: "\0") + "\0\0"
 
         // Prepare arguments
@@ -1507,13 +1507,6 @@ internal func fillNullTerminatedWideStringBuffer(
         }
     }
     throw SubprocessError.UnderlyingError(rawValue: DWORD(ERROR_INSUFFICIENT_BUFFER))
-}
-
-// Windows environment key is case insensitive
-extension Dictionary where Key == String, Value == String {
-    internal func pathValue() -> String? {
-        return self["Path"] ?? self["PATH"] ?? self["path"]
-    }
 }
 
 #endif // canImport(WinSDK)
