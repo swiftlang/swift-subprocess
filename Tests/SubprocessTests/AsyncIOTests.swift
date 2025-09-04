@@ -135,7 +135,8 @@ extension SubprocessAsyncIOTests {
 
 // MARK: - Error Handling Tests
 extension SubprocessAsyncIOTests {
-    @Test func testWriteToClosedPipe() async throws {
+    @Test(.disabled("Cannot safely write to a closed fd without risking it being reused"))
+    func testWriteToClosedPipe() async throws {
         var pipe = try CreatedPipe(closeWhenDone: true, purpose: .input)
         var writeChannel = try _require(pipe.writeFileDescriptor()).createIOChannel()
         var readChannel = try _require(pipe.readFileDescriptor()).createIOChannel()
@@ -171,7 +172,8 @@ extension SubprocessAsyncIOTests {
 
     }
 
-    @Test func testReadFromClosedPipe() async throws {
+    @Test(.disabled("Cannot safely read from a closed fd without risking it being reused"))
+    func testReadFromClosedPipe() async throws {
         var pipe = try CreatedPipe(closeWhenDone: true, purpose: .input)
         var writeChannel = try _require(pipe.writeFileDescriptor()).createIOChannel()
         var readChannel = try _require(pipe.readFileDescriptor()).createIOChannel()

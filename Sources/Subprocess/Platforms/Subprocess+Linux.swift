@@ -225,9 +225,9 @@ private func monitorThreadFunc(context: MonitorThreadContext) {
         repeating: epoll_event(events: 0, data: epoll_data(fd: 0)),
         count: 256
     )
-    var waitMask = sigset_t();
-    sigemptyset(&waitMask);
-    sigaddset(&waitMask, SIGCHLD);
+    var waitMask = sigset_t()
+    sigemptyset(&waitMask)
+    sigaddset(&waitMask, SIGCHLD)
     // Enter the monitor loop
     monitorLoop: while true {
         let eventCount = epoll_pwait(

@@ -158,11 +158,24 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
 
 // MARK: - Spawn
 extension Configuration {
+    // @unchecked Sendable because we need to capture UnsafePointers
+    // to send to another thread. While UnsafePointers are not
+    // Sendable, we are not mutating them -- we only need these type
+    // for C interface.
+    internal struct SpawnContext: @unchecked Sendable {
+        let fileActions: posix_spawn_file_actions_t?
+        let spawnAttributes: posix_spawnattr_t?
+        let argv: [UnsafeMutablePointer<CChar>?]
+        let env: [UnsafeMutablePointer<CChar>?]
+        let uidPtr: UnsafeMutablePointer<uid_t>?
+        let gidPtr: UnsafeMutablePointer<gid_t>?
+    }
+
     internal func spawn(
         withInput inputPipe: consuming CreatedPipe,
         outputPipe: consuming CreatedPipe,
         errorPipe: consuming CreatedPipe
-    ) throws -> SpawnResult {
+    ) async throws -> SpawnResult {
         // Instead of checking if every possible executable path
         // is valid, spawn each directly and catch ENOENT
         let possiblePaths = self.executable.possibleExecutablePaths(
@@ -172,7 +185,7 @@ extension Configuration {
         var outputPipeBox: CreatedPipe? = consume outputPipe
         var errorPipeBox: CreatedPipe? = consume errorPipe
 
-        return try self.preSpawn { args throws -> SpawnResult in
+        return try await self.preSpawn { args throws -> SpawnResult in
             let (env, uidPtr, gidPtr, supplementaryGroups) = args
             var _inputPipe = inputPipeBox.take()!
             var _outputPipe = outputPipeBox.take()!
@@ -186,8 +199,6 @@ extension Configuration {
             let errorWriteFileDescriptor: IODescriptor? = _errorPipe.writeFileDescriptor()
 
             for possibleExecutablePath in possiblePaths {
-                var pid: pid_t = 0
-
                 // Setup Arguments
                 let argv: [UnsafeMutablePointer<CChar>?] = self.arguments.createArgs(
                     withExecutablePath: possibleExecutablePath
@@ -394,21 +405,35 @@ extension Configuration {
                 }
 
                 // Spawn
-                let spawnError: CInt = possibleExecutablePath.withCString { exePath in
-                    return supplementaryGroups.withOptionalUnsafeBufferPointer { sgroups in
-                        return _subprocess_spawn(
-                            &pid,
-                            exePath,
-                            &fileActions,
-                            &spawnAttributes,
-                            argv,
-                            env,
-                            uidPtr,
-                            gidPtr,
-                            Int32(supplementaryGroups?.count ?? 0),
-                            sgroups?.baseAddress,
-                            self.platformOptions.createSession ? 1 : 0
-                        )
+                let spawnContext = SpawnContext(
+                    fileActions: fileActions,
+                    spawnAttributes: spawnAttributes,
+                    argv: argv,
+                    env: env,
+                    uidPtr: uidPtr,
+                    gidPtr: gidPtr
+                )
+                let (spawnError, pid) = try await runOnBackgroundThread {
+                    return possibleExecutablePath.withCString { exePath in
+                        return supplementaryGroups.withOptionalUnsafeBufferPointer { sgroups in
+                            var pid: pid_t = 0
+                            var _fileActions = spawnContext.fileActions
+                            var _spawnAttributes = spawnContext.spawnAttributes
+                            let rc = _subprocess_spawn(
+                                &pid,
+                                exePath,
+                                &_fileActions,
+                                &_spawnAttributes,
+                                spawnContext.argv,
+                                spawnContext.env,
+                                spawnContext.uidPtr,
+                                spawnContext.gidPtr,
+                                Int32(supplementaryGroups?.count ?? 0),
+                                sgroups?.baseAddress,
+                                self.platformOptions.createSession ? 1 : 0
+                            )
+                            return (rc, pid)
+                        }
                     }
                 }
                 // Spawn error

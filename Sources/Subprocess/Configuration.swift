@@ -93,7 +93,7 @@ public struct Configuration: Sendable {
         isolation: isolated (any Actor)? = #isolation,
         _ body: ((Execution, consuming IOChannel?, consuming IOChannel?, consuming IOChannel?) async throws -> Result)
     ) async throws -> ExecutionResult<Result> {
-        let spawnResults = try self.spawn(
+        let spawnResults = try await self.spawn(
             withInput: input,
             outputPipe: output,
             errorPipe: error
@@ -683,7 +683,11 @@ internal struct IODescriptor: ~Copyable {
     #endif
 
     internal var closeWhenDone: Bool
+    #if canImport(WinSDK)
+    internal nonisolated(unsafe) let descriptor: Descriptor
+    #else
     internal let descriptor: Descriptor
+    #endif
 
     internal init(
         _ descriptor: Descriptor,

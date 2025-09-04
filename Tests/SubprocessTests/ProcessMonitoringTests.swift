@@ -103,7 +103,7 @@ struct SubprocessProcessMonitoringTests {
         config: Configuration,
         _ body: (Execution) async throws -> Void
     ) async throws {
-        let spawnResult = try config.spawn(
+        let spawnResult = try await config.spawn(
             withInput: self.devNullInputPipe(),
             outputPipe: self.devNullOutputPipe(),
             errorPipe: self.devNullOutputPipe()
@@ -307,7 +307,7 @@ extension SubprocessProcessMonitoringTests {
 
         for _ in 0..<testCount {
             let config = self.immediateExitProcess(withExitCode: 0)
-            let spawnResult = try config.spawn(
+            let spawnResult = try await config.spawn(
                 withInput: self.devNullInputPipe(),
                 outputPipe: self.devNullOutputPipe(),
                 errorPipe: self.devNullOutputPipe()
