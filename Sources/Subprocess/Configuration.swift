@@ -401,8 +401,8 @@ extension Arguments: CustomStringConvertible, CustomDebugStringConvertible {
 /// A set of environment variables to use when executing the subprocess.
 public struct Environment: Sendable, Hashable {
     internal enum Configuration: Sendable, Hashable {
-        case inherit([String: String])
-        case custom([String: String])
+        case inherit([Key: String])
+        case custom([Key: String])
         #if !os(Windows)
         case rawBytes([[UInt8]])
         #endif
@@ -419,11 +419,11 @@ public struct Environment: Sendable, Hashable {
         return .init(config: .inherit([:]))
     }
     /// Override the provided `newValue` in the existing `Environment`
-    public func updating(_ newValue: [String: String]) -> Self {
+    public func updating(_ newValue: [Key: String]) -> Self {
         return .init(config: .inherit(newValue))
     }
     /// Use custom environment variables
-    public static func custom(_ newValue: [String: String]) -> Self {
+    public static func custom(_ newValue: [Key: String]) -> Self {
         return .init(config: .custom(newValue))
     }
 
@@ -436,6 +436,17 @@ public struct Environment: Sendable, Hashable {
 }
 
 extension Environment: CustomStringConvertible, CustomDebugStringConvertible {
+    /// A key used to access values in an ``Environment``.
+    ///
+    /// This type respects the compiled platform's case sensitivity requirements.
+    public struct Key {
+        public var rawValue: String
+
+        package init(_ rawValue: String) {
+            self.rawValue = rawValue
+        }
+    }
+
     /// A textual representation of the environment.
     public var description: String {
         switch self.config {
@@ -464,9 +475,9 @@ extension Environment: CustomStringConvertible, CustomDebugStringConvertible {
         return self.description
     }
 
-    internal static func currentEnvironmentValues() -> [String: String] {
+    internal static func currentEnvironmentValues() -> [Key: String] {
         return self.withCopiedEnv { environments in
-            var results: [String: String] = [:]
+            var results: [Key: String] = [:]
             for env in environments {
                 let environmentString = String(cString: env)
 
@@ -488,12 +499,75 @@ extension Environment: CustomStringConvertible, CustomDebugStringConvertible {
                 let value = String(
                     environmentString[environmentString.index(after: delimiter)..<environmentString.endIndex]
                 )
-                results[key] = value
+                results[Key(key)] = value
             }
             return results
         }
     }
 }
+
+extension Environment.Key {
+    package static let path: Self = "PATH"
+}
+
+extension Environment.Key: CodingKeyRepresentable {}
+
+extension Environment.Key: Comparable {
+    public static func < (lhs: Self, rhs: Self) -> Bool {
+        // Even on windows use a stable sort order.
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
+extension Environment.Key: CustomStringConvertible {
+    public var description: String { self.rawValue }
+}
+
+extension Environment.Key: Encodable {
+    public func encode(to encoder: any Swift.Encoder) throws {
+        try self.rawValue.encode(to: encoder)
+    }
+}
+
+extension Environment.Key: Equatable {
+    public static func == (_ lhs: Self, _ rhs: Self) -> Bool {
+        #if os(Windows)
+        lhs.rawValue.lowercased() == rhs.rawValue.lowercased()
+        #else
+        lhs.rawValue == rhs.rawValue
+        #endif
+    }
+}
+
+extension Environment.Key: ExpressibleByStringLiteral {
+    public init(stringLiteral rawValue: String) {
+        self.init(rawValue)
+    }
+}
+
+extension Environment.Key: Decodable {
+    public init(from decoder: any Swift.Decoder) throws {
+        self.rawValue = try String(from: decoder)
+    }
+}
+
+extension Environment.Key: Hashable {
+    public func hash(into hasher: inout Hasher) {
+        #if os(Windows)
+        self.rawValue.lowercased().hash(into: &hasher)
+        #else
+        self.rawValue.hash(into: &hasher)
+        #endif
+    }
+}
+
+extension Environment.Key: RawRepresentable {
+    public init?(rawValue: String) {
+        self.rawValue = rawValue
+    }
+}
+
+extension Environment.Key: Sendable {}
 
 // MARK: - TerminationStatus
 
