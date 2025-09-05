@@ -58,7 +58,7 @@ jobs:
   cmake_build:
     name: CMake Build
     runs-on: ubuntu-latest
-    container: swift:6.1-noble
+    container: swiftlang/swift:nightly-noble
     steps:
       - name: checkout sources
         uses: actions/checkout@v1
