@@ -292,7 +292,7 @@ private func createIODescriptor(from fd: FileDescriptor, closeWhenDone: Bool) ->
 }
 
 private func createTerminationStatus(_ exitCode: UInt32) -> TerminationStatus {
-    #if canImport(WinSD)
+    #if canImport(WinSDK)
     return .exited(exitCode)
     #else
     return .exited(Int32(exitCode))
