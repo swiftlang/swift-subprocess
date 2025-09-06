@@ -279,7 +279,7 @@ private func currentProcessIdentifier() -> ProcessIdentifier {
     #elseif canImport(Glibc) || canImport(Android) || canImport(Musl)
     return .init(value: ProcessInfo.processInfo.processIdentifier, processDescriptor: -1)
     #elseif os(Windows)
-    return .init(value: UInt32(ProcessInfo.processInfo.processIdentifier), processDescriptor: UnsafeMutableRawPointer(bitPAttern: 0), threadHandle: UnsafeMutableRawPointer(bitPAttern: 0))
+    return .init(value: UInt32(ProcessInfo.processInfo.processIdentifier), processDescriptor: UnsafeMutableRawPointer(bitPattern: 0), threadHandle: UnsafeMutableRawPointer(bitPattern: 0))
     #endif
 }
 
