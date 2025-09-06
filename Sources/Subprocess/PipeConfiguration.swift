@@ -36,7 +36,7 @@ internal import Dispatch
 // MARK: - Custom Operators
 
 /// Final pipe operator - pipes to the last process in a pipeline and specifies output
-infix operator |>: AdditionPrecedence
+infix operator |> : AdditionPrecedence
 
 // MARK: - Error Redirection Options
 
@@ -54,18 +54,18 @@ public enum ErrorRedirection: Sendable {
 public struct ProcessStageOptions: Sendable {
     /// How to handle standard error redirection
     public let errorRedirection: ErrorRedirection
-    
+
     /// Initialize with error redirection option
     public init(errorRedirection: ErrorRedirection = .separate) {
         self.errorRedirection = errorRedirection
     }
-    
+
     /// Default options (no redirection)
     public static let `default` = ProcessStageOptions()
-    
+
     /// Redirect stderr to stdout, discarding original stdout
     public static let stderrToStdout = ProcessStageOptions(errorRedirection: .replaceStdout)
-    
+
     /// Merge stderr with stdout
     public static let mergeErrors = ProcessStageOptions(errorRedirection: .mergeWithStdout)
 }
@@ -78,9 +78,9 @@ public struct PipeStage: Sendable {
         case process(configuration: Configuration, options: ProcessStageOptions)
         case swiftFunction(@Sendable (AsyncBufferSequence, StandardInputWriter, StandardInputWriter) async throws -> Int32)
     }
-    
+
     let stageType: StageType
-    
+
     /// Create a PipeStage from a process configuration
     public init(
         configuration: Configuration,
@@ -88,7 +88,7 @@ public struct PipeStage: Sendable {
     ) {
         self.stageType = .process(configuration: configuration, options: options)
     }
-    
+
     /// Create a PipeStage from executable parameters
     public init(
         executable: Executable,
@@ -107,14 +107,14 @@ public struct PipeStage: Sendable {
         )
         self.stageType = .process(configuration: configuration, options: options)
     }
-    
+
     /// Create a PipeStage from a Swift function
     public init(
         swiftFunction: @escaping @Sendable (AsyncBufferSequence, StandardInputWriter, StandardInputWriter) async throws -> Int32
     ) {
         self.stageType = .swiftFunction(swiftFunction)
     }
-    
+
     // Convenience accessors
     var configuration: Configuration? {
         switch stageType {
@@ -124,7 +124,7 @@ public struct PipeStage: Sendable {
             return nil
         }
     }
-    
+
     var options: ProcessStageOptions {
         switch stageType {
         case .process(_, let options):
@@ -147,16 +147,16 @@ public struct PipeConfiguration<
 >: Sendable, CustomStringConvertible {
     /// Array of process stages in the pipeline
     internal var stages: [PipeStage]
-    
+
     /// Input configuration for the first stage
     internal var input: Input
-    
+
     /// Output configuration for the last stage
     internal var output: Output
-    
+
     /// Error configuration for the last stage
     internal var error: Error
-    
+
     /// Initialize a PipeConfiguration with a base Configuration
     /// Internal initializer - users should use convenience initializers
     internal init(
@@ -171,7 +171,7 @@ public struct PipeConfiguration<
         self.output = output
         self.error = error
     }
-    
+
     /// Internal initializer for creating from stages and I/O
     internal init(
         stages: [PipeStage],
@@ -184,9 +184,9 @@ public struct PipeConfiguration<
         self.output = output
         self.error = error
     }
-    
+
     // MARK: - CustomStringConvertible
-    
+
     public var description: String {
         if stages.count == 1 {
             let stage = stages[0]
@@ -227,7 +227,7 @@ extension PipeConfiguration where Input == NoInput, Output == DiscardedOutput, E
         self.output = DiscardedOutput()
         self.error = DiscardedOutput()
     }
-    
+
     /// Initialize a PipeConfiguration with a Configuration
     /// I/O defaults to discarded until finalized with `finally`
     public init(
@@ -239,7 +239,7 @@ extension PipeConfiguration where Input == NoInput, Output == DiscardedOutput, E
         self.output = DiscardedOutput()
         self.error = DiscardedOutput()
     }
-    
+
     /// Initialize a PipeConfiguration with a Swift function
     /// I/O defaults to discarded until finalized with `finally`
     public init(
@@ -264,7 +264,7 @@ internal struct SendableCollectedResult: @unchecked Sendable {
     let terminationStatus: TerminationStatus
     let standardOutput: Any
     let standardError: Any
-    
+
     init<Output: OutputProtocol, Error: OutputProtocol>(_ result: CollectedResult<Output, Error>) {
         self.processIdentifier = result.processIdentifier
         self.terminationStatus = result.terminationStatus
@@ -279,7 +279,7 @@ extension PipeConfiguration {
     public func run() async throws -> CollectedResult<Output, Error> {
         if stages.count == 1 {
             let stage = stages[0]
-            
+
             switch stage.stageType {
             case .process(let configuration, let options):
                 // Single process - run directly with error redirection
@@ -292,7 +292,7 @@ extension PipeConfiguration {
                         output: self.output,
                         error: self.error
                     )
-                    
+
                 case .replaceStdout:
                     // Redirect stderr to stdout, discard original stdout
                     let result = try await Subprocess.run(
@@ -302,15 +302,16 @@ extension PipeConfiguration {
                         error: self.output
                     )
 
-                    let emptyError: Error.OutputType = if Error.OutputType.self == Void.self {
-                        () as! Error.OutputType
-                    } else if Error.OutputType.self == String?.self {
-                        String?.none as! Error.OutputType
-                    } else if Error.OutputType.self == [UInt8]?.self {
-                        [UInt8]?.none as! Error.OutputType
-                    } else {
-                        fatalError()
-                    }
+                    let emptyError: Error.OutputType =
+                        if Error.OutputType.self == Void.self {
+                            () as! Error.OutputType
+                        } else if Error.OutputType.self == String?.self {
+                            String?.none as! Error.OutputType
+                        } else if Error.OutputType.self == [UInt8]?.self {
+                            [UInt8]?.none as! Error.OutputType
+                        } else {
+                            fatalError()
+                        }
 
                     // Create a new result with the error output as the standard output
                     return CollectedResult(
@@ -319,7 +320,7 @@ extension PipeConfiguration {
                         standardOutput: result.standardError,
                         standardError: emptyError
                     )
-                    
+
                 case .mergeWithStdout:
                     // Redirect stderr to stdout, merge both streams
                     let finalResult = try await Subprocess.run(
@@ -329,19 +330,20 @@ extension PipeConfiguration {
                         error: self.output
                     )
 
-                    let emptyError: Error.OutputType = if Error.OutputType.self == Void.self {
-                        () as! Error.OutputType
-                    } else if Error.OutputType.self == String?.self {
-                        String?.none as! Error.OutputType
-                    } else if Error.OutputType.self == [UInt8]?.self {
-                        [UInt8]?.none as! Error.OutputType
-                    } else {
-                        fatalError()
-                    }
+                    let emptyError: Error.OutputType =
+                        if Error.OutputType.self == Void.self {
+                            () as! Error.OutputType
+                        } else if Error.OutputType.self == String?.self {
+                            String?.none as! Error.OutputType
+                        } else if Error.OutputType.self == [UInt8]?.self {
+                            [UInt8]?.none as! Error.OutputType
+                        } else {
+                            fatalError()
+                        }
 
                     // Merge the different kinds of output types (string, fd, etc.)
                     if Output.OutputType.self == Void.self {
-                        return CollectedResult<Output,Error>(
+                        return CollectedResult<Output, Error>(
                             processIdentifier: finalResult.processIdentifier,
                             terminationStatus: finalResult.terminationStatus,
                             standardOutput: () as! Output.OutputType,
@@ -354,12 +356,12 @@ extension PipeConfiguration {
                         let finalOutput = (out ?? "") + (err ?? "")
                         // FIXME reduce the final output to the output.maxSize number of bytes
 
-                        return CollectedResult<Output,Error>(
+                        return CollectedResult<Output, Error>(
                             processIdentifier: finalResult.processIdentifier,
                             terminationStatus: finalResult.terminationStatus,
                             standardOutput: finalOutput as! Output.OutputType,
                             standardError: emptyError
-                        )                                  
+                        )
                     } else if Output.OutputType.self == [UInt8].self {
                         let out: [UInt8]? = finalResult.standardOutput as! [UInt8]?
                         let err: [UInt8]? = finalResult.standardError as! [UInt8]?
@@ -369,17 +371,17 @@ extension PipeConfiguration {
                             finalOutput = [UInt8](finalOutput[...self.output.maxSize])
                         }
 
-                        return CollectedResult<Output,Error>(
+                        return CollectedResult<Output, Error>(
                             processIdentifier: finalResult.processIdentifier,
                             terminationStatus: finalResult.terminationStatus,
                             standardOutput: finalOutput as! Output.OutputType,
                             standardError: emptyError
-                        ) 
+                        )
                     } else {
                         fatalError()
                     }
                 }
-                
+
             case .swiftFunction:
                 fatalError("Trivial pipeline with only a single swift function isn't supported")
             }
@@ -391,9 +393,9 @@ extension PipeConfiguration {
 
     enum CollectedPipeResult {
         case stderr(Error.OutputType)
-        case collectedResult(CollectedResult<Output,DiscardedOutput>)
+        case collectedResult(CollectedResult<Output, DiscardedOutput>)
     }
-    
+
     /// Run the pipeline using withTaskGroup
     private func runPipeline() async throws -> CollectedResult<Output, Error> {
         // Create a pipe for standard error
@@ -420,7 +422,7 @@ extension PipeConfiguration {
                     pipes.append((readEnd: pipe.readEnd, writeEnd: pipe.writeEnd))
                 }
 
-                let pipeResult = try await withThrowingTaskGroup(of: PipelineTaskResult.self, returning: CollectedResult<Output, DiscardedOutput>.self) { group in            
+                let pipeResult = try await withThrowingTaskGroup(of: PipelineTaskResult.self, returning: CollectedResult<Output, DiscardedOutput>.self) { group in
                     // First process
                     let firstStage = stages[0]
                     if stages.count > 1 {
@@ -430,7 +432,7 @@ extension PipeConfiguration {
                                 switch firstStage.stageType {
                                 case .process(let configuration, let options):
                                     var taskResult: PipelineTaskResult
-                                    
+
                                     switch options.errorRedirection {
                                     case .separate:
                                         let originalResult = try await Subprocess.run(
@@ -440,12 +442,15 @@ extension PipeConfiguration {
                                             error: sharedErrorPipeOutput
                                         )
 
-                                        taskResult = PipelineTaskResult.success(0, SendableCollectedResult(CollectedResult<FileDescriptorOutput,DiscardedOutput>(
-                                            processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
-                                            terminationStatus: originalResult.terminationStatus,
-                                            standardOutput: (),
-                                            standardError: ()
-                                        )))
+                                        taskResult = PipelineTaskResult.success(
+                                            0,
+                                            SendableCollectedResult(
+                                                CollectedResult<FileDescriptorOutput, DiscardedOutput>(
+                                                    processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
+                                                    terminationStatus: originalResult.terminationStatus,
+                                                    standardOutput: (),
+                                                    standardError: ()
+                                                )))
                                     case .replaceStdout:
                                         let originalResult = try await Subprocess.run(
                                             configuration,
@@ -454,12 +459,15 @@ extension PipeConfiguration {
                                             error: .fileDescriptor(writeEnd, closeAfterSpawningProcess: true)
                                         )
 
-                                        taskResult = PipelineTaskResult.success(0, SendableCollectedResult(CollectedResult<FileDescriptorOutput,DiscardedOutput>(
-                                            processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
-                                            terminationStatus: originalResult.terminationStatus,
-                                            standardOutput: (),
-                                            standardError: ()
-                                        )))
+                                        taskResult = PipelineTaskResult.success(
+                                            0,
+                                            SendableCollectedResult(
+                                                CollectedResult<FileDescriptorOutput, DiscardedOutput>(
+                                                    processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
+                                                    terminationStatus: originalResult.terminationStatus,
+                                                    standardOutput: (),
+                                                    standardError: ()
+                                                )))
                                     case .mergeWithStdout:
                                         let originalResult = try await Subprocess.run(
                                             configuration,
@@ -470,14 +478,17 @@ extension PipeConfiguration {
 
                                         try writeEnd.close()
 
-                                        taskResult = PipelineTaskResult.success(0, SendableCollectedResult(CollectedResult<FileDescriptorOutput,DiscardedOutput>(
-                                            processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
-                                            terminationStatus: originalResult.terminationStatus,
-                                            standardOutput: (),
-                                            standardError: ()
-                                        )))
+                                        taskResult = PipelineTaskResult.success(
+                                            0,
+                                            SendableCollectedResult(
+                                                CollectedResult<FileDescriptorOutput, DiscardedOutput>(
+                                                    processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
+                                                    terminationStatus: originalResult.terminationStatus,
+                                                    standardOutput: (),
+                                                    standardError: ()
+                                                )))
                                     }
-                                    
+
                                     return taskResult
                                 case .swiftFunction(let function):
                                     var inputPipe: CreatedPipe = try self.input.createPipe()
@@ -531,23 +542,26 @@ extension PipeConfiguration {
                                         return 0
                                     }
 
-                                    return PipelineTaskResult.success(0, SendableCollectedResult(CollectedResult<FileDescriptorOutput,DiscardedOutput>(
-                                        processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
-                                        terminationStatus: .exited(result),
-                                        standardOutput: (),
-                                        standardError: ()
-                                    )))
+                                    return PipelineTaskResult.success(
+                                        0,
+                                        SendableCollectedResult(
+                                            CollectedResult<FileDescriptorOutput, DiscardedOutput>(
+                                                processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
+                                                terminationStatus: .exited(result),
+                                                standardOutput: (),
+                                                standardError: ()
+                                            )))
                                 }
                             } catch {
                                 return PipelineTaskResult.failure(0, error)
                             }
                         }
                     }
-                    
+
                     // Middle processes
                     for i in 1..<(stages.count - 1) {
                         let stage = stages[i]
-                        let readEnd = pipes[i-1].readEnd
+                        let readEnd = pipes[i - 1].readEnd
                         let writeEnd = pipes[i].writeEnd
                         group.addTask {
                             do {
@@ -555,50 +569,59 @@ extension PipeConfiguration {
                                 case .process(let configuration, let options):
                                     var taskResult: PipelineTaskResult
                                     switch options.errorRedirection {
-                                        case .separate:
-                                            let originalResult = try await Subprocess.run(
-                                                configuration,
-                                                input: .fileDescriptor(readEnd, closeAfterSpawningProcess: true),
-                                                output: .fileDescriptor(writeEnd, closeAfterSpawningProcess: true),
-                                                error: sharedErrorPipeOutput
-                                            )
+                                    case .separate:
+                                        let originalResult = try await Subprocess.run(
+                                            configuration,
+                                            input: .fileDescriptor(readEnd, closeAfterSpawningProcess: true),
+                                            output: .fileDescriptor(writeEnd, closeAfterSpawningProcess: true),
+                                            error: sharedErrorPipeOutput
+                                        )
 
-                                            taskResult = PipelineTaskResult.success(i, SendableCollectedResult(CollectedResult<FileDescriptorOutput,DiscardedOutput>(
-                                                processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
-                                                terminationStatus: originalResult.terminationStatus,
-                                                standardOutput: (),
-                                                standardError: ()
-                                            )))
-                                        case .replaceStdout:
-                                            let originalResult = try await Subprocess.run(
-                                                configuration,
-                                                input: .fileDescriptor(readEnd, closeAfterSpawningProcess: true),
-                                                output: .discarded,
-                                                error: .fileDescriptor(writeEnd, closeAfterSpawningProcess: true)
-                                            )
+                                        taskResult = PipelineTaskResult.success(
+                                            i,
+                                            SendableCollectedResult(
+                                                CollectedResult<FileDescriptorOutput, DiscardedOutput>(
+                                                    processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
+                                                    terminationStatus: originalResult.terminationStatus,
+                                                    standardOutput: (),
+                                                    standardError: ()
+                                                )))
+                                    case .replaceStdout:
+                                        let originalResult = try await Subprocess.run(
+                                            configuration,
+                                            input: .fileDescriptor(readEnd, closeAfterSpawningProcess: true),
+                                            output: .discarded,
+                                            error: .fileDescriptor(writeEnd, closeAfterSpawningProcess: true)
+                                        )
 
-                                            taskResult = PipelineTaskResult.success(i, SendableCollectedResult(CollectedResult<FileDescriptorOutput,DiscardedOutput>(
-                                                processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
-                                                terminationStatus: originalResult.terminationStatus,
-                                                standardOutput: (),
-                                                standardError: ()
-                                            )))
-                                        case .mergeWithStdout:
-                                            let originalResult = try await Subprocess.run(
-                                                configuration,
-                                                input: .fileDescriptor(readEnd, closeAfterSpawningProcess: true),
-                                                output: .fileDescriptor(writeEnd, closeAfterSpawningProcess: false),
-                                                error: .fileDescriptor(writeEnd, closeAfterSpawningProcess: false)
-                                            )
+                                        taskResult = PipelineTaskResult.success(
+                                            i,
+                                            SendableCollectedResult(
+                                                CollectedResult<FileDescriptorOutput, DiscardedOutput>(
+                                                    processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
+                                                    terminationStatus: originalResult.terminationStatus,
+                                                    standardOutput: (),
+                                                    standardError: ()
+                                                )))
+                                    case .mergeWithStdout:
+                                        let originalResult = try await Subprocess.run(
+                                            configuration,
+                                            input: .fileDescriptor(readEnd, closeAfterSpawningProcess: true),
+                                            output: .fileDescriptor(writeEnd, closeAfterSpawningProcess: false),
+                                            error: .fileDescriptor(writeEnd, closeAfterSpawningProcess: false)
+                                        )
 
-                                            try writeEnd.close()
+                                        try writeEnd.close()
 
-                                            taskResult = PipelineTaskResult.success(i, SendableCollectedResult(CollectedResult<FileDescriptorOutput,DiscardedOutput>(
-                                                processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
-                                                terminationStatus: originalResult.terminationStatus,
-                                                standardOutput: (),
-                                                standardError: ()
-                                            )))
+                                        taskResult = PipelineTaskResult.success(
+                                            i,
+                                            SendableCollectedResult(
+                                                CollectedResult<FileDescriptorOutput, DiscardedOutput>(
+                                                    processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
+                                                    terminationStatus: originalResult.terminationStatus,
+                                                    standardOutput: (),
+                                                    standardError: ()
+                                                )))
                                     }
 
                                     return taskResult
@@ -624,27 +647,30 @@ extension PipeConfiguration {
                                         }
 
                                         for try await t in group {
-                                                if t != 0 {
-                                                    return t
-                                                }
+                                            if t != 0 {
+                                                return t
+                                            }
                                         }
 
                                         return 0
                                     }
 
-                                    return PipelineTaskResult.success(i, SendableCollectedResult(CollectedResult<FileDescriptorOutput,DiscardedOutput>(
-                                        processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
-                                        terminationStatus: .exited(result),
-                                        standardOutput: (),
-                                        standardError: ()
-                                    )))                        
+                                    return PipelineTaskResult.success(
+                                        i,
+                                        SendableCollectedResult(
+                                            CollectedResult<FileDescriptorOutput, DiscardedOutput>(
+                                                processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
+                                                terminationStatus: .exited(result),
+                                                standardOutput: (),
+                                                standardError: ()
+                                            )))
                                 }
                             } catch {
                                 return PipelineTaskResult.failure(i, error)
                             }
                         }
                     }
-                    
+
                     // Last process (if there are multiple stages)
                     if stages.count > 1 {
                         let lastIndex = stages.count - 1
@@ -671,22 +697,26 @@ extension PipeConfiguration {
                                             error: self.output
                                         )
 
-                                        let emptyError: Error.OutputType = if Error.OutputType.self == Void.self {
-                                            () as! Error.OutputType
-                                        } else if Error.OutputType.self == String?.self {
-                                            String?.none as! Error.OutputType
-                                        } else if Error.OutputType.self == [UInt8]?.self {
-                                            [UInt8]?.none as! Error.OutputType
-                                        } else {
-                                            fatalError()
-                                        }
+                                        let emptyError: Error.OutputType =
+                                            if Error.OutputType.self == Void.self {
+                                                () as! Error.OutputType
+                                            } else if Error.OutputType.self == String?.self {
+                                                String?.none as! Error.OutputType
+                                            } else if Error.OutputType.self == [UInt8]?.self {
+                                                [UInt8]?.none as! Error.OutputType
+                                            } else {
+                                                fatalError()
+                                            }
 
-                                        return PipelineTaskResult.success(lastIndex, SendableCollectedResult(CollectedResult<Output,Error>(
-                                            processIdentifier: finalResult.processIdentifier,
-                                            terminationStatus: finalResult.terminationStatus,
-                                            standardOutput: finalResult.standardError,
-                                            standardError: emptyError
-                                        )))
+                                        return PipelineTaskResult.success(
+                                            lastIndex,
+                                            SendableCollectedResult(
+                                                CollectedResult<Output, Error>(
+                                                    processIdentifier: finalResult.processIdentifier,
+                                                    terminationStatus: finalResult.terminationStatus,
+                                                    standardOutput: finalResult.standardError,
+                                                    standardError: emptyError
+                                                )))
                                     case .mergeWithStdout:
                                         let finalResult = try await Subprocess.run(
                                             configuration,
@@ -695,24 +725,28 @@ extension PipeConfiguration {
                                             error: self.output
                                         )
 
-                                        let emptyError: Error.OutputType = if Error.OutputType.self == Void.self {
-                                            () as! Error.OutputType
-                                        } else if Error.OutputType.self == String?.self {
-                                            String?.none as! Error.OutputType
-                                        } else if Error.OutputType.self == [UInt8]?.self {
-                                            [UInt8]?.none as! Error.OutputType
-                                        } else {
-                                            fatalError()
-                                        }
+                                        let emptyError: Error.OutputType =
+                                            if Error.OutputType.self == Void.self {
+                                                () as! Error.OutputType
+                                            } else if Error.OutputType.self == String?.self {
+                                                String?.none as! Error.OutputType
+                                            } else if Error.OutputType.self == [UInt8]?.self {
+                                                [UInt8]?.none as! Error.OutputType
+                                            } else {
+                                                fatalError()
+                                            }
 
                                         // Merge the different kinds of output types (string, fd, etc.)
                                         if Output.OutputType.self == Void.self {
-                                            return PipelineTaskResult.success(lastIndex, SendableCollectedResult(CollectedResult<Output,Error>(
-                                                processIdentifier: finalResult.processIdentifier,
-                                                terminationStatus: finalResult.terminationStatus,
-                                                standardOutput: () as! Output.OutputType,
-                                                standardError: finalResult.standardOutput as! Error.OutputType
-                                            )))
+                                            return PipelineTaskResult.success(
+                                                lastIndex,
+                                                SendableCollectedResult(
+                                                    CollectedResult<Output, Error>(
+                                                        processIdentifier: finalResult.processIdentifier,
+                                                        terminationStatus: finalResult.terminationStatus,
+                                                        standardOutput: () as! Output.OutputType,
+                                                        standardError: finalResult.standardOutput as! Error.OutputType
+                                                    )))
                                         } else if Output.OutputType.self == String?.self {
                                             let out: String? = finalResult.standardOutput as! String?
                                             let err: String? = finalResult.standardError as! String?
@@ -720,12 +754,15 @@ extension PipeConfiguration {
                                             let finalOutput = (out ?? "") + (err ?? "")
                                             // FIXME reduce the final output to the output.maxSize number of bytes
 
-                                            return PipelineTaskResult.success(lastIndex, SendableCollectedResult(CollectedResult<Output,Error>(
-                                                processIdentifier: finalResult.processIdentifier,
-                                                terminationStatus: finalResult.terminationStatus,
-                                                standardOutput: finalOutput as! Output.OutputType,
-                                                standardError: emptyError
-                                            )))                                    
+                                            return PipelineTaskResult.success(
+                                                lastIndex,
+                                                SendableCollectedResult(
+                                                    CollectedResult<Output, Error>(
+                                                        processIdentifier: finalResult.processIdentifier,
+                                                        terminationStatus: finalResult.terminationStatus,
+                                                        standardOutput: finalOutput as! Output.OutputType,
+                                                        standardError: emptyError
+                                                    )))
                                         } else if Output.OutputType.self == [UInt8].self {
                                             let out: [UInt8]? = finalResult.standardOutput as! [UInt8]?
                                             let err: [UInt8]? = finalResult.standardError as! [UInt8]?
@@ -735,12 +772,15 @@ extension PipeConfiguration {
                                                 finalOutput = [UInt8](finalOutput[...self.output.maxSize])
                                             }
 
-                                            return PipelineTaskResult.success(lastIndex, SendableCollectedResult(CollectedResult<Output,Error>(
-                                                processIdentifier: finalResult.processIdentifier,
-                                                terminationStatus: finalResult.terminationStatus,
-                                                standardOutput: finalOutput as! Output.OutputType,
-                                                standardError: emptyError
-                                            )))   
+                                            return PipelineTaskResult.success(
+                                                lastIndex,
+                                                SendableCollectedResult(
+                                                    CollectedResult<Output, Error>(
+                                                        processIdentifier: finalResult.processIdentifier,
+                                                        terminationStatus: finalResult.terminationStatus,
+                                                        standardOutput: finalOutput as! Output.OutputType,
+                                                        standardError: emptyError
+                                                    )))
                                         } else {
                                             fatalError()
                                         }
@@ -781,35 +821,38 @@ extension PipeConfiguration {
                                         var exitCode: Int32 = 0
                                         var output: Output.OutputType? = nil
                                         for try await r in group {
-                                                if r.0 != 0 {
-                                                    exitCode = r.0
-                                                }
+                                            if r.0 != 0 {
+                                                exitCode = r.0
+                                            }
 
-                                                if case (_, .standardOutputCaptured(let stdout)) = r {
-                                                    output = stdout
-                                                }
+                                            if case (_, .standardOutputCaptured(let stdout)) = r {
+                                                output = stdout
+                                            }
                                         }
 
                                         return (exitCode, output!)
                                     }
 
-                                    return PipelineTaskResult.success(lastIndex, SendableCollectedResult(CollectedResult<Output,DiscardedOutput>(
-                                        processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
-                                        terminationStatus: .exited(result.0),
-                                        standardOutput: result.1,
-                                        standardError: ()
-                                    )))
+                                    return PipelineTaskResult.success(
+                                        lastIndex,
+                                        SendableCollectedResult(
+                                            CollectedResult<Output, DiscardedOutput>(
+                                                processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
+                                                terminationStatus: .exited(result.0),
+                                                standardOutput: result.1,
+                                                standardError: ()
+                                            )))
                                 }
                             } catch {
                                 return PipelineTaskResult.failure(lastIndex, error)
                             }
                         }
                     }
-                    
+
                     // Collect all results
                     var errors: [Swift.Error] = []
                     var lastStageResult: SendableCollectedResult?
-                    
+
                     for try await result in group {
                         switch result {
                         case .success(let index, let collectedResult):
@@ -825,15 +868,15 @@ extension PipeConfiguration {
                     // Close the shared error pipe now that all processes have finished so that
                     // the standard error can be collected.
                     try sharedErrorPipe.writeEnd.close()
-                    
+
                     if !errors.isEmpty {
                         throw errors[0] // Throw the first error
                     }
-                    
+
                     guard let lastResult = lastStageResult else {
                         throw SubprocessError(code: .init(.asyncIOFailed("Pipeline execution failed")), underlyingError: nil)
                     }
-                    
+
                     // Create a properly typed CollectedResult from the SendableCollectedResult with shared error
                     return CollectedResult(
                         processIdentifier: lastResult.processIdentifier,
@@ -845,9 +888,9 @@ extension PipeConfiguration {
 
                 return .collectedResult(pipeResult)
             }
-        
+
             var stderr: Error.OutputType?
-            var collectedResult: CollectedResult<Output,DiscardedOutput>?
+            var collectedResult: CollectedResult<Output, DiscardedOutput>?
 
             for try await result in group {
                 switch result {
@@ -858,7 +901,7 @@ extension PipeConfiguration {
                 }
             }
 
-            return CollectedResult<Output,Error>(
+            return CollectedResult<Output, Error>(
                 processIdentifier: collectedResult!.processIdentifier,
                 terminationStatus: collectedResult!.terminationStatus,
                 standardOutput: collectedResult!.standardOutput,
@@ -879,14 +922,16 @@ public func pipe(
     platformOptions: PlatformOptions = PlatformOptions(),
     options: ProcessStageOptions = .default
 ) -> [PipeStage] {
-    return [PipeStage(
-        executable: executable,
-        arguments: arguments,
-        environment: environment,
-        workingDirectory: workingDirectory,
-        platformOptions: platformOptions,
-        options: options
-    )]
+    return [
+        PipeStage(
+            executable: executable,
+            arguments: arguments,
+            environment: environment,
+            workingDirectory: workingDirectory,
+            platformOptions: platformOptions,
+            options: options
+        )
+    ]
 }
 
 /// Create a single-stage pipeline with a Configuration
@@ -907,7 +952,7 @@ public func pipe(
 // MARK: - Stage Array Operators
 
 /// Pipe operator for stage arrays - adds a process stage
-public func |(
+public func | (
     left: [PipeStage],
     right: PipeStage
 ) -> [PipeStage] {
@@ -915,7 +960,7 @@ public func |(
 }
 
 /// Pipe operator for stage arrays with Configuration
-public func |(
+public func | (
     left: [PipeStage],
     right: Configuration
 ) -> [PipeStage] {
@@ -923,7 +968,7 @@ public func |(
 }
 
 /// Pipe operator for stage arrays with simple executable
-public func |(
+public func | (
     left: [PipeStage],
     right: Executable
 ) -> [PipeStage] {
@@ -932,7 +977,7 @@ public func |(
 }
 
 /// Pipe operator for stage arrays with Swift function
-public func |(
+public func | (
     left: [PipeStage],
     right: @escaping @Sendable (AsyncBufferSequence, StandardInputWriter, StandardInputWriter) async throws -> Int32
 ) -> [PipeStage] {
@@ -940,7 +985,7 @@ public func |(
 }
 
 /// Pipe operator for stage arrays with process helper
-public func |(
+public func | (
     left: [PipeStage],
     right: (configuration: Configuration, options: ProcessStageOptions)
 ) -> [PipeStage] {
@@ -963,7 +1008,7 @@ extension Array where Element == PipeStage {
             error: error
         )
     }
-    
+
     /// Create a PipeConfiguration from stages with no input and specific output and error types
     public func finally<FinalOutput: OutputProtocol, FinalError: OutputProtocol>(
         output: FinalOutput,
@@ -971,7 +1016,7 @@ extension Array where Element == PipeStage {
     ) -> PipeConfiguration<NoInput, FinalOutput, FinalError> {
         return self.finally(input: NoInput(), output: output, error: error)
     }
-    
+
     /// Create a PipeConfiguration from stages with no input, specific output, and discarded error
     public func finally<FinalOutput: OutputProtocol>(
         output: FinalOutput
@@ -981,7 +1026,7 @@ extension Array where Element == PipeStage {
 }
 
 /// Final pipe operator for stage arrays with specific input, output and error types
-public func |><FinalInput: InputProtocol, FinalOutput: OutputProtocol, FinalError: OutputProtocol>(
+public func |> <FinalInput: InputProtocol, FinalOutput: OutputProtocol, FinalError: OutputProtocol>(
     left: [PipeStage],
     right: (input: FinalInput, output: FinalOutput, error: FinalError)
 ) -> PipeConfiguration<FinalInput, FinalOutput, FinalError> {
@@ -989,7 +1034,7 @@ public func |><FinalInput: InputProtocol, FinalOutput: OutputProtocol, FinalErro
 }
 
 /// Final pipe operator for stage arrays with specific output and error types
-public func |><FinalOutput: OutputProtocol, FinalError: OutputProtocol>(
+public func |> <FinalOutput: OutputProtocol, FinalError: OutputProtocol>(
     left: [PipeStage],
     right: (output: FinalOutput, error: FinalError)
 ) -> PipeConfiguration<NoInput, FinalOutput, FinalError> {
@@ -997,7 +1042,7 @@ public func |><FinalOutput: OutputProtocol, FinalError: OutputProtocol>(
 }
 
 /// Final pipe operator for stage arrays with specific output only (discarded error)
-public func |><FinalOutput: OutputProtocol>(
+public func |> <FinalOutput: OutputProtocol>(
     left: [PipeStage],
     right: FinalOutput
 ) -> PipeConfiguration<NoInput, FinalOutput, DiscardedOutput> {
@@ -1037,4 +1082,3 @@ public func withOptions(
 public func swiftFunction(_ function: @escaping @Sendable (AsyncBufferSequence, StandardInputWriter, StandardInputWriter) async throws -> Int32) -> @Sendable (AsyncBufferSequence, StandardInputWriter, StandardInputWriter) async throws -> Int32 {
     return function
 }
-
