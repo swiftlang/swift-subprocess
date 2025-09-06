@@ -285,9 +285,9 @@ private func currentProcessIdentifier() -> ProcessIdentifier {
 
 private func createIODescriptor(from fd: FileDescriptor, closeWhenDone: Bool) -> IODescriptor {
     #if canImport(WinSDK)
-    let errorReadFileDescriptor = IODescriptor(HANDLE(bitPattern: _get_osfhandle(fd.rawValue))!, closeWhenDone: closeWhenDone)
+    return IODescriptor(HANDLE(bitPattern: _get_osfhandle(fd.rawValue))!, closeWhenDone: closeWhenDone)
     #else
-    let errorReadFileDescriptor = IODescriptor(fd, closeWhenDone: closeWhenDone)
+    return IODescriptor(fd, closeWhenDone: closeWhenDone)
     #endif
 }
 
