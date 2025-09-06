@@ -76,7 +76,7 @@ public struct ProcessStageOptions: Sendable {
 public struct PipeStage: Sendable {
     enum StageType: Sendable {
         case process(configuration: Configuration, options: ProcessStageOptions)
-        case swiftFunction(@Sendable (AsyncBufferSequence, StandardInputWriter, StandardInputWriter) async throws -> Int32)
+        case swiftFunction(@Sendable (AsyncBufferSequence, StandardInputWriter, StandardInputWriter) async throws -> UInt32)
     }
 
     let stageType: StageType
@@ -110,7 +110,7 @@ public struct PipeStage: Sendable {
 
     /// Create a PipeStage from a Swift function
     public init(
-        swiftFunction: @escaping @Sendable (AsyncBufferSequence, StandardInputWriter, StandardInputWriter) async throws -> Int32
+        swiftFunction: @escaping @Sendable (AsyncBufferSequence, StandardInputWriter, StandardInputWriter) async throws -> UInt32
     ) {
         self.stageType = .swiftFunction(swiftFunction)
     }
@@ -243,7 +243,7 @@ extension PipeConfiguration where Input == NoInput, Output == DiscardedOutput, E
     /// Initialize a PipeConfiguration with a Swift function
     /// I/O defaults to discarded until finalized with `finally`
     public init(
-        swiftFunction: @escaping @Sendable (AsyncBufferSequence, StandardInputWriter, StandardInputWriter) async throws -> Int32
+        swiftFunction: @escaping @Sendable (AsyncBufferSequence, StandardInputWriter, StandardInputWriter) async throws -> UInt32
     ) {
         self.stages = [PipeStage(swiftFunction: swiftFunction)]
         self.input = NoInput()
@@ -524,7 +524,7 @@ extension PipeConfiguration {
                                     let errorWriteFileDescriptor = createIODescriptor(from: sharedErrorPipe.writeEnd, closeWhenDone: false)
                                     var errorWriteEnd: IOChannel? = errorWriteFileDescriptor.createIOChannel()
 
-                                    let result = try await withThrowingTaskGroup(of: Int32.self) { group in
+                                    let result = try await withThrowingTaskGroup(of: UInt32.self) { group in
                                         let inputReadEnd = inputReadEnd.take()!
                                         let outputWriteEnd = outputWriteEnd.take()!
                                         let errorWriteEnd = errorWriteEnd.take()!
@@ -560,12 +560,18 @@ extension PipeConfiguration {
                                         return 0
                                     }
 
+                                    #if canImport(WinSD)
+                                    let terminationStatus: TerminationStatus = .exited(result)
+                                    #else
+                                    let terminationStatus: TerminationStatus = .exited(Int32(result))
+                                    #endif
+
                                     return PipelineTaskResult.success(
                                         0,
                                         SendableCollectedResult(
                                             CollectedResult<FileDescriptorOutput, DiscardedOutput>(
                                                 processIdentifier: currentProcessIdentifier(),
-                                                terminationStatus: .exited(result),
+                                                terminationStatus: terminationStatus,
                                                 standardOutput: (),
                                                 standardError: ()
                                             )))
@@ -962,7 +968,7 @@ public func pipe(
 
 /// Create a single-stage pipeline with a Swift function
 public func pipe(
-    swiftFunction: @escaping @Sendable (AsyncBufferSequence, StandardInputWriter, StandardInputWriter) async throws -> Int32
+    swiftFunction: @escaping @Sendable (AsyncBufferSequence, StandardInputWriter, StandardInputWriter) async throws -> UInt32
 ) -> [PipeStage] {
     return [PipeStage(swiftFunction: swiftFunction)]
 }
@@ -997,7 +1003,7 @@ public func | (
 /// Pipe operator for stage arrays with Swift function
 public func | (
     left: [PipeStage],
-    right: @escaping @Sendable (AsyncBufferSequence, StandardInputWriter, StandardInputWriter) async throws -> Int32
+    right: @escaping @Sendable (AsyncBufferSequence, StandardInputWriter, StandardInputWriter) async throws -> UInt32
 ) -> [PipeStage] {
     return left + [PipeStage(swiftFunction: right)]
 }
