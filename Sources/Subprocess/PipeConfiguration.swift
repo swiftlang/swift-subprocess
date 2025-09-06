@@ -273,6 +273,16 @@ internal struct SendableCollectedResult: @unchecked Sendable {
     }
 }
 
+private func currentProcessIdentifier() -> ProcessIdentifier {
+    #if os(macOS)
+    return .init(value: ProcessInfo.processInfo.processIdentifier)
+    #elseif canImport(Glibc) || canImport(Android) || canImport(Musl)
+    return .init(value: ProcessInfo.processInfo.processIdentifier, processDescriptor: -1)
+    #elseif os(Windows)
+    return .init(value: ProcessInfo.processInfo.processIdentifier, processDescriptor: nil, threadHandle: nil)
+    #endif
+}
+
 // MARK: - Internal Functions
 
 extension PipeConfiguration {
@@ -446,7 +456,7 @@ extension PipeConfiguration {
                                             0,
                                             SendableCollectedResult(
                                                 CollectedResult<FileDescriptorOutput, DiscardedOutput>(
-                                                    processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
+                                                    processIdentifier: originalResult.processIdentifier,
                                                     terminationStatus: originalResult.terminationStatus,
                                                     standardOutput: (),
                                                     standardError: ()
@@ -463,7 +473,7 @@ extension PipeConfiguration {
                                             0,
                                             SendableCollectedResult(
                                                 CollectedResult<FileDescriptorOutput, DiscardedOutput>(
-                                                    processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
+                                                    processIdentifier: originalResult.processIdentifier,
                                                     terminationStatus: originalResult.terminationStatus,
                                                     standardOutput: (),
                                                     standardError: ()
@@ -482,7 +492,7 @@ extension PipeConfiguration {
                                             0,
                                             SendableCollectedResult(
                                                 CollectedResult<FileDescriptorOutput, DiscardedOutput>(
-                                                    processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
+                                                    processIdentifier: originalResult.processIdentifier,
                                                     terminationStatus: originalResult.terminationStatus,
                                                     standardOutput: (),
                                                     standardError: ()
@@ -546,7 +556,7 @@ extension PipeConfiguration {
                                         0,
                                         SendableCollectedResult(
                                             CollectedResult<FileDescriptorOutput, DiscardedOutput>(
-                                                processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
+                                                processIdentifier: currentProcessIdentifier(),
                                                 terminationStatus: .exited(result),
                                                 standardOutput: (),
                                                 standardError: ()
@@ -581,7 +591,7 @@ extension PipeConfiguration {
                                             i,
                                             SendableCollectedResult(
                                                 CollectedResult<FileDescriptorOutput, DiscardedOutput>(
-                                                    processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
+                                                    processIdentifier: originalResult.processIdentifier,
                                                     terminationStatus: originalResult.terminationStatus,
                                                     standardOutput: (),
                                                     standardError: ()
@@ -598,7 +608,7 @@ extension PipeConfiguration {
                                             i,
                                             SendableCollectedResult(
                                                 CollectedResult<FileDescriptorOutput, DiscardedOutput>(
-                                                    processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
+                                                    processIdentifier: originalResult.processIdentifier,
                                                     terminationStatus: originalResult.terminationStatus,
                                                     standardOutput: (),
                                                     standardError: ()
@@ -617,7 +627,7 @@ extension PipeConfiguration {
                                             i,
                                             SendableCollectedResult(
                                                 CollectedResult<FileDescriptorOutput, DiscardedOutput>(
-                                                    processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
+                                                    processIdentifier: originalResult.processIdentifier,
                                                     terminationStatus: originalResult.terminationStatus,
                                                     standardOutput: (),
                                                     standardError: ()
@@ -659,7 +669,7 @@ extension PipeConfiguration {
                                         i,
                                         SendableCollectedResult(
                                             CollectedResult<FileDescriptorOutput, DiscardedOutput>(
-                                                processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
+                                                processIdentifier: currentProcessIdentifier(),
                                                 terminationStatus: .exited(result),
                                                 standardOutput: (),
                                                 standardError: ()
@@ -837,7 +847,7 @@ extension PipeConfiguration {
                                         lastIndex,
                                         SendableCollectedResult(
                                             CollectedResult<Output, DiscardedOutput>(
-                                                processIdentifier: .init(value: ProcessInfo.processInfo.processIdentifier),
+                                                processIdentifier: currentProcessIdentifier(),
                                                 terminationStatus: .exited(result.0),
                                                 standardOutput: result.1,
                                                 standardError: ()
