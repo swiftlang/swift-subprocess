@@ -373,7 +373,7 @@ struct PipeConfigurationTests {
         }
 
         // Open file descriptor for reading
-        let fileDescriptor = try FileDescriptor.open(tempURL.path, .readOnly)
+        let fileDescriptor = try FileDescriptor.open(FilePath(tempURL.path), .readOnly)
         defer {
             try? fileDescriptor.close()
         }
@@ -411,7 +411,7 @@ struct PipeConfigurationTests {
         }
 
         // Open file descriptor for reading
-        let fileDescriptor = try FileDescriptor.open(tempURL.path, .readOnly)
+        let fileDescriptor = try FileDescriptor.open(FilePath(tempURL.path), .readOnly)
         defer {
             try? fileDescriptor.close()
         }
