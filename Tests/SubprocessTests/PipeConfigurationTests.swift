@@ -19,6 +19,197 @@ import Foundation
 import Testing
 @testable import Subprocess
 
+// MARK: - Cross-Platform Command Abstractions
+
+/// Cross-platform echo command abstraction
+struct Echo {
+    let message: String
+
+    init(_ message: String) {
+        self.message = message
+    }
+
+    var configuration: Configuration {
+        #if os(Windows)
+        return Configuration(
+            executable: .name("cmd.exe"),
+            arguments: Arguments(["/c", "echo", message])
+        )
+        #else
+        return Configuration(
+            executable: .name("echo"),
+            arguments: Arguments([message])
+        )
+        #endif
+    }
+}
+
+/// Cross-platform cat command abstraction
+struct Cat {
+    let arguments: [String]
+
+    init(_ arguments: String...) {
+        self.arguments = arguments
+    }
+
+    var configuration: Configuration {
+        #if os(Windows)
+        return Configuration(
+            executable: .name("cmd.exe"),
+            arguments: Arguments(["/c", "findstr x*"])
+        )
+        #else
+        return Configuration(
+            executable: .name("cat"),
+            arguments: Arguments(arguments)
+        )
+        #endif
+    }
+}
+
+/// Cross-platform wc command abstraction
+struct Wc {
+    let options: [String]
+
+    init(_ options: String...) {
+        self.options = options
+    }
+
+    var configuration: Configuration {
+        #if os(Windows)
+        // Windows doesn't have wc, use PowerShell for basic counting
+        if options.contains("-l") {
+            return Configuration(
+                executable: .name("powershell.exe"),
+                arguments: Arguments(["-Command", "(Get-Content -Raw | Measure-Object -Line).Lines"])
+            )
+        } else if options.contains("-w") {
+            return Configuration(
+                executable: .name("powershell.exe"),
+                arguments: Arguments(["-Command", "(Get-Content -Raw | Measure-Object -Word).Words"])
+            )
+        } else if options.contains("-c") {
+            return Configuration(
+                executable: .name("powershell.exe"),
+                arguments: Arguments(["-Command", "(Get-Content -Raw | Measure-Object -Character).Characters"])
+            )
+        } else {
+            return Configuration(
+                executable: .name("powershell.exe"),
+                arguments: Arguments(["-Command", "Get-Content -Raw | Measure-Object -Line -Word -Character"])
+            )
+        }
+        #else
+        return Configuration(
+            executable: .name("wc"),
+            arguments: Arguments(options)
+        )
+        #endif
+    }
+}
+
+/// Cross-platform sort command abstraction
+struct Sort {
+    let options: [String]
+
+    init(_ options: String...) {
+        self.options = options
+    }
+
+    var configuration: Configuration {
+        #if os(Windows)
+        return Configuration(
+            executable: .name("sort"),
+            arguments: Arguments(options)
+        )
+        #else
+        return Configuration(
+            executable: .name("sort"),
+            arguments: Arguments(options)
+        )
+        #endif
+    }
+}
+
+/// Cross-platform head command abstraction
+struct Head {
+    let options: [String]
+
+    init(_ options: String...) {
+        self.options = options
+    }
+
+    var configuration: Configuration {
+        #if os(Windows)
+        if let countOption = options.first, countOption.hasPrefix("-") {
+            let count = String(countOption.dropFirst())
+            return Configuration(
+                executable: .name("powershell.exe"),
+                arguments: Arguments(["-Command", "Get-Content | Select-Object -First \(count)"])
+            )
+        } else {
+            return Configuration(
+                executable: .name("powershell.exe"),
+                arguments: Arguments(["-Command", "Get-Content | Select-Object -First 10"])
+            )
+        }
+        #else
+        return Configuration(
+            executable: .name("head"),
+            arguments: Arguments(options)
+        )
+        #endif
+    }
+}
+
+/// Cross-platform grep command abstraction
+struct Grep {
+    let pattern: String
+    let options: [String]
+
+    init(_ pattern: String, options: String...) {
+        self.pattern = pattern
+        self.options = options
+    }
+
+    var configuration: Configuration {
+        #if os(Windows)
+        return Configuration(
+            executable: .name("findstr"),
+            arguments: Arguments([pattern] + options)
+        )
+        #else
+        return Configuration(
+            executable: .name("grep"),
+            arguments: Arguments([pattern] + options)
+        )
+        #endif
+    }
+}
+
+/// Cross-platform shell command abstraction
+struct Shell {
+    let command: String
+
+    init(_ command: String) {
+        self.command = command
+    }
+
+    var configuration: Configuration {
+        #if os(Windows)
+        return Configuration(
+            executable: .name("cmd.exe"),
+            arguments: Arguments(["/c", command])
+        )
+        #else
+        return Configuration(
+            executable: .name("sh"),
+            arguments: Arguments(["-c", command])
+        )
+        #endif
+    }
+}
+
 @Suite(.serialized)
 struct PipeConfigurationTests {
 
@@ -26,8 +217,7 @@ struct PipeConfigurationTests {
 
     @Test func testBasicPipeConfiguration() async throws {
         let config = pipe(
-            executable: .name("echo"),
-            arguments: ["Hello World"]
+            configuration: Echo("Hello World").configuration
         ).finally(
             input: NoInput(),
             output: .string(limit: .max),
@@ -35,7 +225,7 @@ struct PipeConfigurationTests {
         )
 
         let result = try await config.run()
-        #expect(result.standardOutput?.trimmingCharacters(in: .whitespacesAndNewlines) == "Hello World")
+        #expect(result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) == "Hello World")
         #expect(result.terminationStatus.isSuccess)
     }
 
@@ -60,7 +250,7 @@ struct PipeConfigurationTests {
                     return 1
                 }
                 return 0
-            } | .name("cat")
+            } | Cat().configuration
             |> (
                 input: .string("Hello"),
                 output: .string(limit: .max),
@@ -68,15 +258,14 @@ struct PipeConfigurationTests {
             )
 
         let result = try await config.run()
-        #expect(result.standardOutput?.trimmingCharacters(in: .whitespacesAndNewlines) == "Hello World")
+        #expect(result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) == "Hello World")
         #expect(result.terminationStatus.isSuccess)
     }
 
     @Test func testBasicSwiftFunctionMiddle() async throws {
         let config =
             pipe(
-                executable: .name("echo"),
-                arguments: ["Hello"]
+                configuration: Echo("Hello").configuration
             ) | { input, output, error in
                 var foundHello = false
                 for try await line in input.lines() {
@@ -94,22 +283,21 @@ struct PipeConfigurationTests {
                     return 1
                 }
                 return 0
-            } | .name("cat")
+            } | Cat().configuration
             |> (
                 output: .string(limit: .max),
                 error: .string(limit: .max)
             )
 
         let result = try await config.run()
-        #expect(result.standardOutput?.trimmingCharacters(in: .whitespacesAndNewlines) == "Hello World")
+        #expect(result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) == "Hello World")
         #expect(result.terminationStatus.isSuccess)
     }
 
     @Test func testBasicSwiftFunctionEnd() async throws {
         let config =
             pipe(
-                executable: .name("echo"),
-                arguments: ["Hello"]
+                configuration: Echo("Hello").configuration
             ) | { input, output, error in
                 var foundHello = false
                 for try await line in input.lines() {
@@ -130,16 +318,13 @@ struct PipeConfigurationTests {
             } |> .string(limit: .max)
 
         let result = try await config.run()
-        #expect(result.standardOutput?.trimmingCharacters(in: .whitespacesAndNewlines) == "Hello World")
+        #expect(result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) == "Hello World")
         #expect(result.terminationStatus.isSuccess)
     }
     #endif
 
     @Test func testPipeConfigurationWithConfiguration() async throws {
-        let configuration = Configuration(
-            executable: .name("echo"),
-            arguments: ["Test Message"]
-        )
+        let configuration = Echo("Test Message").configuration
 
         let processConfig =
             pipe(
@@ -147,7 +332,7 @@ struct PipeConfigurationTests {
             ) |> .string(limit: .max)
 
         let result = try await processConfig.run()
-        #expect(result.standardOutput?.trimmingCharacters(in: .whitespacesAndNewlines) == "Test Message")
+        #expect(result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) == "Test Message")
         #expect(result.terminationStatus.isSuccess)
     }
 
@@ -156,34 +341,27 @@ struct PipeConfigurationTests {
     @Test func testPipeMethod() async throws {
         let pipeline =
             pipe(
-                executable: .name("echo"),
-                arguments: ["line1\nline2\nline3"]
+                configuration: Echo("line1\nline2\nline3").configuration
             )
-            | process(
-                executable: .name("wc"),
-                arguments: ["-l"]
-            ) |> .string(limit: .max)
+            | Wc("-l").configuration
+            |> .string(limit: .max)
 
         let result = try await pipeline.run()
-        let lineCount = result.standardOutput?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lineCount = result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
         #expect(lineCount == "3")
         #expect(result.terminationStatus.isSuccess)
     }
 
     @Test func testPipeMethodWithConfiguration() async throws {
-        let wcConfig = Configuration(
-            executable: .name("wc"),
-            arguments: ["-l"]
-        )
+        let wcConfig = Wc("-l").configuration
 
         let pipeline =
             pipe(
-                executable: .name("echo"),
-                arguments: ["apple\nbanana\ncherry"]
+                configuration: Echo("apple\nbanana\ncherry").configuration
             ) | wcConfig |> .string(limit: .max)
 
         let result = try await pipeline.run()
-        let lineCount = result.standardOutput?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lineCount = result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
         #expect(lineCount == "3")
         #expect(result.terminationStatus.isSuccess)
     }
@@ -193,10 +371,9 @@ struct PipeConfigurationTests {
     @Test func testBasicPipeOperator() async throws {
         let pipeline =
             pipe(
-                executable: .name("echo"),
-                arguments: ["Hello\nWorld\nTest"]
-            ) | .name("wc")
-            | .name("cat")
+                configuration: Echo("Hello\nWorld\nTest").configuration
+            ) | Wc().configuration
+            | Cat().configuration
             |> .string(limit: .max)
 
         let result = try await pipeline.run()
@@ -208,36 +385,30 @@ struct PipeConfigurationTests {
     @Test func testPipeOperatorWithExecutableOnly() async throws {
         let pipeline =
             pipe(
-                executable: .name("echo"),
-                arguments: ["single line"]
-            ) | .name("cat") // Simple pass-through
-            | process(
-                executable: .name("wc"),
-                arguments: ["-c"] // Count characters
-            ) |> .string(limit: .max)
+                configuration: Echo("single line").configuration
+            ) | Cat().configuration // Simple pass-through
+            | Wc("-c").configuration // Count characters
+            |> .string(limit: .max)
 
         let result = try await pipeline.run()
         // Should count characters in "single line\n" (12 characters)
-        let charCount = result.standardOutput?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let charCount = result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
         #expect(charCount == "12")
         #expect(result.terminationStatus.isSuccess)
     }
 
     @Test func testPipeOperatorWithConfiguration() async throws {
-        let catConfig = Configuration(executable: .name("cat"))
+        let catConfig = Cat().configuration
 
         let pipeline =
             pipe(
-                executable: .name("echo"),
-                arguments: ["test data"]
+                configuration: Echo("test data").configuration
             ) | catConfig
-            | process(
-                executable: .name("wc"),
-                arguments: ["-w"] // Count words
-            ) |> .string(limit: .max)
+            | Wc("-w").configuration // Count words
+            |> .string(limit: .max)
 
         let result = try await pipeline.run()
-        let wordCount = result.standardOutput?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let wordCount = result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
         #expect(wordCount == "2") // "test data" = 2 words
         #expect(result.terminationStatus.isSuccess)
     }
@@ -258,7 +429,7 @@ struct PipeConfigurationTests {
             ) |> .string(limit: .max)
 
         let result = try await pipeline.run()
-        let lineCount = result.standardOutput?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lineCount = result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
         #expect(lineCount == "3")
         #expect(result.terminationStatus.isSuccess)
     }
@@ -281,7 +452,7 @@ struct PipeConfigurationTests {
 
         let result = try await pipeline.run()
         // Should have some lines (exact count depends on head default)
-        let lineCount = Int(result.standardOutput?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "0") ?? 0
+        let lineCount = Int(result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) ?? "0") ?? 0
         #expect(lineCount > 0)
         #expect(result.terminationStatus.isSuccess)
     }
@@ -291,19 +462,17 @@ struct PipeConfigurationTests {
     @Test func testPipelineWithStringInput() async throws {
         let pipeline =
             pipe(
-                executable: .name("cat")
+                configuration: Cat().configuration
             )
-            | process(
-                executable: .name("wc"),
-                arguments: ["-w"] // Count words
-            ) |> (
+            | Wc("-w").configuration // Count words
+            |> (
                 input: .string("Hello world from string input"),
                 output: .string(limit: .max),
                 error: .discarded
             )
 
         let result = try await pipeline.run()
-        let wordCount = result.standardOutput?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let wordCount = result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
         #expect(wordCount == "5") // "Hello world from string input" = 5 words
         #expect(result.terminationStatus.isSuccess)
     }
@@ -322,7 +491,7 @@ struct PipeConfigurationTests {
                     let written = try await output.write(countString)
                     return written > 0 ? 0 : 1
                 }
-            ) | .name("cat")
+            ) | Cat().configuration
             |> (
                 input: .string("Swift functions can process string input efficiently"),
                 output: .string(limit: .max),
@@ -393,7 +562,7 @@ struct PipeConfigurationTests {
             )
 
         let result = try await pipeline.run()
-        let lineCount = result.standardOutput?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lineCount = result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
         #expect(lineCount == "3") // head -3 should give us 3 lines
         #expect(result.terminationStatus.isSuccess)
     }
@@ -437,7 +606,7 @@ struct PipeConfigurationTests {
                         let written = try await output.write(summary)
                         return written > 0 ? 0 : 1
                     } catch {
-                        try await err.write("JSON parsing failed: \(error)")
+                        _ = try await err.write("JSON parsing failed: \(error)")
                         return 1
                     }
                 }
@@ -464,7 +633,7 @@ struct PipeConfigurationTests {
                     var lineCount = 0
                     for try await line in input.lines() {
                         lineCount += 1
-                        let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let trimmedLine = line.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
 
                         // Skip header line
                         if lineCount == 1 {
@@ -506,7 +675,7 @@ struct PipeConfigurationTests {
                 swiftFunction: { input, output, err in
                     // First Swift function: filter for numbers > 10
                     for try await line in input.lines() {
-                        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let trimmed = line.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
                         if !trimmed.isEmpty, let number = Int(trimmed), number > 10 {
                             _ = try await output.write("\(number)\n")
                         }
@@ -516,7 +685,7 @@ struct PipeConfigurationTests {
             ) | { input, output, err in
                 // Second Swift function: double the numbers
                 for try await line in input.lines() {
-                    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let trimmed = line.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
                     if !trimmed.isEmpty, let number = Int(trimmed) {
                         let doubled = number * 2
                         _ = try await output.write("\(doubled)\n")
@@ -535,7 +704,7 @@ struct PipeConfigurationTests {
         let result = try await pipeline.run()
         let output = result.standardOutput ?? ""
         let lines = output.split(separator: "\n").compactMap { line in
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmed = line.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : Int(trimmed)
         }
 
@@ -561,13 +730,10 @@ struct PipeConfigurationTests {
     @Test func testSharedErrorHandlingInPipeline() async throws {
         let pipeline =
             pipe(
-                executable: .name("sh"),
-                arguments: ["-c", "echo 'first stdout'; echo 'first stderr' >&2"]
+                configuration: Shell("echo 'first stdout'; echo 'first stderr' >&2").configuration
             )
-            | process(
-                executable: .name("sh"),
-                arguments: ["-c", "echo 'second stdout'; echo 'second stderr' >&2"]
-            ) |> (
+            | Shell("echo 'second stdout'; echo 'second stderr' >&2").configuration
+            |> (
                 output: .string(limit: .max),
                 error: .string(limit: .max)
             )
@@ -706,7 +872,7 @@ struct PipeConfigurationTests {
 
         let result = try await pipeline.run()
         // Should find the error line that was merged into stdout
-        let lineCount = result.standardOutput?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lineCount = result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
         #expect(lineCount == "1")
         #expect(result.terminationStatus.isSuccess)
     }
@@ -727,7 +893,7 @@ struct PipeConfigurationTests {
 
         let result = try await pipeline.run()
         // Should count characters in "data\n" (5 characters)
-        let charCount = result.standardOutput?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let charCount = result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
         #expect(charCount == "5")
         #expect(result.terminationStatus.isSuccess)
     }
@@ -786,7 +952,7 @@ struct PipeConfigurationTests {
             ) | .name("cat") |> .string(limit: .max)
 
         let result = try await pipeline.run()
-        #expect(result.standardOutput?.trimmingCharacters(in: .whitespacesAndNewlines) == "helper test")
+        #expect(result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) == "helper test")
         #expect(result.terminationStatus.isSuccess)
     }
 
@@ -806,7 +972,7 @@ struct PipeConfigurationTests {
 
         let result = try await pipeline.run()
         // "process helper test\n" should be 20 characters
-        let charCount = result.standardOutput?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let charCount = result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
         #expect(charCount == "20")
         #expect(result.terminationStatus.isSuccess)
     }
@@ -849,7 +1015,7 @@ struct PipeConfigurationTests {
                         let written = try await output.write(jsonString)
                         return written > 0 ? 0 : 1
                     } catch {
-                        try await err.write("JSON encoding failed: \(error)")
+                        _ = try await err.write("JSON encoding failed: \(error)")
                         return 1
                     }
                 }
@@ -898,7 +1064,7 @@ struct PipeConfigurationTests {
                     let written = try await output.write(usernames)
                     return written > 0 ? 0 : 1
                 } catch {
-                    try await err.write("JSON decoding failed: \(error)")
+                    _ = try await err.write("JSON decoding failed: \(error)")
                     return 1
                 }
             } | .name("sort")
@@ -953,7 +1119,7 @@ struct PipeConfigurationTests {
                     let written = try await output.write(jsonString)
                     return written > 0 ? 0 : 1
                 } catch {
-                    try await err.write("JSON transformation failed: \(error)")
+                    _ = try await err.write("JSON transformation failed: \(error)")
                     return 1
                 }
             } |> (
@@ -1044,7 +1210,7 @@ struct PipeConfigurationTests {
                         recordCount += 1
                     } catch {
                         // Log parsing errors but continue
-                        try await err.write("Failed to parse line: \(line)\n")
+                        _ = try await err.write("Failed to parse line: \(line)\n")
                     }
                 }
 
@@ -1063,7 +1229,7 @@ struct PipeConfigurationTests {
                     let written = try await output.write(jsonString)
                     return written > 0 ? 0 : 1
                 } catch {
-                    try await err.write("Failed to encode summary: \(error)")
+                    _ = try await err.write("Failed to encode summary: \(error)")
                     return 1
                 }
             } |> (
