@@ -283,6 +283,14 @@ private func currentProcessIdentifier() -> ProcessIdentifier {
     #endif
 }
 
+private func createIODescriptor(from fd: FileDescriptor, closeWhenDone: Bool) -> IODescriptor {
+    #if canImport(WinSDK)
+    let errorReadFileDescriptor = IODescriptor(HANDLE(bitPattern: _get_osfhandle(fd.rawValue))!, closeWhenDone: closeWhenDone)
+    #else
+    let errorReadFileDescriptor = IODescriptor(fd, closeWhenDone: closeWhenDone)
+    #endif
+}
+
 // MARK: - Internal Functions
 
 extension PipeConfiguration {
@@ -415,7 +423,7 @@ extension PipeConfiguration {
         return try await withThrowingTaskGroup(of: CollectedPipeResult.self, returning: CollectedResult<Output, Error>.self) { group in
             // Collect error output from all stages
             group.addTask {
-                let errorReadFileDescriptor = IODescriptor(sharedErrorPipe.readEnd, closeWhenDone: true)
+                let errorReadFileDescriptor = createIODescriptor(from: sharedErrorPipe.readEnd, closeWhenDone: true)
                 let errorReadEnd = errorReadFileDescriptor.createIOChannel()
 
                 let stderr = try await self.error.captureOutput(from: errorReadEnd)
@@ -509,11 +517,11 @@ extension PipeConfiguration {
                                     var inputReadEnd = inputReadFileDescriptor?.createIOChannel()
                                     var inputWriteEnd: IOChannel? = inputWriteFileDescriptor.take()?.createIOChannel()
 
-                                    let outputWriteFileDescriptor = IODescriptor(writeEnd, closeWhenDone: true)
+                                    let outputWriteFileDescriptor = createIODescriptor(from: writeEnd, closeWhenDone: true)
                                     var outputWriteEnd: IOChannel? = outputWriteFileDescriptor.createIOChannel()
 
                                     // Use shared error pipe instead of discarded
-                                    let errorWriteFileDescriptor = IODescriptor(sharedErrorPipe.writeEnd, closeWhenDone: false)
+                                    let errorWriteFileDescriptor = createIODescriptor(from: sharedErrorPipe.writeEnd, closeWhenDone: false)
                                     var errorWriteEnd: IOChannel? = errorWriteFileDescriptor.createIOChannel()
 
                                     let result = try await withThrowingTaskGroup(of: Int32.self) { group in
@@ -636,14 +644,14 @@ extension PipeConfiguration {
 
                                     return taskResult
                                 case .swiftFunction(let function):
-                                    let inputReadFileDescriptor = IODescriptor(readEnd, closeWhenDone: true)
+                                    let inputReadFileDescriptor = createIODescriptor(from: readEnd, closeWhenDone: true)
                                     var inputReadEnd: IOChannel? = inputReadFileDescriptor.createIOChannel()
 
-                                    let outputWriteFileDescriptor = IODescriptor(writeEnd, closeWhenDone: true)
+                                    let outputWriteFileDescriptor = createIODescriptor(from: writeEnd, closeWhenDone: true)
                                     var outputWriteEnd: IOChannel? = outputWriteFileDescriptor.createIOChannel()
 
                                     // Use shared error pipe instead of discarded
-                                    let errorWriteFileDescriptor = IODescriptor(sharedErrorPipe.writeEnd, closeWhenDone: false)
+                                    let errorWriteFileDescriptor: IODescriptor = createIODescriptor(from: sharedErrorPipe.writeEnd, closeWhenDone: false)
                                     var errorWriteEnd: IOChannel? = errorWriteFileDescriptor.createIOChannel()
 
                                     let result = try await withThrowingTaskGroup(of: Int32.self) { group in
@@ -796,7 +804,7 @@ extension PipeConfiguration {
                                         }
                                     }
                                 case .swiftFunction(let function):
-                                    let inputReadFileDescriptor = IODescriptor(readEnd, closeWhenDone: true)
+                                    let inputReadFileDescriptor = createIODescriptor(from: readEnd, closeWhenDone: true)
                                     var inputReadEnd: IOChannel? = inputReadFileDescriptor.createIOChannel()
 
                                     var outputPipe = try self.output.createPipe()
@@ -804,7 +812,7 @@ extension PipeConfiguration {
                                     var outputWriteEnd: IOChannel? = outputWriteFileDescriptor?.createIOChannel()
 
                                     // Use shared error pipe instead of discarded
-                                    let errorWriteFileDescriptor = IODescriptor(sharedErrorPipe.writeEnd, closeWhenDone: false)
+                                    let errorWriteFileDescriptor = createIODescriptor(from: sharedErrorPipe.writeEnd, closeWhenDone: false)
                                     var errorWriteEnd: IOChannel? = errorWriteFileDescriptor.createIOChannel()
 
                                     let result: (Int32, Output.OutputType) = try await withThrowingTaskGroup(of: (Int32, OutputCapturingState<Output.OutputType, ()>?).self) { group in
