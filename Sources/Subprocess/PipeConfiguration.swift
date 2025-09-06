@@ -291,6 +291,14 @@ private func createIODescriptor(from fd: FileDescriptor, closeWhenDone: Bool) ->
     #endif
 }
 
+private func createTerminationStatus(_ exitCode: UInt32) -> TerminationStatus {
+    #if canImport(WinSD)
+    return .exited(exitCode)
+    #else
+    return .exited(Int32(exitCode))
+    #endif
+}
+
 // MARK: - Internal Functions
 
 extension PipeConfiguration {
@@ -560,18 +568,12 @@ extension PipeConfiguration {
                                         return 0
                                     }
 
-                                    #if canImport(WinSD)
-                                    let terminationStatus: TerminationStatus = .exited(result)
-                                    #else
-                                    let terminationStatus: TerminationStatus = .exited(Int32(result))
-                                    #endif
-
                                     return PipelineTaskResult.success(
                                         0,
                                         SendableCollectedResult(
                                             CollectedResult<FileDescriptorOutput, DiscardedOutput>(
                                                 processIdentifier: currentProcessIdentifier(),
-                                                terminationStatus: terminationStatus,
+                                                terminationStatus: createTerminationStatus(result),
                                                 standardOutput: (),
                                                 standardError: ()
                                             )))
@@ -660,7 +662,7 @@ extension PipeConfiguration {
                                     let errorWriteFileDescriptor: IODescriptor = createIODescriptor(from: sharedErrorPipe.writeEnd, closeWhenDone: false)
                                     var errorWriteEnd: IOChannel? = errorWriteFileDescriptor.createIOChannel()
 
-                                    let result = try await withThrowingTaskGroup(of: Int32.self) { group in
+                                    let result = try await withThrowingTaskGroup(of: UInt32.self) { group in
                                         // FIXME figure out how to propagate a preferred buffer size to this sequence
                                         let inSequence = AsyncBufferSequence(diskIO: inputReadEnd.take()!.consumeIOChannel(), preferredBufferSize: nil)
                                         let outWriter = StandardInputWriter(diskIO: outputWriteEnd.take()!)
@@ -684,7 +686,7 @@ extension PipeConfiguration {
                                         SendableCollectedResult(
                                             CollectedResult<FileDescriptorOutput, DiscardedOutput>(
                                                 processIdentifier: currentProcessIdentifier(),
-                                                terminationStatus: .exited(result),
+                                                terminationStatus: createTerminationStatus(result),
                                                 standardOutput: (),
                                                 standardError: ()
                                             )))
@@ -821,7 +823,7 @@ extension PipeConfiguration {
                                     let errorWriteFileDescriptor = createIODescriptor(from: sharedErrorPipe.writeEnd, closeWhenDone: false)
                                     var errorWriteEnd: IOChannel? = errorWriteFileDescriptor.createIOChannel()
 
-                                    let result: (Int32, Output.OutputType) = try await withThrowingTaskGroup(of: (Int32, OutputCapturingState<Output.OutputType, ()>?).self) { group in
+                                    let result: (UInt32, Output.OutputType) = try await withThrowingTaskGroup(of: (UInt32, OutputCapturingState<Output.OutputType, ()>?).self) { group in
                                         // FIXME figure out how to propagate a preferred buffer size to this sequence
                                         let inSequence = AsyncBufferSequence(diskIO: inputReadEnd.take()!.consumeIOChannel(), preferredBufferSize: nil)
                                         let outWriter = StandardInputWriter(diskIO: outputWriteEnd.take()!)
@@ -842,7 +844,7 @@ extension PipeConfiguration {
                                             return (retVal, .none)
                                         }
 
-                                        var exitCode: Int32 = 0
+                                        var exitCode: UInt32 = 0
                                         var output: Output.OutputType? = nil
                                         for try await r in group {
                                             if r.0 != 0 {
@@ -862,7 +864,7 @@ extension PipeConfiguration {
                                         SendableCollectedResult(
                                             CollectedResult<Output, DiscardedOutput>(
                                                 processIdentifier: currentProcessIdentifier(),
-                                                terminationStatus: .exited(result.0),
+                                                terminationStatus: createTerminationStatus(result.0),
                                                 standardOutput: result.1,
                                                 standardError: ()
                                             )))

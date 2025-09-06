@@ -52,14 +52,14 @@ struct PipeConfigurationTests {
                 }
 
                 guard foundHello else {
-                    return Int32(1)
+                    return 1
                 }
 
                 let written = try await output.write("Hello World")
                 guard written == "Hello World".utf8.count else {
-                    return Int32(1)
+                    return 1
                 }
-                return Int32(0)
+                return 0
             } | .name("cat")
             |> (
                 input: .string("Hello"),
@@ -86,14 +86,14 @@ struct PipeConfigurationTests {
                 }
 
                 guard foundHello else {
-                    return Int32(1)
+                    return 1
                 }
 
                 let written = try await output.write("Hello World")
                 guard written == "Hello World".utf8.count else {
-                    return Int32(1)
+                    return 1
                 }
-                return Int32(0)
+                return 0
             } | .name("cat")
             |> (
                 output: .string(limit: .max),
@@ -119,14 +119,14 @@ struct PipeConfigurationTests {
                 }
 
                 guard foundHello else {
-                    return Int32(1)
+                    return 1
                 }
 
                 let written = try await output.write("Hello World")
                 guard written == "Hello World".utf8.count else {
-                    return Int32(1)
+                    return 1
                 }
-                return Int32(0)
+                return 0
             } |> .string(limit: .max)
 
         let result = try await config.run()
