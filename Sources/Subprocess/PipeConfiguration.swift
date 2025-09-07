@@ -551,11 +551,20 @@ extension PipeConfiguration {
                                         }
 
                                         group.addTask {
-                                            let retVal = try await function(inSequence, outWriter, errWriter)
-                                            try await outWriter.finish()
-                                            try await errWriter.finish()
+                                            do {
+                                                let retVal = try await function(inSequence, outWriter, errWriter)
 
-                                            return retVal
+                                                // Close outputs in case the function did not
+                                                try await outWriter.finish()
+                                                try await errWriter.finish()
+
+                                                return retVal
+                                            } catch {
+                                                // Close outputs in case the function did not
+                                                try await outWriter.finish()
+                                                try await errWriter.finish()
+                                                throw error
+                                            }
                                         }
 
                                         for try await t in group {
@@ -563,10 +572,6 @@ extension PipeConfiguration {
                                                 return t
                                             }
                                         }
-
-                                        // Close outputs in case the function did not
-                                        try await outWriter.finish()
-                                        try await errWriter.finish()
 
                                         return 0
                                     }
@@ -672,7 +677,20 @@ extension PipeConfiguration {
                                         let errWriter = StandardInputWriter(diskIO: errorWriteEnd.take()!)
 
                                         group.addTask {
-                                            return try await function(inSequence, outWriter, errWriter)
+                                            do {
+                                                let result = try await function(inSequence, outWriter, errWriter)
+
+                                                // Close outputs in case the function did not
+                                                try await outWriter.finish()
+                                                try await errWriter.finish()
+
+                                                return result
+                                            } catch {
+                                                // Close outputs in case the function did not
+                                                try await outWriter.finish()
+                                                try await errWriter.finish()
+                                                throw error
+                                            }
                                         }
 
                                         for try await t in group {
@@ -680,10 +698,6 @@ extension PipeConfiguration {
                                                 return t
                                             }
                                         }
-
-                                        // Close outputs in case the function did not
-                                        try await outWriter.finish()
-                                        try await errWriter.finish()
 
                                         return 0
                                     }
@@ -845,16 +859,17 @@ extension PipeConfiguration {
                                         }
 
                                         group.addTask {
-                                            let retVal = try await function(inSequence, outWriter, errWriter)
-                                            try await outWriter.finish()
-                                            try await errWriter.finish()
-                                            return (retVal, .none)
+                                            do {
+                                                let retVal = try await function(inSequence, outWriter, errWriter)
+                                                try await outWriter.finish()
+                                                try await errWriter.finish()
+                                                return (retVal, .none)
+                                            } catch {
+                                                try await outWriter.finish()
+                                                try await errWriter.finish()
+                                                throw error
+                                            }
                                         }
-
-                                        // FIXME: determine how best to handle these writers so that the function doesn't finish them, and it doesn't cause deadlock
-                                        // Close outputs in case the function did not
-                                        //try await outWriter.finish()
-                                        //try await errWriter.finish()
 
                                         var exitCode: UInt32 = 0
                                         var output: Output.OutputType? = nil
