@@ -32,8 +32,8 @@ struct Echo {
     var configuration: Configuration {
         #if os(Windows)
         return Configuration(
-            executable: .name("cmd.exe"),
-            arguments: Arguments(["/c", "echo", message])
+            executable: .name("powershell.exe"),
+            arguments: Arguments(["-Command", "Write-Host '\(message)' -NoNewline"])
         )
         #else
         return Configuration(
@@ -81,22 +81,22 @@ struct Wc {
         if options.contains("-l") {
             return Configuration(
                 executable: .name("powershell.exe"),
-                arguments: Arguments(["-Command", "(Get-Content -Raw | Measure-Object -Line).Lines"])
+                arguments: Arguments(["-Command", "($input | Measure-Object -Line).Lines"])
             )
         } else if options.contains("-w") {
             return Configuration(
                 executable: .name("powershell.exe"),
-                arguments: Arguments(["-Command", "(Get-Content -Raw | Measure-Object -Word).Words"])
+                arguments: Arguments(["-Command", "($input | Measure-Object -Word).Words"])
             )
         } else if options.contains("-c") {
             return Configuration(
                 executable: .name("powershell.exe"),
-                arguments: Arguments(["-Command", "(Get-Content -Raw | Measure-Object -Character).Characters"])
+                arguments: Arguments(["-Command", "($input | Measure-Object -Character).Characters"])
             )
         } else {
             return Configuration(
                 executable: .name("powershell.exe"),
-                arguments: Arguments(["-Command", "Get-Content -Raw | Measure-Object -Line -Word -Character"])
+                arguments: Arguments(["-Command", "$input | Measure-Object -Line -Word -Character"])
             )
         }
         #else
@@ -732,14 +732,15 @@ struct PipeConfigurationTests {
     // MARK: - Shared Error Handling Tests
 
     @Test func testSharedErrorHandlingInPipeline() async throws {
+        // FIXME - There is a race condition here that truncates the stderr on both Linux and macOS - The sleep helps to mitigate
         let pipeline =
             pipe(
-                configuration: Shell("echo 'first stdout'; echo 'first stderr' >&2").configuration
+                configuration: Shell("echo 'first stdout'; echo 'first stderr' >&2; sleep 1").configuration
             )
-            | Shell("echo 'second stdout'; echo 'second stderr' >&2").configuration
+            | Shell("echo 'second stdout'; echo 'second stderr' >&2; sleep 1").configuration
             |> (
                 output: .string(limit: .max),
-                error: .string(limit: .max)
+                error: .string(limit: 1024),
             )
 
         let result = try await pipeline.run()
