@@ -286,7 +286,7 @@ struct PipeConfigurationTests {
                 }
                 return 0
             } | Cat().configuration
-            |>  (
+            |> (
                 output: .string(limit: .max),
                 error: .string(limit: .max)
             )
