@@ -572,7 +572,7 @@ struct PipeConfigurationTests {
     }
 
     // FIXME - These tests are hanging on Linux
-    #if os(macOS)
+    #if !os(Windows)
     @Test func testSwiftFunctionWithFileDescriptorInput() async throws {
         // Create a temporary file with JSON content
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("json_test_\(UUID().uuidString).json")

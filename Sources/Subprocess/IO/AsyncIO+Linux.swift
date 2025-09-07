@@ -287,6 +287,16 @@ final class AsyncIO: Sendable {
                     &event
                 )
                 if rc != 0 {
+                    if errno == EPERM {
+                        // Special Case:
+                        //
+                        // * EPERM can happen when this is a regular file (not pipe, socket, etc.) which is available right away for read/write,
+                        //   so we just go ahead and yield for I/O on the file descriptor. There's no need to wait.
+                        //
+                        continuation.yield(true)
+                        return
+                    }
+
                     _registration.withLock { storage in
                         _ = storage.removeValue(forKey: fileDescriptor.rawValue)
                     }
@@ -318,7 +328,15 @@ final class AsyncIO: Sendable {
                 fileDescriptor.rawValue,
                 nil
             )
-            guard rc == 0 else {
+
+            // Special Cases:
+            //
+            // * EPERM is set if the file descriptor is a regular file (not pipe, socket, etc.) and so it was never
+            //   registered with epoll.
+            // * ENOENT is set if the file descriptor is unknown to epoll, so we an just continue and remove it
+            //   from registration.
+            //
+            if rc != 0 && errno != EPERM && errno != ENOENT {
                 throw SubprocessError(
                     code: .init(
                         .asyncIOFailed(
@@ -327,6 +345,7 @@ final class AsyncIO: Sendable {
                     underlyingError: .init(rawValue: errno)
                 )
             }
+
             _registration.withLock { store in
                 _ = store.removeValue(forKey: fileDescriptor.rawValue)
             }
