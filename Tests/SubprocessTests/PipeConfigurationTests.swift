@@ -230,7 +230,7 @@ struct PipeConfigurationTests {
     }
 
     // FIXME - these function tests are hanging on Linux
-    #if os(macOS)
+    #if !os(Windows)
     @Test func testBasicSwiftFunctionBeginning() async throws {
         let config =
             pipe { input, output, error in
@@ -261,7 +261,9 @@ struct PipeConfigurationTests {
         #expect(result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) == "Hello World")
         #expect(result.terminationStatus.isSuccess)
     }
+    #endif
 
+    #if !os(Windows)
     @Test func testBasicSwiftFunctionMiddle() async throws {
         let config =
             pipe(
@@ -284,7 +286,7 @@ struct PipeConfigurationTests {
                 }
                 return 0
             } | Cat().configuration
-            |> (
+            |>  (
                 output: .string(limit: .max),
                 error: .string(limit: .max)
             )
@@ -293,7 +295,9 @@ struct PipeConfigurationTests {
         #expect(result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) == "Hello World")
         #expect(result.terminationStatus.isSuccess)
     }
+    #endif
 
+    #if !os(Windows)
     @Test func testBasicSwiftFunctionEnd() async throws {
         let config =
             pipe(
@@ -666,7 +670,7 @@ struct PipeConfigurationTests {
     }
 
     // FIXME - this test is hanging on Linux
-    #if os(macOS)
+    #if !os(Windows)
     @Test func testMultiStageSwiftFunctionPipelineWithStringInput() async throws {
         let numbers = "10\n25\n7\n42\n13\n8\n99"
 

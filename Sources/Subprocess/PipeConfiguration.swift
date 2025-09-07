@@ -426,7 +426,6 @@ extension PipeConfiguration {
     private func runPipeline() async throws -> CollectedResult<Output, Error> {
         // Create a pipe for standard error
         let sharedErrorPipe = try FileDescriptor.pipe()
-        let sharedErrorPipeOutput = FileDescriptorOutput(fileDescriptor: sharedErrorPipe.writeEnd, closeAfterSpawningProcess: false)
 
         return try await withThrowingTaskGroup(of: CollectedPipeResult.self, returning: CollectedResult<Output, Error>.self) { group in
             // Collect error output from all stages
@@ -465,7 +464,7 @@ extension PipeConfiguration {
                                             configuration,
                                             input: self.input,
                                             output: .fileDescriptor(writeEnd, closeAfterSpawningProcess: true),
-                                            error: sharedErrorPipeOutput
+                                            error: FileDescriptorOutput(fileDescriptor: sharedErrorPipe.writeEnd, closeAfterSpawningProcess: false)
                                         )
 
                                         taskResult = PipelineTaskResult.success(
@@ -565,6 +564,10 @@ extension PipeConfiguration {
                                             }
                                         }
 
+                                        // Close outputs in case the function did not
+                                        try await outWriter.finish()
+                                        try await errWriter.finish()
+
                                         return 0
                                     }
 
@@ -600,7 +603,7 @@ extension PipeConfiguration {
                                             configuration,
                                             input: .fileDescriptor(readEnd, closeAfterSpawningProcess: true),
                                             output: .fileDescriptor(writeEnd, closeAfterSpawningProcess: true),
-                                            error: sharedErrorPipeOutput
+                                            error: FileDescriptorOutput(fileDescriptor: sharedErrorPipe.writeEnd, closeAfterSpawningProcess: false)
                                         )
 
                                         taskResult = PipelineTaskResult.success(
@@ -678,6 +681,10 @@ extension PipeConfiguration {
                                             }
                                         }
 
+                                        // Close outputs in case the function did not
+                                        try await outWriter.finish()
+                                        try await errWriter.finish()
+
                                         return 0
                                     }
 
@@ -712,7 +719,7 @@ extension PipeConfiguration {
                                             configuration,
                                             input: .fileDescriptor(readEnd, closeAfterSpawningProcess: true),
                                             output: self.output,
-                                            error: sharedErrorPipeOutput
+                                            error: FileDescriptorOutput(fileDescriptor: sharedErrorPipe.writeEnd, closeAfterSpawningProcess: false)
                                         )
                                         return PipelineTaskResult.success(lastIndex, SendableCollectedResult(finalResult))
                                     case .replaceStdout:
@@ -843,6 +850,11 @@ extension PipeConfiguration {
                                             try await errWriter.finish()
                                             return (retVal, .none)
                                         }
+
+                                        // FIXME: determine how best to handle these writers so that the function doesn't finish them, and it doesn't cause deadlock
+                                        // Close outputs in case the function did not
+                                        //try await outWriter.finish()
+                                        //try await errWriter.finish()
 
                                         var exitCode: UInt32 = 0
                                         var output: Output.OutputType? = nil
