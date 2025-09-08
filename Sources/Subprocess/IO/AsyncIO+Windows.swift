@@ -231,7 +231,7 @@ final class AsyncIO: @unchecked Sendable {
                         // * ERROR_INVALID_PARAMETER - The handle likely doesn't have FILE_FLAG_OVERLAPPED, which might indicate that it isn't a pipe
                         //   so we can just signal that it is ready for reading right away.
                         //
-                        continuation.yield(UInt32.max)
+                        continuation.yield(0)
                     }
                 }
                 // Now save the continuation
@@ -322,17 +322,14 @@ final class AsyncIO: @unchecked Sendable {
 
             }
 
+            // Depending on whether the handle is overlapped, or not find the bytes read
+            // from the pointer, or the signal stream.
             let bytesRead =
                 if bytesReadIfSynchronous == 0 {
                     try await signalStream.next() ?? 0
                 } else {
                     bytesReadIfSynchronous
                 }
-
-            // This handle doesn't support overlapped (asynchronous) I/O, so we must have read it synchronously above
-            if bytesRead == UInt32.max {
-                bytesRead = bytesReadIfSynchronous
-            }
 
             if bytesRead == 0 {
                 // We reached EOF. Return whatever's left
