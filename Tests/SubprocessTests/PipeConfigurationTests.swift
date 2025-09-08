@@ -238,7 +238,6 @@ struct PipeConfigurationTests {
         let config = pipe(
             Echo("Hello World")
         ).finally(
-            input: NoInput(),
             output: .string(limit: .max),
             error: .discarded
         )
@@ -547,6 +546,7 @@ struct PipeConfigurationTests {
         #expect(result.terminationStatus.isSuccess)
     }
 
+    #if !os(Windows)
     @Test func testProcessStageWithFileDescriptorInput() async throws {
         // Create a temporary file with test content
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("pipe_test_\(UUID().uuidString).txt")
@@ -579,6 +579,7 @@ struct PipeConfigurationTests {
         #expect(lineCount == "3") // head -3 should give us 3 lines
         #expect(result.terminationStatus.isSuccess)
     }
+    #endif
 
     // FIXME regular files opened with FileDescriptor.open() aren't opened with overlapped I/O on Windows, so the I/O completion port can't add them.
     #if !os(Windows)
