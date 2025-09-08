@@ -214,25 +214,17 @@ final class AsyncIO: @unchecked Sendable {
 
                 // Windows Documentation: The function returns the handle
                 // of the existing I/O completion port if successful
-                if CreateIoCompletionPort(
-                    handle, ioPort, completionKey, 0
-                ) != ioPort {
-                    let lastError = GetLastError()
-                    if lastError != ERROR_INVALID_PARAMETER {
-                        let error = SubprocessError(
-                            code: .init(.asyncIOFailed("CreateIoCompletionPort failed")),
-                            underlyingError: .init(rawValue: GetLastError())
-                        )
-                        continuation.finish(throwing: error)
-                        return
-                    } else {
-                        // Special Case:
-                        //
-                        // * ERROR_INVALID_PARAMETER - The handle likely doesn't have FILE_FLAG_OVERLAPPED, which might indicate that it isn't a pipe
-                        //   so we can just signal that it is ready for reading right away.
-                        //
-                        continuation.yield(UInt32.max)
-                    }
+                guard
+                    CreateIoCompletionPort(
+                        handle, ioPort, completionKey, 0
+                    ) == ioPort
+                else {
+                    let error = SubprocessError(
+                        code: .init(.asyncIOFailed("CreateIoCompletionPort failed")),
+                        underlyingError: .init(rawValue: GetLastError())
+                    )
+                    continuation.finish(throwing: error)
+                    return
                 }
                 // Now save the continuation
                 _registration.withLock { storage in
@@ -279,7 +271,6 @@ final class AsyncIO: @unchecked Sendable {
             // We use an empty `_OVERLAPPED()` here because `ReadFile` below
             // only reads non-seekable files, aka pipes.
             var overlapped = _OVERLAPPED()
-            var bytesReadIfSynchronous = UInt32(0)
             let succeed = try resultBuffer.withUnsafeMutableBufferPointer { bufferPointer in
                 // Get a pointer to the memory at the specified offset
                 // Windows ReadFile uses DWORD for target count, which means we can only
@@ -295,7 +286,7 @@ final class AsyncIO: @unchecked Sendable {
                     handle,
                     offsetAddress,
                     targetCount,
-                    &bytesReadIfSynchronous,
+                    nil,
                     &overlapped
                 )
             }
@@ -321,18 +312,8 @@ final class AsyncIO: @unchecked Sendable {
                 }
 
             }
-
-            let bytesRead =
-                if bytesReadIfSynchronous == 0 {
-                    try await signalStream.next() ?? 0
-                } else {
-                    bytesReadIfSynchronous
-                }
-
-            // This handle doesn't support overlapped (asynchronous) I/O, so we must have read it synchronously above
-            if bytesRead == UInt32.max {
-                bytesRead = bytesReadIfSynchronous
-            }
+            // Now wait for read to finish
+            let bytesRead = try await signalStream.next() ?? 0
 
             if bytesRead == 0 {
                 // We reached EOF. Return whatever's left
