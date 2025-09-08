@@ -580,6 +580,8 @@ struct PipeConfigurationTests {
         #expect(result.terminationStatus.isSuccess)
     }
 
+    // FIXME regular files opened with FileDescriptor.open() aren't opened with overlapped I/O on Windows, so the I/O completion port can't add them.
+    #if !os(Windows)
     @Test func testSwiftFunctionWithFileDescriptorInput() async throws {
         // Create a temporary file with JSON content
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("json_test_\(UUID().uuidString).json")
@@ -632,6 +634,7 @@ struct PipeConfigurationTests {
         #expect(result.standardOutput?.contains("Person: Alice, Age: 30, Location: New York") == true)
         #expect(result.terminationStatus.isSuccess)
     }
+    #endif
 
     @Test func testComplexPipelineWithStringInputAndSwiftFunction() async throws {
         let csvData = "name,score,grade\nAlice,95,A\nBob,87,B\nCharlie,92,A\nDave,78,C"
@@ -701,9 +704,8 @@ struct PipeConfigurationTests {
                 }
                 return 0
             }
-            | process(
-                executable: .name("cat")
-            ) |> (
+            | Cat()
+            |> (
                 input: .string(numbers),
                 output: .string(limit: .max),
                 error: .string(limit: .max)
