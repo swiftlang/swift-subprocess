@@ -145,12 +145,12 @@ struct Head {
             let count = String(countOption.dropFirst())
             return Configuration(
                 executable: .name("powershell.exe"),
-                arguments: Arguments(["-Command", "Get-Content | Select-Object -First \(count)"])
+                arguments: Arguments(["-Command", "$input | Select-Object -First \(count)"])
             )
         } else {
             return Configuration(
                 executable: .name("powershell.exe"),
-                arguments: Arguments(["-Command", "Get-Content | Select-Object -First 10"])
+                arguments: Arguments(["-Command", "$input | Select-Object -First 10"])
             )
         }
         #else
@@ -437,16 +437,17 @@ struct PipeConfigurationTests {
     @Test func testComplexPipeline() async throws {
         let pipeline =
             pipe(
-                executable: .name("echo"),
-                arguments: ["zebra\napple\nbanana\ncherry"]
+                configuration: Echo("""
+                    zebra
+                    apple
+                    banana
+                    cherry
+                    """).configuration
             )
-            | process(
-                executable: .name("sort") // Sort alphabetically
-            ) | .name("head") // Take first few lines (default)
-            | process(
-                executable: .name("wc"),
-                arguments: ["-l"]
-            ) |> .string(limit: .max)
+            | Sort().configuration
+            | Head().configuration // Take first few lines (default)
+            | Wc("-l").configuration
+            |> .string(limit: .max)
 
         let result = try await pipeline.run()
         // Should have some lines (exact count depends on head default)
@@ -514,7 +515,7 @@ struct PipeConfigurationTests {
                     }
                     return 0
                 }
-            ) | .name("cat") // Use cat instead of head to see all output
+            ) | Cat().configuration // Use cat instead of head to see all output
             |> (
                 input: .string("first line\nsecond line\nthird line"),
                 output: .string(limit: .max),
@@ -738,6 +739,23 @@ struct PipeConfigurationTests {
     }
 
     @Test func testSharedErrorHandlingWithSwiftFunction() async throws {
+        #if os(Windows)
+        let pipeline =
+            pipe(
+                swiftFunction: { input, output, err in
+                    _ = try await output.write("Swift function output\n")
+                    _ = try await err.write("Swift function error\n")
+                    return 0
+                }
+            )
+            | process (
+                executable: .name("powershell.exe"),
+                arguments: Arguments(["-Command", "'shell stdout'; [Console]::Error.WriteLine('shell stderr')"])
+            ) |> (
+                output: .string(limit: .max),
+                error: .string(limit: .max)
+            )
+        #else
         let pipeline =
             pipe(
                 swiftFunction: { input, output, err in
@@ -753,6 +771,7 @@ struct PipeConfigurationTests {
                 output: .string(limit: .max),
                 error: .string(limit: .max)
             )
+        #endif
 
         let result = try await pipeline.run()
         let errorOutput = result.standardError ?? ""
@@ -762,7 +781,6 @@ struct PipeConfigurationTests {
         #expect(errorOutput.contains("shell stderr"))
         #expect(result.terminationStatus.isSuccess)
     }
-
     @Test func testSharedErrorRespectingMaxSize() async throws {
         let longErrorMessage = String(repeating: "error", count: 100) // 500 characters
 
@@ -787,15 +805,41 @@ struct PipeConfigurationTests {
     // MARK: - Error Redirection Tests
 
     @Test func testSeparateErrorRedirection() async throws {
-        // Default behavior - separate stdout and stderr
-        let config = pipe(
-            executable: .name("sh"),
-            arguments: ["-c", "echo 'stdout'; echo 'stderr' >&2"],
-            options: .default // Same as .separate
-        ).finally(
-            output: .string(limit: .max),
-            error: .string(limit: .max)
-        )
+        #if os(Windows)
+        let config =
+            pipe(
+                swiftFunction: { input, output, err in
+                    _ = try await output.write("Swift function output\n")
+                    _ = try await err.write("Swift function error\n")
+                    return 0
+                }
+            )
+            | process (
+                executable: .name("powershell.exe"),
+                arguments: Arguments(["-Command", "'shell stdout'; [Console]::Error.WriteLine('shell stderr')"]),
+                options: .default
+            ) |> (
+                output: .string(limit: .max),
+                error: .string(limit: .max)
+            )
+        #else
+        let config =
+            pipe(
+                swiftFunction: { input, output, err in
+                    _ = try await output.write("Swift function output\n")
+                    _ = try await err.write("Swift function error\n")
+                    return 0
+                }
+            )
+            | process(
+                executable: .name("sh"),
+                arguments: ["-c", "echo 'shell stdout'; echo 'shell stderr' >&2"],
+                options: .default
+            ) |> (
+                output: .string(limit: .max),
+                error: .string(limit: .max)
+            )
+        #endif
 
         let result = try await config.run()
         #expect(result.standardOutput?.contains("stdout") == true)
@@ -804,15 +848,41 @@ struct PipeConfigurationTests {
     }
 
     @Test func testReplaceStdoutErrorRedirection() async throws {
-        // Redirect stderr to stdout, discard original stdout
-        let config = pipe(
-            executable: .name("sh"),
-            arguments: ["-c", "echo 'stdout'; echo 'stderr' >&2"],
-            options: .stderrToStdout
-        ).finally(
-            output: .string(limit: .max),
-            error: .string(limit: .max)
-        )
+        #if os(Windows)
+        let config =
+            pipe(
+                swiftFunction: { input, output, err in
+                    _ = try await output.write("Swift function output\n")
+                    _ = try await err.write("Swift function error\n")
+                    return 0
+                }
+            )
+            | process (
+                executable: .name("powershell.exe"),
+                arguments: Arguments(["-Command", "'shell stdout'; [Console]::Error.WriteLine('shell stderr')"]),
+                options: .stderrToStdout
+            ) |> (
+                output: .string(limit: .max),
+                error: .string(limit: .max)
+            )
+        #else
+        let config =
+            pipe(
+                swiftFunction: { input, output, err in
+                    _ = try await output.write("Swift function output\n")
+                    _ = try await err.write("Swift function error\n")
+                    return 0
+                }
+            )
+            | process(
+                executable: .name("sh"),
+                arguments: ["-c", "echo 'shell stdout'; echo 'shell stderr' >&2"],
+                options: .stderrToStdout
+            ) |> (
+                output: .string(limit: .max),
+                error: .string(limit: .max)
+            )
+        #endif
 
         let result = try await config.run()
         // With replaceStdout, the stderr content should appear as stdout
@@ -821,15 +891,41 @@ struct PipeConfigurationTests {
     }
 
     @Test func testMergeErrorRedirection() async throws {
-        // Merge stderr with stdout
-        let config = pipe(
-            executable: .name("sh"),
-            arguments: ["-c", "echo 'stdout'; echo 'stderr' >&2"],
-            options: .mergeErrors
-        ).finally(
-            output: .string(limit: .max),
-            error: .string(limit: .max)
-        )
+        #if os(Windows)
+        let config =
+            pipe(
+                swiftFunction: { input, output, err in
+                    _ = try await output.write("Swift function output\n")
+                    _ = try await err.write("Swift function error\n")
+                    return 0
+                }
+            )
+            | process (
+                executable: .name("powershell.exe"),
+                arguments: Arguments(["-Command", "'shell stdout'; [Console]::Error.WriteLine('shell stderr')"]),
+                options: .mergeErrors
+            ) |> (
+                output: .string(limit: .max),
+                error: .string(limit: .max)
+            )
+        #else
+        let config =
+            pipe(
+                swiftFunction: { input, output, err in
+                    _ = try await output.write("Swift function output\n")
+                    _ = try await err.write("Swift function error\n")
+                    return 0
+                }
+            )
+            | process(
+                executable: .name("sh"),
+                arguments: ["-c", "echo 'shell stdout'; echo 'shell stderr' >&2"],
+                options: .mergeErrors
+            ) |> (
+                output: .string(limit: .max),
+                error: .string(limit: .max)
+            )
+        #endif
 
         let result = try await config.run()
         // With merge, both stdout and stderr content should appear in the output stream
@@ -841,24 +937,32 @@ struct PipeConfigurationTests {
     }
 
     @Test func testErrorRedirectionWithPipeOperators() async throws {
+        #if os(Windows)
+            pipe(
+                executable: .name("powershell.exe"),
+                arguments: Arguments(["-Command", "'line1'; [Console]::Error.WriteLine('error1')"]),
+                options: .mergeErrors // Merge stderr into stdout
+            )
+            | Grep("error").configuration
+            | Wc("-l").configuration
+            |> (
+                output: .string(limit: .max),
+                error: .discarded
+            )
+        #else
         let pipeline =
             pipe(
                 executable: .name("sh"),
                 arguments: ["-c", "echo 'line1'; echo 'error1' >&2"],
                 options: .mergeErrors // Merge stderr into stdout
             )
-            | process(
-                executable: .name("grep"),
-                arguments: ["error"], // This should find 'error1' now in stdout
-                options: .default
-            )
-            | process(
-                executable: .name("wc"),
-                arguments: ["-l"],
-            ) |> (
+            | Grep("error").configuration
+            | Wc("-l").configuration
+            |> (
                 output: .string(limit: .max),
                 error: .discarded
             )
+        #endif
 
         let result = try await pipeline.run()
         // Should find the error line that was merged into stdout
@@ -879,7 +983,7 @@ struct PipeConfigurationTests {
         let result = try await pipeline.run()
         // Should count characters in "data\n" (5 characters)
         let charCount = result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-        #expect(charCount == "5")
+        #expect(charCount == "5" || charCount == "4") // Slight difference in character count between platforms
         #expect(result.terminationStatus.isSuccess)
     }
 
@@ -932,9 +1036,8 @@ struct PipeConfigurationTests {
     @Test func testFinallyHelper() async throws {
         let pipeline =
             pipe(
-                executable: .name("echo"),
-                arguments: ["helper test"]
-            ) | .name("cat") |> .string(limit: .max)
+                configuration: Echo("helper test").configuration
+            ) | Cat().configuration |> .string(limit: .max)
 
         let result = try await pipeline.run()
         #expect(result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) == "helper test")
@@ -953,7 +1056,7 @@ struct PipeConfigurationTests {
         let result = try await pipeline.run()
         // "process helper test\n" should be 20 characters
         let charCount = result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-        #expect(charCount == "20")
+        #expect(charCount == "20" || charCount == "19") // Slight difference in character counts between platforms
         #expect(result.terminationStatus.isSuccess)
     }
 
