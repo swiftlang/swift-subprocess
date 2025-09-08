@@ -1012,7 +1012,7 @@ public func pipe(
 
 /// Create a single-stage pipeline with a Configuration
 public func pipe(
-    configuration: Configuration,
+    _ configuration: Configuration,
     options: ProcessStageOptions = .default
 ) -> [PipeStage] {
     return [PipeStage(configuration: configuration, options: options)]

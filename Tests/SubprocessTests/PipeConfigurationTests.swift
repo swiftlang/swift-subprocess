@@ -19,10 +19,29 @@ import Foundation
 import Testing
 @testable import Subprocess
 
+protocol Configurable {
+    var configuration: Configuration { get }
+}
+
+func pipe(
+    _ configurable: any Configurable,
+    options: ProcessStageOptions = .default
+) -> [PipeStage] {
+    return [PipeStage(configuration: configurable.configuration, options: options)]
+}
+
+/// Pipe operator for stage arrays with Configuration
+func | (
+    left: [PipeStage],
+    right: Configurable
+) -> [PipeStage] {
+    return left + [PipeStage(configuration: right.configuration, options: .default)]
+}
+
 // MARK: - Cross-Platform Command Abstractions
 
 /// Cross-platform echo command abstraction
-struct Echo {
+struct Echo: Configurable {
     let message: String
 
     init(_ message: String) {
@@ -45,7 +64,7 @@ struct Echo {
 }
 
 /// Cross-platform cat command abstraction
-struct Cat {
+struct Cat: Configurable {
     let arguments: [String]
 
     init(_ arguments: String...) {
@@ -68,7 +87,7 @@ struct Cat {
 }
 
 /// Cross-platform wc command abstraction
-struct Wc {
+struct Wc: Configurable {
     let options: [String]
 
     init(_ options: String...) {
@@ -109,7 +128,7 @@ struct Wc {
 }
 
 /// Cross-platform sort command abstraction
-struct Sort {
+struct Sort: Configurable {
     let options: [String]
 
     init(_ options: String...) {
@@ -132,7 +151,7 @@ struct Sort {
 }
 
 /// Cross-platform head command abstraction
-struct Head {
+struct Head: Configurable {
     let options: [String]
 
     init(_ options: String...) {
@@ -163,7 +182,7 @@ struct Head {
 }
 
 /// Cross-platform grep command abstraction
-struct Grep {
+struct Grep: Configurable {
     let pattern: String
     let options: [String]
 
@@ -188,7 +207,7 @@ struct Grep {
 }
 
 /// Cross-platform shell command abstraction
-struct Shell {
+struct Shell: Configurable {
     let command: String
 
     init(_ command: String) {
@@ -217,7 +236,7 @@ struct PipeConfigurationTests {
 
     @Test func testBasicPipeConfiguration() async throws {
         let config = pipe(
-            configuration: Echo("Hello World").configuration
+            Echo("Hello World")
         ).finally(
             input: NoInput(),
             output: .string(limit: .max),
@@ -248,7 +267,7 @@ struct PipeConfigurationTests {
                     return 1
                 }
                 return 0
-            } | Cat().configuration
+            } | Cat()
             |> (
                 input: .string("Hello"),
                 output: .string(limit: .max),
@@ -263,7 +282,7 @@ struct PipeConfigurationTests {
     @Test func testBasicSwiftFunctionMiddle() async throws {
         let config =
             pipe(
-                configuration: Echo("Hello").configuration
+                Echo("Hello")
             ) | { input, output, error in
                 var foundHello = false
                 for try await line in input.lines() {
@@ -281,7 +300,7 @@ struct PipeConfigurationTests {
                     return 1
                 }
                 return 0
-            } | Cat().configuration
+            } | Cat()
             |> (
                 output: .string(limit: .max),
                 error: .string(limit: .max)
@@ -295,7 +314,7 @@ struct PipeConfigurationTests {
     @Test func testBasicSwiftFunctionEnd() async throws {
         let config =
             pipe(
-                configuration: Echo("Hello").configuration
+                Echo("Hello")
             ) | { input, output, error in
                 var foundHello = false
                 for try await line in input.lines() {
@@ -321,11 +340,9 @@ struct PipeConfigurationTests {
     }
 
     @Test func testPipeConfigurationWithConfiguration() async throws {
-        let configuration = Echo("Test Message").configuration
-
         let processConfig =
             pipe(
-                configuration: configuration
+                Echo("Test Message")
             ) |> .string(limit: .max)
 
         let result = try await processConfig.run()
@@ -338,9 +355,9 @@ struct PipeConfigurationTests {
     @Test func testPipeMethod() async throws {
         let pipeline =
             pipe(
-                configuration: Echo("line1\nline2\nline3").configuration
+                Echo("line1\nline2\nline3")
             )
-            | Wc("-l").configuration
+            | Wc("-l")
             |> .string(limit: .max)
 
         let result = try await pipeline.run()
@@ -350,12 +367,10 @@ struct PipeConfigurationTests {
     }
 
     @Test func testPipeMethodWithConfiguration() async throws {
-        let wcConfig = Wc("-l").configuration
-
         let pipeline =
             pipe(
-                configuration: Echo("apple\nbanana\ncherry").configuration
-            ) | wcConfig |> .string(limit: .max)
+                Echo("apple\nbanana\ncherry")
+            ) | Wc("-l") |> .string(limit: .max)
 
         let result = try await pipeline.run()
         let lineCount = result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
@@ -368,9 +383,9 @@ struct PipeConfigurationTests {
     @Test func testBasicPipeOperator() async throws {
         let pipeline =
             pipe(
-                configuration: Echo("Hello\nWorld\nTest").configuration
-            ) | Wc().configuration
-            | Cat().configuration
+                Echo("Hello\nWorld\nTest")
+            ) | Wc()
+            | Cat()
             |> .string(limit: .max)
 
         let result = try await pipeline.run()
@@ -382,9 +397,9 @@ struct PipeConfigurationTests {
     @Test func testPipeOperatorWithExecutableOnly() async throws {
         let pipeline =
             pipe(
-                configuration: Echo("single line").configuration
-            ) | Cat().configuration // Simple pass-through
-            | Wc("-c").configuration // Count characters
+                Echo("single line")
+            ) | Cat() // Simple pass-through
+            | Wc("-c") // Count characters
             |> .string(limit: .max)
 
         let result = try await pipeline.run()
@@ -395,13 +410,13 @@ struct PipeConfigurationTests {
     }
 
     @Test func testPipeOperatorWithConfiguration() async throws {
-        let catConfig = Cat().configuration
+        let catConfig = Cat()
 
         let pipeline =
             pipe(
-                configuration: Echo("test data").configuration
+                Echo("test data")
             ) | catConfig
-            | Wc("-w").configuration // Count words
+            | Wc("-w") // Count words
             |> .string(limit: .max)
 
         let result = try await pipeline.run()
@@ -413,17 +428,17 @@ struct PipeConfigurationTests {
     @Test func testPipeOperatorWithProcessHelper() async throws {
         let pipeline =
             pipe(
-                configuration: Echo(
+                Echo(
                     """
                     apple
                     banana
                     cherry
                     date
                     """
-                ).configuration
+                )
             )
-            | Head("-3").configuration
-            | Wc("-l").configuration
+            | Head("-3")
+            | Wc("-l")
             |> .string(limit: .max)
 
         let result = try await pipeline.run()
@@ -437,16 +452,18 @@ struct PipeConfigurationTests {
     @Test func testComplexPipeline() async throws {
         let pipeline =
             pipe(
-                configuration: Echo("""
+                Echo(
+                    """
                     zebra
                     apple
                     banana
                     cherry
-                    """).configuration
+                    """
+                )
             )
-            | Sort().configuration
-            | Head().configuration // Take first few lines (default)
-            | Wc("-l").configuration
+            | Sort()
+            | Head() // Take first few lines (default)
+            | Wc("-l")
             |> .string(limit: .max)
 
         let result = try await pipeline.run()
@@ -461,9 +478,9 @@ struct PipeConfigurationTests {
     @Test func testPipelineWithStringInput() async throws {
         let pipeline =
             pipe(
-                configuration: Cat().configuration
+                Cat()
             )
-            | Wc("-w").configuration // Count words
+            | Wc("-w") // Count words
             |> (
                 input: .string("Hello world from string input"),
                 output: .string(limit: .max),
@@ -490,7 +507,7 @@ struct PipeConfigurationTests {
                     let written = try await output.write(countString)
                     return written > 0 ? 0 : 1
                 }
-            ) | Cat().configuration
+            ) | Cat()
             |> (
                 input: .string("Swift functions can process string input efficiently"),
                 output: .string(limit: .max),
@@ -515,7 +532,7 @@ struct PipeConfigurationTests {
                     }
                     return 0
                 }
-            ) | Cat().configuration // Use cat instead of head to see all output
+            ) | Cat() // Use cat instead of head to see all output
             |> (
                 input: .string("first line\nsecond line\nthird line"),
                 output: .string(limit: .max),
@@ -548,9 +565,9 @@ struct PipeConfigurationTests {
 
         let pipeline =
             pipe(
-                configuration: Head("-3").configuration
+                Head("-3")
             )
-            | Wc("-l").configuration
+            | Wc("-l")
             |> (
                 input: .fileDescriptor(fileDescriptor, closeAfterSpawningProcess: false),
                 output: .string(limit: .max),
@@ -642,7 +659,7 @@ struct PipeConfigurationTests {
                     }
                     return 0
                 }
-            ) | Cat().configuration
+            ) | Cat()
             |> (
                 input: .string(csvData),
                 output: .string(limit: .max),
@@ -721,9 +738,9 @@ struct PipeConfigurationTests {
         // FIXME - There is a race condition here that truncates the stderr on both Linux and macOS - The sleep helps to mitigate
         let pipeline =
             pipe(
-                configuration: Shell("echo 'first stdout'; echo 'first stderr' >&2; sleep 1").configuration
+                Shell("echo 'first stdout'; echo 'first stderr' >&2; sleep 1")
             )
-            | Shell("echo 'second stdout'; echo 'second stderr' >&2; sleep 1").configuration
+            | Shell("echo 'second stdout'; echo 'second stderr' >&2; sleep 1")
             |> (
                 output: .string(limit: .max),
                 error: .string(limit: 1024),
@@ -748,7 +765,7 @@ struct PipeConfigurationTests {
                     return 0
                 }
             )
-            | process (
+            | process(
                 executable: .name("powershell.exe"),
                 arguments: Arguments(["-Command", "'shell stdout'; [Console]::Error.WriteLine('shell stderr')"])
             ) |> (
@@ -814,7 +831,7 @@ struct PipeConfigurationTests {
                     return 0
                 }
             )
-            | process (
+            | process(
                 executable: .name("powershell.exe"),
                 arguments: Arguments(["-Command", "'shell stdout'; [Console]::Error.WriteLine('shell stderr')"]),
                 options: .default
@@ -857,7 +874,7 @@ struct PipeConfigurationTests {
                     return 0
                 }
             )
-            | process (
+            | process(
                 executable: .name("powershell.exe"),
                 arguments: Arguments(["-Command", "'shell stdout'; [Console]::Error.WriteLine('shell stderr')"]),
                 options: .stderrToStdout
@@ -900,7 +917,7 @@ struct PipeConfigurationTests {
                     return 0
                 }
             )
-            | process (
+            | process(
                 executable: .name("powershell.exe"),
                 arguments: Arguments(["-Command", "'shell stdout'; [Console]::Error.WriteLine('shell stderr')"]),
                 options: .mergeErrors
@@ -938,13 +955,14 @@ struct PipeConfigurationTests {
 
     @Test func testErrorRedirectionWithPipeOperators() async throws {
         #if os(Windows)
+        let pipeline =
             pipe(
                 executable: .name("powershell.exe"),
                 arguments: Arguments(["-Command", "'line1'; [Console]::Error.WriteLine('error1')"]),
                 options: .mergeErrors // Merge stderr into stdout
             )
-            | Grep("error").configuration
-            | Wc("-l").configuration
+            | Grep("error")
+            | Wc("-l")
             |> (
                 output: .string(limit: .max),
                 error: .discarded
@@ -956,8 +974,8 @@ struct PipeConfigurationTests {
                 arguments: ["-c", "echo 'line1'; echo 'error1' >&2"],
                 options: .mergeErrors // Merge stderr into stdout
             )
-            | Grep("error").configuration
-            | Wc("-l").configuration
+            | Grep("error")
+            | Wc("-l")
             |> (
                 output: .string(limit: .max),
                 error: .discarded
@@ -974,10 +992,10 @@ struct PipeConfigurationTests {
     @Test func testProcessHelperWithErrorRedirection() async throws {
         let pipeline =
             pipe(
-                configuration: Echo("data").configuration
+                Echo("data")
             )
-            | Cat().configuration // Simple passthrough, no error redirection needed
-            | Wc("-c").configuration
+            | Cat() // Simple passthrough, no error redirection needed
+            | Wc("-c")
             |> .string(limit: .max)
 
         let result = try await pipeline.run()
@@ -1023,8 +1041,10 @@ struct PipeConfigurationTests {
             pipe(
                 executable: .name("echo"),
                 arguments: ["test"]
-            ) | .name("cat")
-            | .name("wc") |> .string(limit: .max)
+            )
+            | .name("cat")
+            | .name("wc")
+            |> .string(limit: .max)
 
         let description = pipeline.description
         #expect(description.contains("Pipeline with"))
@@ -1035,9 +1055,7 @@ struct PipeConfigurationTests {
 
     @Test func testFinallyHelper() async throws {
         let pipeline =
-            pipe(
-                configuration: Echo("helper test").configuration
-            ) | Cat().configuration |> .string(limit: .max)
+            pipe(Echo("helper test")) | Cat() |> .string(limit: .max)
 
         let result = try await pipeline.run()
         #expect(result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) == "helper test")
@@ -1046,11 +1064,9 @@ struct PipeConfigurationTests {
 
     @Test func testProcessHelper() async throws {
         let pipeline =
-            pipe(
-                configuration: Echo("process helper test").configuration
-            )
-            | Cat().configuration
-            | Wc("-c").configuration
+            pipe(Echo("process helper test"))
+            | Cat()
+            | Wc("-c")
             |> .string(limit: .max)
 
         let result = try await pipeline.run()
@@ -1420,20 +1436,20 @@ extension PipeConfigurationTests {
 
         // Pipe pattern
         let _ =
-            pipe(
-                executable: .name("echo")
-            ) | .name("cat")
-            | .name("wc") |> .string(limit: .max)
+            pipe(executable: .name("echo"))
+            | .name("cat")
+            | .name("wc")
+            |> .string(limit: .max)
 
         // Pipe pattern with error redirection
         let _ =
-            pipe(
-                executable: .name("echo")
-            )
+            pipe(executable: .name("echo"))
             | withOptions(
                 configuration: Configuration(executable: .name("cat")),
                 options: .mergeErrors
-            ) | .name("wc") |> .string(limit: .max)
+            )
+            | .name("wc")
+            |> .string(limit: .max)
 
         // Complex pipeline pattern with process helper and error redirection
         let _ =
@@ -1448,10 +1464,12 @@ extension PipeConfigurationTests {
         let config = Configuration(executable: .name("ls"))
         let _ =
             pipe(
-                configuration: config,
+                config,
                 options: .mergeErrors
-            ) | .name("wc")
-            | .name("cat") |> .string(limit: .max)
+            )
+            | .name("wc")
+            | .name("cat")
+            |> .string(limit: .max)
 
         // Swift function patterns (compilation only)
         let _ = pipe(
