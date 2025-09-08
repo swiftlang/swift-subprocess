@@ -42,11 +42,13 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
 
         private let diskIO: DiskIO
         private let preferredBufferSize: Int
+        private let isAsyncIO: Bool
         private var buffer: [Buffer]
 
-        internal init(diskIO: DiskIO, preferredBufferSize: Int?) {
+        internal init(diskIO: DiskIO, preferredBufferSize: Int?, isAsyncIO: Bool) {
             self.diskIO = diskIO
             self.buffer = []
+            self.isAsyncIO = isAsyncIO
             self.preferredBufferSize = preferredBufferSize ?? readBufferSize
         }
 
@@ -60,7 +62,8 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
             // Read more data
             let data = try await AsyncIO.shared.read(
                 from: self.diskIO,
-                upTo: self.preferredBufferSize
+                upTo: self.preferredBufferSize,
+                isAsyncIO: self.isAsyncIO
             )
             guard let data else {
                 // We finished reading. Close the file descriptor now
@@ -87,17 +90,20 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
 
     private let diskIO: DiskIO
     private let preferredBufferSize: Int?
+    private let isAsyncIO: Bool
 
-    internal init(diskIO: DiskIO, preferredBufferSize: Int?) {
+    internal init(diskIO: DiskIO, preferredBufferSize: Int?, isAsyncIO: Bool = true) {
         self.diskIO = diskIO
         self.preferredBufferSize = preferredBufferSize
+        self.isAsyncIO = isAsyncIO
     }
 
     /// Creates a iterator for this asynchronous sequence.
     public func makeAsyncIterator() -> Iterator {
         return Iterator(
             diskIO: self.diskIO,
-            preferredBufferSize: self.preferredBufferSize
+            preferredBufferSize: self.preferredBufferSize,
+            isAsyncIO: self.isAsyncIO,
         )
     }
 

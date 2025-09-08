@@ -245,14 +245,16 @@ final class AsyncIO: @unchecked Sendable {
 
     func read(
         from diskIO: borrowing IOChannel,
-        upTo maxLength: Int
+        upTo maxLength: Int,
+        isAsyncIO: Bool = true,
     ) async throws -> [UInt8]? {
-        return try await self.read(from: diskIO.channel, upTo: maxLength)
+        return try await self.read(from: diskIO.channel, upTo: maxLength, isAsyncIO: isAsyncIO)
     }
 
     func read(
         from handle: HANDLE,
-        upTo maxLength: Int
+        upTo maxLength: Int,
+        isAsyncIO: Bool,
     ) async throws -> [UInt8]? {
         guard maxLength > 0 else {
             return nil
@@ -264,7 +266,70 @@ final class AsyncIO: @unchecked Sendable {
         var resultBuffer: [UInt8] = Array(
             repeating: 0, count: bufferLength
         )
+
         var readLength: Int = 0
+
+        // We can't be certain that the HANDLE has overlapping I/O enabled on it, so
+        // here we fall back to synchronous reads.
+        guard isAsyncIO else {
+            while true {
+                let (succeed, bytesRead) = try resultBuffer.withUnsafeMutableBufferPointer { bufferPointer in
+                    // Get a pointer to the memory at the specified offset
+                    // Windows ReadFile uses DWORD for target count, which means we can only
+                    // read up to DWORD (aka UInt32) max.
+                    let targetCount: DWORD = self.calculateRemainingCount(
+                        totalCount: bufferPointer.count,
+                        readCount: readLength
+                    )
+
+                    var bytesRead = UInt32(0)
+                    let offsetAddress = bufferPointer.baseAddress!.advanced(by: readLength)
+                    // Read directly into the buffer at the offset
+                    return (
+                        ReadFile(
+                            handle,
+                            offsetAddress,
+                            targetCount,
+                            &bytesRead,
+                            nil
+                        ), bytesRead
+                    )
+                }
+
+                guard succeed else {
+                    let error = SubprocessError(
+                        code: .init(.failedToReadFromSubprocess),
+                        underlyingError: .init(rawValue: GetLastError())
+                    )
+                    throw error
+                }
+
+                if bytesRead == 0 {
+                    // We reached EOF. Return whatever's left
+                    guard readLength > 0 else {
+                        return nil
+                    }
+                    resultBuffer.removeLast(resultBuffer.count - readLength)
+                    return resultBuffer
+                } else {
+                    // Read some data
+                    readLength += Int(truncatingIfNeeded: bytesRead)
+                    if maxLength == .max {
+                        // Grow resultBuffer if needed
+                        guard Double(readLength) > 0.8 * Double(resultBuffer.count) else {
+                            continue
+                        }
+                        resultBuffer.append(
+                            contentsOf: Array(repeating: 0, count: resultBuffer.count)
+                        )
+                    } else if readLength >= maxLength {
+                        // When we reached maxLength, return!
+                        return resultBuffer
+                    }
+                }
+            }
+        }
+
         var signalStream = self.registerHandle(handle).makeAsyncIterator()
 
         while true {

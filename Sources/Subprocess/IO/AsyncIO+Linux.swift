@@ -367,14 +367,16 @@ extension AsyncIO {
 
     func read(
         from diskIO: borrowing IOChannel,
-        upTo maxLength: Int
+        upTo maxLength: Int,
+        isAsyncIO: Bool = true,
     ) async throws -> [UInt8]? {
-        return try await self.read(from: diskIO.channel, upTo: maxLength)
+        return try await self.read(from: diskIO.channel, upTo: maxLength, isAsyncIO: isAsyncIO)
     }
 
     func read(
         from fileDescriptor: FileDescriptor,
-        upTo maxLength: Int
+        upTo maxLength: Int,
+        isAsyncIO: Bool,
     ) async throws -> [UInt8]? {
         guard maxLength > 0 else {
             return nil
