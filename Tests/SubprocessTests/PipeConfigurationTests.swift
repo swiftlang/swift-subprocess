@@ -413,12 +413,14 @@ struct PipeConfigurationTests {
     @Test func testPipeOperatorWithProcessHelper() async throws {
         let pipeline =
             pipe(
-                configuration: Echo("""
+                configuration: Echo(
+                    """
                     apple
                     banana
                     cherry
                     date
-                    """).configuration
+                    """
+                ).configuration
             )
             | Head("-3").configuration
             | Wc("-l").configuration

@@ -425,7 +425,8 @@ extension PipeConfiguration {
     /// Run the pipeline using withTaskGroup
     private func runPipeline() async throws -> CollectedResult<Output, Error> {
         // Create a pipe for standard error
-        let sharedErrorPipe = try FileDescriptor.pipe()
+        var sharedErrorCreatedPipe = try CreatedPipe(closeWhenDone: false, purpose: .output)
+        let sharedErrorPipe = (readEnd: FileDescriptor(rawValue: sharedErrorCreatedPipe.readFileDescriptor()!.platformDescriptor()), writeEnd: FileDescriptor(rawValue: sharedErrorCreatedPipe.writeFileDescriptor()!.platformDescriptor()))
 
         return try await withThrowingTaskGroup(of: CollectedPipeResult.self, returning: CollectedResult<Output, Error>.self) { group in
             // Collect error output from all stages
@@ -443,8 +444,8 @@ extension PipeConfiguration {
                 // Create pipes between stages
                 var pipes: [(readEnd: FileDescriptor, writeEnd: FileDescriptor)] = []
                 for _ in 0..<(stages.count - 1) {
-                    let pipe = try FileDescriptor.pipe()
-                    pipes.append((readEnd: pipe.readEnd, writeEnd: pipe.writeEnd))
+                    var pipe = try CreatedPipe(closeWhenDone: false, purpose: .input)
+                    pipes.append((readEnd: FileDescriptor(rawValue: pipe.readFileDescriptor()!.platformDescriptor()), writeEnd: FileDescriptor(rawValue: pipe.writeFileDescriptor()!.platformDescriptor())))
                 }
 
                 let pipeResult = try await withThrowingTaskGroup(of: PipelineTaskResult.self, returning: CollectedResult<Output, DiscardedOutput>.self) { group in
