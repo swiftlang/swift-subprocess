@@ -279,7 +279,7 @@ private func currentProcessIdentifier() -> ProcessIdentifier {
     #elseif canImport(Glibc) || canImport(Android) || canImport(Musl)
     return .init(value: ProcessInfo.processInfo.processIdentifier, processDescriptor: -1)
     #elseif os(Windows)
-    return .init(value: UInt32(ProcessInfo.processInfo.processIdentifier), processDescriptor: UnsafeMutableRawPointer(bitPattern: 0)!, threadHandle: UnsafeMutableRawPointer(bitPattern: 0)!)
+    return .init(value: UInt32(ProcessInfo.processInfo.processIdentifier), processDescriptor: INVALID_HANDLE_VALUE, threadHandle: INVALID_HANDLE_VALUE)
     #endif
 }
 
@@ -448,6 +448,7 @@ extension PipeConfiguration {
     private func runPipeline() async throws -> CollectedResult<Output, Error> {
         // Create a pipe for standard error
         let sharedErrorPipe = try createPipe()
+        // FIXME: Use _safelyClose() to fully close each end of the pipe on all platforms
 
         return try await withThrowingTaskGroup(of: CollectedPipeResult.self, returning: CollectedResult<Output, Error>.self) { group in
             // Collect error output from all stages
@@ -466,6 +467,7 @@ extension PipeConfiguration {
                 var pipes: [(readEnd: FileDescriptor, writeEnd: FileDescriptor)] = []
                 for _ in 0..<(stages.count - 1) {
                     try pipes.append(createPipe())
+                    // FIXME: Use _safelyClose() to fully close each end of the pipe on all platforms
                 }
 
                 let pipeResult = try await withThrowingTaskGroup(of: PipelineTaskResult.self, returning: CollectedResult<Output, DiscardedOutput>.self) { group in
