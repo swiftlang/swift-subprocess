@@ -299,6 +299,28 @@ private func createTerminationStatus(_ exitCode: UInt32) -> TerminationStatus {
     #endif
 }
 
+private func createPipe() throws -> (readEnd: FileDescriptor, writeEnd: FileDescriptor) {
+    var createdPipe = try CreatedPipe(closeWhenDone: false, purpose: .output)
+
+    #if canImport(WinSDK)
+    let readHandle = createdPipe.readFileDescriptor()!.platformDescriptor()
+    let writeHandle = createdPipe.writeFileDescriptor()!.platformDescriptor()
+    let readFd = _open_osfhandle(
+        intptr_t(bitPattern: readHandle),
+        FileDescriptor.AccessMode.readOnly.rawValue
+    )
+    let writeFd = _open_osfhandle(
+        intptr_t(bitPattern: writeHandle),
+        FileDescriptor.AccessMode.writeOnly.rawValue
+    )
+    #else
+    let readFd = createdPipe.readFileDescriptor()!.platformDescriptor()
+    let writeFd = createdPipe.writeFileDescriptor()!.platformDescriptor()
+    #endif
+
+    return (readEnd: FileDescriptor(rawValue: readFd), writeEnd: FileDescriptor(rawValue: writeFd))
+}
+
 // MARK: - Internal Functions
 
 extension PipeConfiguration {
@@ -425,8 +447,7 @@ extension PipeConfiguration {
     /// Run the pipeline using withTaskGroup
     private func runPipeline() async throws -> CollectedResult<Output, Error> {
         // Create a pipe for standard error
-        var sharedErrorCreatedPipe = try CreatedPipe(closeWhenDone: false, purpose: .output)
-        let sharedErrorPipe = (readEnd: FileDescriptor(rawValue: sharedErrorCreatedPipe.readFileDescriptor()!.platformDescriptor()), writeEnd: FileDescriptor(rawValue: sharedErrorCreatedPipe.writeFileDescriptor()!.platformDescriptor()))
+        let sharedErrorPipe = try createPipe()
 
         return try await withThrowingTaskGroup(of: CollectedPipeResult.self, returning: CollectedResult<Output, Error>.self) { group in
             // Collect error output from all stages
@@ -444,8 +465,7 @@ extension PipeConfiguration {
                 // Create pipes between stages
                 var pipes: [(readEnd: FileDescriptor, writeEnd: FileDescriptor)] = []
                 for _ in 0..<(stages.count - 1) {
-                    var pipe = try CreatedPipe(closeWhenDone: false, purpose: .input)
-                    pipes.append((readEnd: FileDescriptor(rawValue: pipe.readFileDescriptor()!.platformDescriptor()), writeEnd: FileDescriptor(rawValue: pipe.writeFileDescriptor()!.platformDescriptor())))
+                    try pipes.append(createPipe())
                 }
 
                 let pipeResult = try await withThrowingTaskGroup(of: PipelineTaskResult.self, returning: CollectedResult<Output, DiscardedOutput>.self) { group in
