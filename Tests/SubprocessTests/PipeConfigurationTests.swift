@@ -909,6 +909,7 @@ struct PipeConfigurationTests {
         #expect(result.terminationStatus.isSuccess)
     }
 
+    #if !os(Windows)
     @Test func testMergeErrorRedirection() async throws {
         #if os(Windows)
         let config =
@@ -990,6 +991,7 @@ struct PipeConfigurationTests {
         #expect(lineCount == "1")
         #expect(result.terminationStatus.isSuccess)
     }
+    #endif
 
     @Test func testProcessHelperWithErrorRedirection() async throws {
         let pipeline =
