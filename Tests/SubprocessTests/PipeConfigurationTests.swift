@@ -932,7 +932,6 @@ struct PipeConfigurationTests {
         #expect(result.standardOutput?.contains("stderr") == true)
         #expect(result.terminationStatus.isSuccess)
     }
-    #endif
 
     @Test func testErrorRedirectionWithPipeOperators() async throws {
         #if os(Windows)
@@ -969,6 +968,7 @@ struct PipeConfigurationTests {
         #expect(lineCount == "1")
         #expect(result.terminationStatus.isSuccess)
     }
+    #endif
 
     @Test func testProcessHelperWithErrorRedirection() async throws {
         let pipeline =
