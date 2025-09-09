@@ -912,13 +912,6 @@ struct PipeConfigurationTests {
         #if os(Windows)
         let config =
             pipe(
-                swiftFunction: { input, output, err in
-                    _ = try await output.write("Swift function output\n")
-                    _ = try await err.write("Swift function error\n")
-                    return 0
-                }
-            )
-            | process(
                 executable: .name("powershell.exe"),
                 arguments: Arguments(["-Command", "'shell stdout'; [Console]::Error.WriteLine('shell stderr')"]),
                 options: .mergeErrors
@@ -929,13 +922,6 @@ struct PipeConfigurationTests {
         #else
         let config =
             pipe(
-                swiftFunction: { input, output, err in
-                    _ = try await output.write("Swift function output\n")
-                    _ = try await err.write("Swift function error\n")
-                    return 0
-                }
-            )
-            | process(
                 executable: .name("sh"),
                 arguments: ["-c", "echo 'shell stdout'; echo 'shell stderr' >&2"],
                 options: .mergeErrors
