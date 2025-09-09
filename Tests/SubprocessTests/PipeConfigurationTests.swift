@@ -620,7 +620,7 @@ struct PipeConfigurationTests {
                         return 1
                     }
                 }
-            ) | .name("cat") // Add second stage to make it a valid pipeline
+            ) | Cat() // Add second stage to make it a valid pipeline
             |> (
                 input: .fileDescriptor(fileDescriptor, closeAfterSpawningProcess: false),
                 output: .string(limit: .max),
