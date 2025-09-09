@@ -559,12 +559,9 @@ extension PipeConfiguration {
                                         let outputWriteEnd = outputWriteEnd.take()!
                                         let errorWriteEnd = errorWriteEnd.take()!
 
-                                        // FIXME figure out how to propagate a preferred buffer size to this sequence
-                                        let inSequence = AsyncBufferSequence(diskIO: inputReadEnd.consumeIOChannel(), preferredBufferSize: nil)
-                                        let outWriter = StandardInputWriter(diskIO: outputWriteEnd)
-                                        let errWriter = StandardInputWriter(diskIO: errorWriteEnd)
-
+                                        var inputAsyncIO = false
                                         if let inputWriteEnd = inputWriteEnd.take() {
+                                            inputAsyncIO = true
                                             let writer = StandardInputWriter(diskIO: inputWriteEnd)
                                             group.addTask {
                                                 try await self.input.write(with: writer)
@@ -572,6 +569,11 @@ extension PipeConfiguration {
                                                 return 0
                                             }
                                         }
+
+                                        // FIXME figure out how to propagate a preferred buffer size to this sequence
+                                        let inSequence = AsyncBufferSequence(diskIO: inputReadEnd.consumeIOChannel(), preferredBufferSize: nil, isAsyncIO: inputAsyncIO)
+                                        let outWriter = StandardInputWriter(diskIO: outputWriteEnd)
+                                        let errWriter = StandardInputWriter(diskIO: errorWriteEnd)
 
                                         group.addTask {
                                             do {
