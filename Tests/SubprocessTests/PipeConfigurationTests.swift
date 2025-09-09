@@ -900,6 +900,7 @@ struct PipeConfigurationTests {
         #expect(result.terminationStatus.isSuccess)
     }
 
+    #if !os(Windows)
     @Test func testMergeErrorRedirection() async throws {
         #if os(Windows)
         let config =
@@ -931,6 +932,7 @@ struct PipeConfigurationTests {
         #expect(result.standardOutput?.contains("stderr") == true)
         #expect(result.terminationStatus.isSuccess)
     }
+    #endif
 
     @Test func testErrorRedirectionWithPipeOperators() async throws {
         #if os(Windows)
