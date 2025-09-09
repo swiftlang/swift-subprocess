@@ -67,11 +67,10 @@ extension AsyncBufferSequence.Buffer {
 extension AsyncBufferSequence.Buffer {
     /// Access the raw bytes stored in this buffer
     /// - Parameter body: A closure with an `UnsafeRawBufferPointer` parameter that
-    ///   points to the contiguous storage for the type. If no such storage exists,
-    ///   the method creates it. If body has a return value, this method also returns
-    ///   that value. The argument is valid only for the duration of the
-    ///   closure’s SequenceOutput.
-    /// - Returns: The return value, if any, of the body closure parameter.
+    ///   points to the contiguous storage for the buffer. If no such storage exists,
+    ///   the method creates it. The argument is valid only for the duration of the
+    ///   closure's execution.
+    /// - Returns: The return value of the body closure.
     public func withUnsafeBytes<ResultType>(
         _ body: (UnsafeRawBufferPointer) throws -> ResultType
     ) rethrows -> ResultType {
