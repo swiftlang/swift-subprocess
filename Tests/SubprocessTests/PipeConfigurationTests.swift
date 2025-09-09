@@ -1061,6 +1061,7 @@ struct PipeConfigurationTests {
         #expect(result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) == "helper test")
         #expect(result.terminationStatus.isSuccess)
     }
+    #endif
 
     @Test func testProcessHelper() async throws {
         let pipeline =
@@ -1414,7 +1415,6 @@ struct PipeConfigurationTests {
         // This test is for compilation only
         #expect(pipeline.stages.count == 3)
     }
-    #endif
 }
 
 // MARK: - Compilation Tests (no execution)
