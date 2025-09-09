@@ -393,8 +393,8 @@ extension Configuration {
                         )
                     } else {
                         error = SubprocessError(
-                            code: .init(.spawnFailed),
-                            underlyingError: .init(rawValue: spawnAttributeError)
+                            code: .init(.failedToChangeWorkingDirectory(self.workingDirectory?.string ?? "unknown")),
+                            underlyingError: .init(rawValue: chdirError)
                         )
                     }
                     throw error
