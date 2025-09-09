@@ -988,12 +988,11 @@ struct PipeConfigurationTests {
         #expect(lineCount == "1")
         #expect(result.terminationStatus.isSuccess)
     }
+    #endif
 
     @Test func testProcessHelperWithErrorRedirection() async throws {
         let pipeline =
-            pipe(
-                Echo("data")
-            )
+            pipe(Echo("data"))
             | Cat() // Simple passthrough, no error redirection needed
             | Wc("-c")
             |> .string(limit: .max)
@@ -1010,11 +1009,9 @@ struct PipeConfigurationTests {
     @Test func testPipelineErrorHandling() async throws {
         // Create a pipeline where one command will fail
         let pipeline =
-            pipe(
-                executable: .name("echo"),
-                arguments: ["test"]
-            ) | .name("nonexistent-command") // This should fail
-            | .name("cat") |> .string(limit: .max)
+            pipe(Echo("test"))
+            | .name("nonexistent-command") // This should fail
+            | Cat() |> .string(limit: .max)
 
         await #expect(throws: (any Error).self) {
             _ = try await pipeline.run()
@@ -1025,8 +1022,7 @@ struct PipeConfigurationTests {
 
     @Test func testPipeConfigurationDescription() {
         let config = pipe(
-            executable: .name("echo"),
-            arguments: ["test"]
+            Echo("test")
         ).finally(
             output: .string(limit: .max)
         )
@@ -1038,12 +1034,9 @@ struct PipeConfigurationTests {
 
     @Test func testPipelineDescription() {
         let pipeline =
-            pipe(
-                executable: .name("echo"),
-                arguments: ["test"]
-            )
-            | .name("cat")
-            | .name("wc")
+            pipe(Echo("test"))
+            | Cat()
+            | Wc()
             |> .string(limit: .max)
 
         let description = pipeline.description
@@ -1061,7 +1054,6 @@ struct PipeConfigurationTests {
         #expect(result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) == "helper test")
         #expect(result.terminationStatus.isSuccess)
     }
-    #endif
 
     @Test func testProcessHelper() async throws {
         let pipeline =
