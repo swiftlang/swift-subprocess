@@ -546,7 +546,6 @@ struct PipeConfigurationTests {
         #expect(result.terminationStatus.isSuccess)
     }
 
-    #if !os(Windows)
     @Test func testProcessStageWithFileDescriptorInput() async throws {
         // Create a temporary file with test content
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("pipe_test_\(UUID().uuidString).txt")
@@ -579,10 +578,7 @@ struct PipeConfigurationTests {
         #expect(lineCount == "3") // head -3 should give us 3 lines
         #expect(result.terminationStatus.isSuccess)
     }
-    #endif
 
-    // FIXME regular files opened with FileDescriptor.open() aren't opened with overlapped I/O on Windows, so the I/O completion port can't add them.
-    #if !os(Windows)
     @Test func testSwiftFunctionWithFileDescriptorInput() async throws {
         // Create a temporary file with JSON content
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("json_test_\(UUID().uuidString).json")
@@ -635,7 +631,6 @@ struct PipeConfigurationTests {
         #expect(result.standardOutput?.contains("Person: Alice, Age: 30, Location: New York") == true)
         #expect(result.terminationStatus.isSuccess)
     }
-    #endif
 
     @Test func testComplexPipelineWithStringInputAndSwiftFunction() async throws {
         let csvData = "name,score,grade\nAlice,95,A\nBob,87,B\nCharlie,92,A\nDave,78,C"
@@ -910,7 +905,6 @@ struct PipeConfigurationTests {
         #expect(result.terminationStatus.isSuccess)
     }
 
-    #if !os(Windows)
     @Test func testMergeErrorRedirection() async throws {
         #if os(Windows)
         let config =
@@ -992,7 +986,6 @@ struct PipeConfigurationTests {
         #expect(lineCount == "1")
         #expect(result.terminationStatus.isSuccess)
     }
-    #endif
 
     @Test func testProcessHelperWithErrorRedirection() async throws {
         let pipeline =
