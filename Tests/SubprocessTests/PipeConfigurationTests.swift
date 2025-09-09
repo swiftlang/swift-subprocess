@@ -859,6 +859,7 @@ struct PipeConfigurationTests {
         #expect(result.terminationStatus.isSuccess)
     }
 
+    #if !os(Windows)
     @Test func testReplaceStdoutErrorRedirection() async throws {
         #if os(Windows)
         let config =
@@ -900,7 +901,6 @@ struct PipeConfigurationTests {
         #expect(result.terminationStatus.isSuccess)
     }
 
-    #if !os(Windows)
     @Test func testMergeErrorRedirection() async throws {
         #if os(Windows)
         let config =
