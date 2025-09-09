@@ -859,7 +859,7 @@ struct PipeConfigurationTests {
         #expect(result.terminationStatus.isSuccess)
     }
 
-    #if !os(Windows)
+    #if !os(Windows) || !SubprocessFoundation
     @Test func testReplaceStdoutErrorRedirection() async throws {
         #if os(Windows)
         let config =
