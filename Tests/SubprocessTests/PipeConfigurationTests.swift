@@ -758,7 +758,7 @@ struct PipeConfigurationTests {
         let pipeline =
             pipe(
                 swiftFunction: { input, output, err in
-                    _ = try await output.write("Swift function output\n")
+                    _ = try await err.write("Swift function error\n")
                     return 0
                 }
             )
@@ -773,7 +773,6 @@ struct PipeConfigurationTests {
         let pipeline =
             pipe(
                 swiftFunction: { input, output, err in
-                    _ = try await output.write("Swift function output\n")
                     _ = try await err.write("Swift function error\n")
                     return 0
                 }
