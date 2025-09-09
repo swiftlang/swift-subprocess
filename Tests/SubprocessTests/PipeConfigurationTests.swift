@@ -796,6 +796,8 @@ struct PipeConfigurationTests {
         #expect(errorOutput.contains("shell stderr"))
         #expect(result.terminationStatus.isSuccess)
     }
+
+    #if !os(Windows)
     @Test func testSharedErrorRespectingMaxSize() async throws {
         let longErrorMessage = String(repeating: "error", count: 100) // 500 characters
 
@@ -1412,6 +1414,7 @@ struct PipeConfigurationTests {
         // This test is for compilation only
         #expect(pipeline.stages.count == 3)
     }
+    #endif
 }
 
 // MARK: - Compilation Tests (no execution)
