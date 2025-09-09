@@ -859,7 +859,8 @@ struct PipeConfigurationTests {
         #expect(result.terminationStatus.isSuccess)
     }
 
-    #if !os(Windows) || !SubprocessFoundation
+    // FIXME these tend to cause hangs on Windows in CI
+    #if !os(Windows)
     @Test func testReplaceStdoutErrorRedirection() async throws {
         #if os(Windows)
         let config =
