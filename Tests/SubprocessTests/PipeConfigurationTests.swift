@@ -759,7 +759,6 @@ struct PipeConfigurationTests {
             pipe(
                 swiftFunction: { input, output, err in
                     _ = try await output.write("Swift function output\n")
-                    _ = try await err.write("Swift function error\n")
                     return 0
                 }
             )
@@ -820,13 +819,11 @@ struct PipeConfigurationTests {
 
     // MARK: - Error Redirection Tests
 
-    #if !os(Windows)
     @Test func testSeparateErrorRedirection() async throws {
         #if os(Windows)
         let config =
             pipe(
                 swiftFunction: { input, output, err in
-                    _ = try await output.write("Swift function output\n")
                     _ = try await err.write("Swift function error\n")
                     return 0
                 }
@@ -843,7 +840,6 @@ struct PipeConfigurationTests {
         let config =
             pipe(
                 swiftFunction: { input, output, err in
-                    _ = try await output.write("Swift function output\n")
                     _ = try await err.write("Swift function error\n")
                     return 0
                 }
@@ -869,7 +865,6 @@ struct PipeConfigurationTests {
         let config =
             pipe(
                 swiftFunction: { input, output, err in
-                    _ = try await output.write("Swift function output\n")
                     _ = try await err.write("Swift function error\n")
                     return 0
                 }
@@ -886,7 +881,6 @@ struct PipeConfigurationTests {
         let config =
             pipe(
                 swiftFunction: { input, output, err in
-                    _ = try await output.write("Swift function output\n")
                     _ = try await err.write("Swift function error\n")
                     return 0
                 }
@@ -906,7 +900,6 @@ struct PipeConfigurationTests {
         #expect(result.standardOutput?.contains("stderr") == true)
         #expect(result.terminationStatus.isSuccess)
     }
-    #endif
 
     @Test func testMergeErrorRedirection() async throws {
         #if os(Windows)
