@@ -797,7 +797,6 @@ struct PipeConfigurationTests {
         #expect(result.terminationStatus.isSuccess)
     }
 
-    #if !os(Windows)
     @Test func testSharedErrorRespectingMaxSize() async throws {
         let longErrorMessage = String(repeating: "error", count: 100) // 500 characters
 
@@ -821,6 +820,7 @@ struct PipeConfigurationTests {
 
     // MARK: - Error Redirection Tests
 
+    #if !os(Windows)
     @Test func testSeparateErrorRedirection() async throws {
         #if os(Windows)
         let config =
