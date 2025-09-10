@@ -13,7 +13,7 @@
 @preconcurrency import WinSDK
 #endif
 
-// Confitionally require Foundation due to `Bundle.module`
+// Conditionally require Foundation due to `Bundle.module`
 import Foundation
 
 #if canImport(System)
