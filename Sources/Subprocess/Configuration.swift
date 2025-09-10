@@ -811,6 +811,19 @@ internal struct IODescriptor: ~Copyable {
         self.closeWhenDone = closeWhenDone
     }
 
+    internal init?(duplicating ioDescriptor: borrowing IODescriptor?) throws {
+        let descriptor = try ioDescriptor?.duplicate()
+        if let descriptor {
+            self = descriptor
+        } else {
+            return nil
+        }
+    }
+
+    func duplicate() throws -> IODescriptor {
+        return try IODescriptor(self.descriptor.duplicate(), closeWhenDone: self.closeWhenDone)
+    }
+
     consuming func createIOChannel() -> IOChannel {
         let shouldClose = self.closeWhenDone
         self.closeWhenDone = false
@@ -960,6 +973,13 @@ internal struct CreatedPipe: ~Copyable {
 
     mutating func writeFileDescriptor() -> IODescriptor? {
         return self._writeFileDescriptor.take()
+    }
+
+    internal init(duplicating createdPipe: borrowing CreatedPipe) throws {
+        self.init(
+            readFileDescriptor: try IODescriptor(duplicating: createdPipe._readFileDescriptor),
+            writeFileDescriptor: try IODescriptor(duplicating: createdPipe._writeFileDescriptor)
+        )
     }
 
     internal init(closeWhenDone: Bool, purpose: Purpose) throws {
@@ -1213,3 +1233,32 @@ extension Set {
         return self.remove(element) != nil
     }
 }
+
+#if canImport(WinSDK)
+extension HANDLE {
+    func duplicate() throws -> HANDLE {
+        var handle: HANDLE? = nil
+        guard
+            DuplicateHandle(
+                GetCurrentProcess(),
+                self,
+                GetCurrentProcess(),
+                &handle,
+                0, true, DWORD(DUPLICATE_SAME_ACCESS)
+            )
+        else {
+            throw SubprocessError(
+                code: .init(.failedToCreatePipe),
+                underlyingError: .init(rawValue: GetLastError())
+            )
+        }
+        guard let handle else {
+            throw SubprocessError(
+                code: .init(.failedToCreatePipe),
+                underlyingError: .init(rawValue: GetLastError())
+            )
+        }
+        return handle
+    }
+}
+#endif

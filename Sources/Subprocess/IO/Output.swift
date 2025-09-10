@@ -56,7 +56,7 @@ extension OutputProtocol {
 /// On Unix-like systems, `DiscardedOutput` redirects the
 /// standard output of the subprocess to `/dev/null`, while on Windows,
 /// redirects the output to `NUL`.
-public struct DiscardedOutput: OutputProtocol {
+public struct DiscardedOutput: OutputProtocol, ErrorOutputProtocol {
     /// The type for the output.
     public typealias OutputType = Void
 
@@ -82,7 +82,7 @@ public struct DiscardedOutput: OutputProtocol {
 ///
 /// Developers have the option to instruct the `Subprocess` to automatically
 /// close the related `FileDescriptor` after the subprocess is spawned.
-public struct FileDescriptorOutput: OutputProtocol {
+public struct FileDescriptorOutput: OutputProtocol, ErrorOutputProtocol {
     /// The type for this output.
     public typealias OutputType = Void
 
@@ -115,7 +115,7 @@ public struct FileDescriptorOutput: OutputProtocol {
 
 /// A concrete `Output` type for subprocesses that collects output
 /// from the subprocess as `String` with the given encoding.
-public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol {
+public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol, ErrorOutputProtocol {
     /// The type for this output.
     public typealias OutputType = String?
     /// The max number of bytes to collect.
@@ -147,7 +147,7 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol {
 
 /// A concrete `Output` type for subprocesses that collects output from
 /// the subprocess as `[UInt8]`.
-public struct BytesOutput: OutputProtocol {
+public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
     /// The output type for this output option
     public typealias OutputType = [UInt8]
     /// The max number of bytes to collect
@@ -283,6 +283,57 @@ extension OutputProtocol where Self == BytesOutput {
     /// an error if the child process emits more bytes than the limit.
     public static func bytes(limit: Int) -> Self {
         return .init(limit: limit)
+    }
+}
+
+// MARK: - ErrorOutputProtocol
+
+/// Error output protocol specifies the set of methods that a type must implement to
+/// serve as the error output target for a subprocess.
+///
+/// Instead of developing custom implementations of `ErrorOutputProtocol`, use the
+/// default implementations provided by the `Subprocess` library to specify the
+/// output handling requirements.
+public protocol ErrorOutputProtocol: OutputProtocol {}
+
+/// A concrete error output type for subprocesses that combines the standard error
+/// output with the standard output stream.
+///
+/// When `CombinedErrorOutput` is used as the error output for a subprocess, both
+/// standard output and standard error from the child process are merged into a
+/// single output stream. This is equivalent to using shell redirection like `2>&1`.
+///
+/// This output type is useful when you want to capture or redirect both output
+/// streams together, making it possible to process all subprocess output as a unified
+/// stream rather than handling standard output and standard error separately.
+public struct CombinedErrorOutput: ErrorOutputProtocol {
+    public typealias OutputType = Void
+}
+
+extension ErrorOutputProtocol {
+    internal func createPipe(from outputPipe: borrowing CreatedPipe) throws -> CreatedPipe {
+        if self is CombinedErrorOutput {
+            return try CreatedPipe(duplicating: outputPipe)
+        }
+        return try createPipe()
+    }
+}
+
+extension ErrorOutputProtocol where Self == CombinedErrorOutput {
+    /// Creates an error output that combines standard error with standard output.
+    ///
+    /// When using `combineWithOutput`, both standard output and standard error from
+    /// the child process are merged into a single output stream. This is equivalent
+    /// to using shell redirection like `2>&1`.
+    ///
+    /// This is useful when you want to capture or redirect both output streams
+    /// together, making it possible to process all subprocess output as a unified
+    /// stream rather than handling standard output and standard error separately
+    ///
+    /// - Returns: A `CombinedErrorOutput` instance that merges standard error
+    ///   with standard output.
+    public static var combineWithOutput: Self {
+        return CombinedErrorOutput()
     }
 }
 
