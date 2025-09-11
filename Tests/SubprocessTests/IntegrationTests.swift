@@ -1634,6 +1634,168 @@ extension SubprocessIntegrationTests {
             }
         }
     }
+
+    @Test func testCombinedStringOutput() async throws {
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: ["/c", "echo Hello Stdout & echo Hello Stderr 1>&2"]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "echo Hello Stdout; echo Hello Stderr 1>&2"]
+        )
+        #endif
+        let result = try await _run(
+            setup,
+            input: .none,
+            output: .string(limit: 64),
+            error: .combineWithOutput
+        )
+        #expect(result.terminationStatus.isSuccess)
+        let output = try #require(result.standardOutput)
+        #expect(output.contains("Hello Stdout"))
+        #expect(output.contains("Hello Stderr"))
+    }
+
+    @Test func testCombinedBytesOutput() async throws {
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: ["/c", "echo Hello Stdout & echo Hello Stderr 1>&2"]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "echo Hello Stdout; echo Hello Stderr 1>&2"]
+        )
+        #endif
+        let result = try await _run(
+            setup,
+            input: .none,
+            output: .bytes(limit: 64),
+            error: .combineWithOutput
+        )
+        #expect(result.terminationStatus.isSuccess)
+        #expect(
+            result.standardOutput.contains(
+                "Hello Stdout".byteArray(using: UTF8.self).unsafelyUnwrapped
+            )
+        )
+        #expect(
+            result.standardOutput.contains(
+                "Hello Stderr".byteArray(using: UTF8.self).unsafelyUnwrapped
+            )
+        )
+    }
+
+    @Test func testCombinedFileDescriptorOutput() async throws {
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: ["/c", "echo Hello Stdout & echo Hello Stderr 1>&2"]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "echo Hello Stdout; echo Hello Stderr 1>&2"]
+        )
+        #endif
+
+        let outputFilePath = FilePath(FileManager.default.temporaryDirectory._fileSystemPath)
+            .appending("CombinedTest.out")
+        defer {
+            try? FileManager.default.removeItem(atPath: outputFilePath.string)
+        }
+        if FileManager.default.fileExists(atPath: outputFilePath.string) {
+            try FileManager.default.removeItem(atPath: outputFilePath.string)
+        }
+        let outputFile: FileDescriptor = try .open(
+            outputFilePath,
+            .readWrite,
+            options: .create,
+            permissions: [.ownerReadWrite, .groupReadWrite]
+        )
+        let echoResult = try await outputFile.closeAfter {
+            let echoResult = try await _run(
+                setup,
+                input: .none,
+                output: .fileDescriptor(
+                    outputFile,
+                    closeAfterSpawningProcess: false
+                ),
+                error: .combineWithOutput
+            )
+            #expect(echoResult.terminationStatus.isSuccess)
+            return echoResult
+        }
+        let outputData: Data = try Data(
+            contentsOf: URL(filePath: outputFilePath.string)
+        )
+        let output = try #require(
+            String(data: outputData, encoding: .utf8)
+        ).trimmingNewLineAndQuotes()
+        #expect(echoResult.terminationStatus.isSuccess)
+        #expect(output.contains("Hello Stdout"))
+        #expect(output.contains("Hello Stderr"))
+    }
+
+    #if SubprocessFoundation
+    @Test func testCombinedDataOutput() async throws {
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: ["/c", "echo Hello Stdout & echo Hello Stderr 1>&2"]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "echo Hello Stdout; echo Hello Stderr 1>&2"]
+        )
+        #endif
+        let catResult = try await _run(
+            setup,
+            input: .none,
+            output: .data(limit: 64),
+            error: .combineWithOutput
+        )
+        #expect(catResult.terminationStatus.isSuccess)
+        #expect(
+            catResult.standardOutput.contains("Hello Stdout".data(using: .utf8).unsafelyUnwrapped)
+        )
+        #expect(
+            catResult.standardOutput.contains("Hello Stderr".data(using: .utf8).unsafelyUnwrapped)
+        )
+    }
+    #endif // SubprocessFoundation
+
+    @Test func testCombinedStreamingOutput() async throws {
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: ["/c", "echo Hello Stdout & echo Hello Stderr 1>&2"]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "echo Hello Stdout; echo Hello Stderr 1>&2"]
+        )
+        #endif
+
+        _ = try await _run(
+            setup,
+            input: .none,
+            error: .combineWithOutput
+        ) { execution, standardOutput in
+            var output: String = ""
+            for try await line in standardOutput.lines() {
+                output += line
+            }
+            #expect(output.contains("Hello Stdout"))
+            #expect(output.contains("Hello Stderr"))
+        }
+    }
 }
 
 // MARK: - Other Tests
@@ -2216,7 +2378,7 @@ struct TestSetup {
 func _run<
     Input: InputProtocol,
     Output: OutputProtocol,
-    Error: OutputProtocol
+    Error: ErrorOutputProtocol
 >(
     _ testSetup: TestSetup,
     platformOptions: PlatformOptions = PlatformOptions(),
@@ -2240,7 +2402,7 @@ func _run<
 func _run<
     InputElement: BitwiseCopyable,
     Output: OutputProtocol,
-    Error: OutputProtocol
+    Error: ErrorOutputProtocol
 >(
     _ testSetup: TestSetup,
     input: borrowing Span<InputElement>,
@@ -2262,7 +2424,7 @@ func _run<
 func _run<
     Result,
     Input: InputProtocol,
-    Error: OutputProtocol
+    Error: ErrorOutputProtocol
 >(
     _ setup: TestSetup,
     input: Input,
@@ -2284,7 +2446,7 @@ func _run<
 
 func _run<
     Result,
-    Error: OutputProtocol
+    Error: ErrorOutputProtocol
 >(
     _ setup: TestSetup,
     error: Error,

@@ -21,7 +21,7 @@ import FoundationEssentials
 
 /// A concrete `Output` type for subprocesses that collects output
 /// from the subprocess as data.
-public struct DataOutput: OutputProtocol {
+public struct DataOutput: OutputProtocol, ErrorOutputProtocol {
     /// The output type for this output option
     public typealias OutputType = Data
     /// The maximum number of bytes to collect.
