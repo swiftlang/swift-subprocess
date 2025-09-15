@@ -91,7 +91,7 @@ public struct PipeStage: Sendable {
 
     /// Create a PipeStage from executable parameters
     public init(
-        executable: Executable,
+        _ executable: Executable,
         arguments: Arguments = [],
         environment: Environment = .inherit,
         workingDirectory: FilePath? = nil,
@@ -199,56 +199,6 @@ public struct PipeConfiguration<
         } else {
             return "Pipeline with \(stages.count) stages"
         }
-    }
-}
-
-// MARK: - Public Initializers (Default to Discarded I/O)
-
-extension PipeConfiguration where Input == NoInput, Output == DiscardedOutput, Error == DiscardedOutput {
-    /// Initialize a PipeConfiguration with executable and arguments
-    /// I/O defaults to discarded until finalized with `finally`
-    public init(
-        executable: Executable,
-        arguments: Arguments = [],
-        environment: Environment = .inherit,
-        workingDirectory: FilePath? = nil,
-        platformOptions: PlatformOptions = PlatformOptions(),
-        options: ProcessStageOptions = .default
-    ) {
-        let configuration = Configuration(
-            executable: executable,
-            arguments: arguments,
-            environment: environment,
-            workingDirectory: workingDirectory,
-            platformOptions: platformOptions
-        )
-        self.stages = [PipeStage(configuration: configuration, options: options)]
-        self.input = NoInput()
-        self.output = DiscardedOutput()
-        self.error = DiscardedOutput()
-    }
-
-    /// Initialize a PipeConfiguration with a Configuration
-    /// I/O defaults to discarded until finalized with `finally`
-    public init(
-        configuration: Configuration,
-        options: ProcessStageOptions = .default
-    ) {
-        self.stages = [PipeStage(configuration: configuration, options: options)]
-        self.input = NoInput()
-        self.output = DiscardedOutput()
-        self.error = DiscardedOutput()
-    }
-
-    /// Initialize a PipeConfiguration with a Swift function
-    /// I/O defaults to discarded until finalized with `finally`
-    public init(
-        swiftFunction: @escaping @Sendable (AsyncBufferSequence, StandardInputWriter, StandardInputWriter) async throws -> UInt32
-    ) {
-        self.stages = [PipeStage(swiftFunction: swiftFunction)]
-        self.input = NoInput()
-        self.output = DiscardedOutput()
-        self.error = DiscardedOutput()
     }
 }
 
@@ -993,7 +943,7 @@ extension PipeConfiguration {
 
 /// Create a single-stage pipeline with an executable
 public func pipe(
-    executable: Executable,
+    _ executable: Executable,
     arguments: Arguments = [],
     environment: Environment = .inherit,
     workingDirectory: FilePath? = nil,
@@ -1002,7 +952,7 @@ public func pipe(
 ) -> [PipeStage] {
     return [
         PipeStage(
-            executable: executable,
+            executable,
             arguments: arguments,
             environment: environment,
             workingDirectory: workingDirectory,
@@ -1022,7 +972,7 @@ public func pipe(
 
 /// Create a single-stage pipeline with a Swift function
 public func pipe(
-    swiftFunction: @escaping @Sendable (AsyncBufferSequence, StandardInputWriter, StandardInputWriter) async throws -> UInt32
+    _ swiftFunction: @escaping @Sendable (AsyncBufferSequence, StandardInputWriter, StandardInputWriter) async throws -> UInt32
 ) -> [PipeStage] {
     return [PipeStage(swiftFunction: swiftFunction)]
 }
@@ -1054,6 +1004,24 @@ public func | (
     return left + [PipeStage(configuration: configuration, options: .default)]
 }
 
+/// Pipe operator for stage arrays with tuple for executable and arguments
+public func | (
+    left: [PipeStage],
+    right: (Executable, arguments: Arguments)
+) -> [PipeStage] {
+    let configuration = Configuration(executable: right.0, arguments: right.arguments)
+    return left + [PipeStage(configuration: configuration, options: .default)]
+}
+
+/// Pipe operator for stage arrays with tuple for executable, arguments, and process stage options
+public func | (
+    left: [PipeStage],
+    right: (Executable, arguments: Arguments, options: ProcessStageOptions)
+) -> [PipeStage] {
+    let configuration = Configuration(executable: right.0, arguments: right.arguments)
+    return left + [PipeStage(configuration: configuration, options: right.options)]
+}
+
 /// Pipe operator for stage arrays with Swift function
 public func | (
     left: [PipeStage],
@@ -1073,6 +1041,50 @@ public func | (
 // MARK: - Finally Methods for Stage Arrays (Extension)
 
 extension Array where Element == PipeStage {
+    /// Add a new stage to the pipeline with executable and arguments
+    public func stage(
+        _ executable: Executable,
+        arguments: Arguments = [],
+        environment: Environment = .inherit,
+        workingDirectory: FilePath? = nil,
+        platformOptions: PlatformOptions = PlatformOptions(),
+        options: ProcessStageOptions = .default
+    ) -> [PipeStage] {
+        return self + [
+            PipeStage(
+                executable,
+                arguments: arguments,
+                environment: environment,
+                workingDirectory: workingDirectory,
+                platformOptions: platformOptions,
+                options: options
+            )
+        ]
+    }
+
+    /// Add a new stage to the pipeline with a Configuration
+    public func stage(
+        _ configuration: Configuration,
+        options: ProcessStageOptions = .default
+    ) -> [PipeStage] {
+        return self + [PipeStage(configuration: configuration, options: options)]
+    }
+
+    /// Add a new stage to the pipeline with a Swift function
+    public func stage(
+        _ swiftFunction: @escaping @Sendable (AsyncBufferSequence, StandardInputWriter, StandardInputWriter) async throws -> UInt32
+    ) -> [PipeStage] {
+        return self + [PipeStage(swiftFunction: swiftFunction)]
+    }
+
+    /// Add a new stage to the pipeline with a configuration and options
+    public func stage(
+        configuration: Configuration,
+        options: ProcessStageOptions
+    ) -> [PipeStage] {
+        return self + [PipeStage(configuration: configuration, options: options)]
+    }
+
     /// Create a PipeConfiguration from stages with specific input, output, and error types
     public func finally<FinalInput: InputProtocol, FinalOutput: OutputProtocol, FinalError: OutputProtocol>(
         input: FinalInput,
@@ -1128,35 +1140,3 @@ public func |> <FinalOutput: OutputProtocol>(
 }
 
 // MARK: - Helper Functions
-
-/// Helper function to create a process stage for piping
-public func process(
-    executable: Executable,
-    arguments: Arguments = [],
-    environment: Environment = .inherit,
-    workingDirectory: FilePath? = nil,
-    platformOptions: PlatformOptions = PlatformOptions(),
-    options: ProcessStageOptions = .default
-) -> PipeStage {
-    return PipeStage(
-        executable: executable,
-        arguments: arguments,
-        environment: environment,
-        workingDirectory: workingDirectory,
-        platformOptions: platformOptions,
-        options: options
-    )
-}
-
-/// Helper function to create a configuration with options for piping
-public func withOptions(
-    configuration: Configuration,
-    options: ProcessStageOptions
-) -> PipeStage {
-    return PipeStage(configuration: configuration, options: options)
-}
-
-/// Helper function to create a Swift function wrapper for readability
-public func swiftFunction(_ function: @escaping @Sendable (AsyncBufferSequence, StandardInputWriter, StandardInputWriter) async throws -> Int32) -> @Sendable (AsyncBufferSequence, StandardInputWriter, StandardInputWriter) async throws -> Int32 {
-    return function
-}

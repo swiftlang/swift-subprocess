@@ -26,7 +26,7 @@ This eliminates interim `PipeConfiguration` objects with discarded I/O and makes
 ```swift
 // Using .finally() method
 let config = pipe(
-    executable: .name("echo"),
+    .name("echo"),
     arguments: ["Hello World"]
 ).finally(
     output: .string(limit: .max)
@@ -34,7 +34,7 @@ let config = pipe(
 
 // Using |> operator (visually appealing!)
 let config = pipe(
-    executable: .name("echo"),
+    .name("echo"),
     arguments: ["Hello World"]
 ) |> .string(limit: .max)
 
@@ -47,12 +47,12 @@ print(result.standardOutput) // "Hello World"
 **✅ Using .finally() method:**
 ```swift
 let pipeline = (pipe(
-    executable: .name("echo"),
+    .name("echo"),
     arguments: ["apple\nbanana\ncherry"]
 ) | .name("sort")                     // ✅ Builds stage array
   | .name("head")                     // ✅ Continues building array
-  | process(                          // ✅ Adds configured stage
-    executable: .name("wc"),
+  | (                                 // ✅ Adds configured stage
+    .name("wc"),
     arguments: ["-l"]
   )).finally(
     output: .string(limit: .max),     // ✅ Only here we specify real I/O
@@ -63,12 +63,12 @@ let pipeline = (pipe(
 **✅ Using |> operator (clean and visually appealing!):**
 ```swift
 let pipeline = pipe(
-    executable: .name("echo"),
+    .name("echo"),
     arguments: ["apple\nbanana\ncherry"]
 ) | .name("sort")                     // ✅ Builds stage array
   | .name("head")                     // ✅ Continues building array  
-  | process(                          // ✅ Adds configured stage
-    executable: .name("wc"),
+  | (                                 // ✅ Adds configured stage
+    .name("wc"),
     arguments: ["-l"]
   ) |> (                              // ✅ Visually appealing final I/O!
     output: .string(limit: .max),
@@ -86,7 +86,7 @@ PipeConfiguration now supports three modes for handling standard error:
 ### `.separate` (Default)
 ```swift
 let config = pipe(
-    executable: .name("sh"),
+    .name("sh"),
     arguments: ["-c", "echo 'stdout'; echo 'stderr' >&2"],
     options: .default  // or ProcessStageOptions(errorRedirection: .separate)
 ) |> (
@@ -102,7 +102,7 @@ let result = try await config.run()
 ### `.replaceStdout` - Redirect stderr to stdout, discard original stdout
 ```swift
 let config = pipe(
-    executable: .name("sh"),
+    .name("sh"),
     arguments: ["-c", "echo 'stdout'; echo 'stderr' >&2"],
     options: .stderrToStdout  // Convenience for .replaceStdout
 ) |> (
@@ -118,7 +118,7 @@ let result = try await config.run()
 ### `.mergeWithStdout` - Both stdout and stderr go to the same destination
 ```swift
 let config = pipe(
-    executable: .name("sh"),
+    .name("sh"),
     arguments: ["-c", "echo 'stdout'; echo 'stderr' >&2"],
     options: .mergeErrors  // Convenience for .mergeWithStdout
 ) |> (
@@ -136,14 +136,14 @@ let result = try await config.run()
 ```swift
 let pipeline = finally(
     stages: pipe(
-        executable: .name("sh"),
+        .name("sh"),
         arguments: ["-c", "echo 'data'; echo 'warning' >&2"],
         options: .mergeErrors  // Merge stderr into stdout
     ) | withOptions(
         configuration: Configuration(executable: .name("grep"), arguments: ["warning"]),
         options: .default
-    ) | process(
-        executable: .name("wc"),
+    ) | (
+        .name("wc"),
         arguments: ["-l"]
     ),
     output: .string(limit: .max),
@@ -154,18 +154,18 @@ let result = try await pipeline.run()
 // Should find the warning that was merged into stdout
 ```
 
-### Using `process()` helper with options
+### Using stage options
 ```swift
 let pipeline = finally(
     stages: pipe(
-        executable: .name("find"),
+        .name("find"),
         arguments: ["/some/path"]
-    ) | process(
-        executable: .name("grep"),
+    ) | (
+        .name("grep"),
         arguments: ["-v", "Permission denied"],
         options: .stderrToStdout  // Convert any stderr to stdout
-    ) | process(
-        executable: .name("wc"),
+    ) | (
+        .name("wc"),
         arguments: ["-l"]
     ),
     output: .string(limit: .max),
@@ -177,14 +177,14 @@ let pipeline = finally(
 
 ### Stage Array Operators (`|`)
 ```swift
-stages | process(.name("grep"))                   // Add simple process stage
+stages | (.name("grep"))                          // Add simple process stage
 stages | Configuration(executable: ...)           // Add configuration stage  
-stages | process(                                 // Add with arguments and options
-    executable: .name("sort"),
+stages | (                                        // Add with arguments and options
+    .name("sort"),
     arguments: ["-r"],
     options: .mergeErrors
 )
-stages | withOptions(                             // Configuration with options
+stages | (                                       // Configuration with options
     configuration: myConfig,
     options: .stderrToStdout
 )
@@ -209,38 +209,20 @@ finally(stages: myStages, output: .string(limit: .max))  // Auto-discard error
 finally(stages: myStages, input: .string("data"), output: .string(limit: .max), error: .discarded)
 ```
 
-### `process()` - For creating individual process stages
-```swift
-process(executable: .name("grep"), arguments: ["pattern"])
-process(executable: .name("sort"), arguments: ["-r"], environment: .inherit)
-process(executable: .name("cat"), options: .mergeErrors)
-process(
-    executable: .name("awk"),
-    arguments: ["{print $1}"],
-    options: .stderrToStdout
-)
-```
-
-### `withOptions()` - For creating Configuration stages with options
-```swift
-withOptions(configuration: myConfig, options: .mergeErrors)
-withOptions(configuration: myConfig, options: .stderrToStdout)
-```
-
 ## Real-World Examples
 
 ### Log Processing with Error Handling
 ```swift
 let logProcessor = pipe(
-    executable: .name("tail"),
+    .name("tail"),
     arguments: ["-f", "/var/log/app.log"],
     options: .mergeErrors  // Capture any tail errors as data
-) | process(
-    executable: .name("grep"),
+) | (
+    .name("grep"),
     arguments: ["-E", "(ERROR|WARN)"],
     options: .stderrToStdout  // Convert grep errors to output
 ) |> finally(
-    executable: .name("head"),
+    .name("head"),
     arguments: ["-20"],
     output: .string(limit: .max),
     error: .string(limit: .max)  // Capture final errors separately
@@ -250,15 +232,15 @@ let logProcessor = pipe(
 ### File Processing with Error Recovery
 ```swift
 let fileProcessor = pipe(
-    executable: .name("find"),
+    .name("find"),
     arguments: ["/data", "-name", "*.log", "-type", "f"],
     options: .replaceStdout  // Convert permission errors to "output"
-) | process(
-    executable: .name("head"),
+) | (
+    .name("head"),
     arguments: ["-100"],  // Process first 100 files/errors
     options: .mergeErrors
 ) |> finally(
-    executable: .name("wc"),
+    .name("wc"),
     arguments: ["-l"],
     output: .string(limit: .max),
     error: .discarded
@@ -283,10 +265,10 @@ struct OutputData: Codable {
 }
 
 let pipeline = pipe(
-    executable: .name("echo"),
+    .name("echo"),
     arguments: [#"{"items": ["apple", "banana", "cherry"], "metadata": {"source": "test"}}"#]
 ).pipe(
-    swiftFunction: { input, output, err in
+    { input, output, err in
         // Transform JSON structure with type safety
         var jsonData = Data()
         
@@ -331,10 +313,10 @@ struct LogEntry: Codable {
 }
 
 let logProcessor = pipe(
-    executable: .name("tail"),
+    .name("tail"),
     arguments: ["-f", "/var/log/app.log"]
 ).pipe(
-    swiftFunction: { input, output, err in
+    { input, output, err in
         // Process JSON log entries line by line
         for try await line in input.lines() {
             guard !line.isEmpty else { continue }
@@ -356,7 +338,7 @@ let logProcessor = pipe(
         return 0
     }
 ).pipe(
-    executable: .name("head"),
+    .name("head"),
     arguments: ["-20"]  // Limit to first 20 error/warning entries
 ).finally(
     output: .string(limit: .max),
@@ -379,10 +361,10 @@ struct SalesSummary: Codable {
 }
 
 let salesAnalyzer = pipe(
-    executable: .name("cat"),
+    .name("cat"),
     arguments: ["sales_data.jsonl"]  // JSON Lines format
 ).pipe(
-    swiftFunction: { input, output, err in
+    { input, output, err in
         // Aggregate JSON sales data with Swift collections
         var totalSales: Double = 0
         var productCounts: [String: Int] = [:]
@@ -440,10 +422,10 @@ struct User: Codable {
 let usersJson = #"[{"id": 1, "username": "alice", "email": "alice@example.com"}, {"id": 2, "username": "bob", "email": "bob@example.com"}, {"id": 3, "username": "charlie", "email": "charlie@example.com"}, {"id": 6, "username": "dave", "email": "dave@example.com"}]"#
 
 let userProcessor = pipe(
-    executable: .name("echo"),
+    .name("echo"),
     arguments: [usersJson]
 ).pipe(
-    swiftFunction: { input, output, err in
+    { input, output, err in
         // Decode JSON and filter with Swift
         var jsonData = Data()
         
@@ -467,7 +449,7 @@ let userProcessor = pipe(
         }
     }
 ).pipe(
-    executable: .name("sort")  // Use external tool for sorting
+    .name("sort")  // Use external tool for sorting
 ).finally(
     output: .string(limit: .max),
     error: .string(limit: .max)
@@ -507,49 +489,8 @@ PipeConfiguration<NoInput, StringOutput<UTF8>, DiscardedOutput>
 // Intermediate processes can have different error handling
 // Final process can change output/error types
 pipeline |> finally(
-    executable: .name("wc"),
+    .name("wc"),
     output: .string(limit: .max),         // New output type
     error: .fileDescriptor(errorFile)     // New error type  
 ) // Result: PipeConfiguration<NoInput, StringOutput<UTF8>, FileDescriptorOutput>
 ```
-
-## Migration from Old API
-
-**❌ OLD - Repetitive and no error control:**
-```swift
-let oldWay = PipeConfiguration(
-    executable: .name("echo"),
-    arguments: ["data"],
-    input: .none,
-    output: .string(limit: .max),  // ❌ misleading - gets replaced
-    error: .discarded
-).pipe(
-    executable: .name("sort"), 
-    output: .string(limit: .max)   // ❌ misleading - gets replaced
-).pipe(
-    executable: .name("head"), 
-    output: .string(limit: .max)   // ❌ misleading - gets replaced  
-).pipe(
-    executable: .name("wc"), 
-    output: .string(limit: .max)   // ✅ only this matters
-)
-// No control over stderr handling
-```
-
-**✅ NEW - Clear and flexible:**
-```swift
-let newWay = pipe(
-    executable: .name("echo"),
-    arguments: ["data"]            // ✅ I/O specified at the end
-) | process(
-    executable: .name("sort"), 
-    options: .mergeErrors          // ✅ clear error control options
-) | .name("head")                  // ✅ clear - passing through
-  |> finally(                      // ✅ clear - final output specified here
-    executable: .name("wc"),
-    output: .string(limit: .max),
-    error: .discarded
-)
-```
-
-This design provides a clean, type-safe, and highly flexible API for process pipelines that mirrors familiar shell syntax while providing fine-grained control over error handling that isn't possible in traditional shell pipelines.

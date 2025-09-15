@@ -495,7 +495,7 @@ struct PipeConfigurationTests {
     @Test func testPipelineWithStringInputAndSwiftFunction() async throws {
         let pipeline =
             pipe(
-                swiftFunction: { input, output, err in
+                { input, output, err in
                     var wordCount = 0
                     for try await line in input.lines() {
                         let words = line.split(separator: " ")
@@ -521,7 +521,7 @@ struct PipeConfigurationTests {
     @Test func testSwiftFunctionAsFirstStageWithStringInput() async throws {
         let pipeline =
             pipe(
-                swiftFunction: { input, output, err in
+                { input, output, err in
                     // Convert input to uppercase and add line numbers
                     var lineNumber = 1
                     for try await line in input.lines() {
@@ -603,7 +603,7 @@ struct PipeConfigurationTests {
 
         let pipeline =
             pipe(
-                swiftFunction: { input, output, err in
+                { input, output, err in
                     var jsonData = Data()
                     for try await chunk in input.lines() {
                         jsonData.append(contentsOf: chunk.utf8)
@@ -637,7 +637,7 @@ struct PipeConfigurationTests {
 
         let pipeline =
             pipe(
-                swiftFunction: { input, output, err in
+                { input, output, err in
                     // Parse CSV and filter for A grades
                     var lineCount = 0
                     for try await line in input.lines() {
@@ -679,7 +679,7 @@ struct PipeConfigurationTests {
 
         let pipeline =
             pipe(
-                swiftFunction: { input, output, err in
+                { input, output, err in
                     // First Swift function: filter for numbers > 10
                     for try await line in input.lines() {
                         let trimmed = line.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
@@ -757,13 +757,13 @@ struct PipeConfigurationTests {
         #if os(Windows)
         let pipeline =
             pipe(
-                swiftFunction: { input, output, err in
+                { input, output, err in
                     _ = try await err.write("Swift function error\n")
                     return 0
                 }
             )
-            | process(
-                executable: .name("powershell.exe"),
+            | (
+                .name("powershell.exe"),
                 arguments: Arguments(["-Command", "'shell stdout'; [Console]::Error.WriteLine('shell stderr')"])
             ) |> (
                 output: .string(limit: .max),
@@ -772,13 +772,13 @@ struct PipeConfigurationTests {
         #else
         let pipeline =
             pipe(
-                swiftFunction: { input, output, err in
+                { input, output, err in
                     _ = try await err.write("Swift function error\n")
                     return 0
                 }
             )
-            | process(
-                executable: .name("sh"),
+            | (
+                .name("sh"),
                 arguments: ["-c", "echo 'shell stdout'; echo 'shell stderr' >&2"]
             ) |> (
                 output: .string(limit: .max),
@@ -800,11 +800,11 @@ struct PipeConfigurationTests {
 
         let pipeline =
             pipe(
-                executable: .name("sh"),
+                .name("sh"),
                 arguments: ["-c", "echo '\(longErrorMessage)' >&2"]
             )
-            | process(
-                executable: .name("sh"),
+            | (
+                .name("sh"),
                 arguments: ["-c", "echo '\(longErrorMessage)' >&2"]
             ) |> (
                 output: .string(limit: .max),
@@ -822,13 +822,13 @@ struct PipeConfigurationTests {
         #if os(Windows)
         let config =
             pipe(
-                swiftFunction: { input, output, err in
+                { input, output, err in
                     _ = try await err.write("Swift function error\n")
                     return 0
                 }
             )
-            | process(
-                executable: .name("powershell.exe"),
+            | (
+                .name("powershell.exe"),
                 arguments: Arguments(["-Command", "'shell stdout'; [Console]::Error.WriteLine('shell stderr')"]),
                 options: .default
             ) |> (
@@ -838,13 +838,13 @@ struct PipeConfigurationTests {
         #else
         let config =
             pipe(
-                swiftFunction: { input, output, err in
+                { input, output, err in
                     _ = try await err.write("Swift function error\n")
                     return 0
                 }
             )
-            | process(
-                executable: .name("sh"),
+            | (
+                .name("sh"),
                 arguments: ["-c", "echo 'shell stdout'; echo 'shell stderr' >&2"],
                 options: .default
             ) |> (
@@ -865,13 +865,13 @@ struct PipeConfigurationTests {
         #if os(Windows)
         let config =
             pipe(
-                swiftFunction: { input, output, err in
+                { input, output, err in
                     _ = try await err.write("Swift function error\n")
                     return 0
                 }
             )
-            | process(
-                executable: .name("powershell.exe"),
+            | (
+                .name("powershell.exe"),
                 arguments: Arguments(["-Command", "'shell stdout'; [Console]::Error.WriteLine('shell stderr')"]),
                 options: .stderrToStdout
             ) |> (
@@ -881,13 +881,13 @@ struct PipeConfigurationTests {
         #else
         let config =
             pipe(
-                swiftFunction: { input, output, err in
+                { input, output, err in
                     _ = try await err.write("Swift function error\n")
                     return 0
                 }
             )
-            | process(
-                executable: .name("sh"),
+            | (
+                .name("sh"),
                 arguments: ["-c", "echo 'shell stdout'; echo 'shell stderr' >&2"],
                 options: .stderrToStdout
             ) |> (
@@ -906,7 +906,7 @@ struct PipeConfigurationTests {
         #if os(Windows)
         let config =
             pipe(
-                executable: .name("powershell.exe"),
+                .name("powershell.exe"),
                 arguments: Arguments(["-Command", "'shell stdout'; [Console]::Error.WriteLine('shell stderr')"]),
                 options: .mergeErrors
             ) |> (
@@ -916,7 +916,7 @@ struct PipeConfigurationTests {
         #else
         let config =
             pipe(
-                executable: .name("sh"),
+                .name("sh"),
                 arguments: ["-c", "echo 'shell stdout'; echo 'shell stderr' >&2"],
                 options: .mergeErrors
             ) |> (
@@ -938,7 +938,7 @@ struct PipeConfigurationTests {
         #if os(Windows)
         let pipeline =
             pipe(
-                executable: .name("powershell.exe"),
+                .name("powershell.exe"),
                 arguments: Arguments(["-Command", "'line1'; [Console]::Error.WriteLine('error1')"]),
                 options: .mergeErrors // Merge stderr into stdout
             )
@@ -951,7 +951,7 @@ struct PipeConfigurationTests {
         #else
         let pipeline =
             pipe(
-                executable: .name("sh"),
+                .name("sh"),
                 arguments: ["-c", "echo 'line1'; echo 'error1' >&2"],
                 options: .mergeErrors // Merge stderr into stdout
             )
@@ -1003,7 +1003,7 @@ struct PipeConfigurationTests {
 
     @Test func testPipeConfigurationDescription() {
         let config = pipe(
-            executable: .name("echo"),
+            .name("echo"),
             arguments: ["echo"]
         ).finally(
             output: .string(limit: .max)
@@ -1078,7 +1078,7 @@ struct PipeConfigurationTests {
 
         let pipeline =
             pipe(
-                swiftFunction: { input, output, err in
+                { input, output, err in
                     // Encode array of Person objects to JSON
                     let encoder = JSONEncoder()
                     encoder.outputFormatting = .prettyPrinted
@@ -1094,8 +1094,8 @@ struct PipeConfigurationTests {
                     }
                 }
             )
-            | process(
-                executable: .name("jq"),
+            | (
+                .name("jq"),
                 arguments: [".[] | select(.age > 28)"] // Filter people over 28
             ) |> (
                 output: .string(limit: .max),
@@ -1117,7 +1117,7 @@ struct PipeConfigurationTests {
 
         let pipeline =
             pipe(
-                executable: .name("echo"),
+                .name("echo"),
                 arguments: [usersJson]
             ) | { input, output, err in
                 // Read JSON and decode to User objects
@@ -1165,7 +1165,7 @@ struct PipeConfigurationTests {
 
         let pipeline =
             pipe(
-                executable: .name("echo"),
+                .name("echo"),
                 arguments: [#"{"items": ["apple", "banana", "cherry"], "metadata": {"source": "test"}}"#]
             ) | { input, output, err in
                 // Transform JSON structure
@@ -1214,7 +1214,7 @@ struct PipeConfigurationTests {
 
         let pipeline =
             pipe(
-                executable: .name("tail"),
+                .name("tail"),
                 arguments: ["-f", "/var/log/app.log"]
             ) | { input, output, error in
                 // Process JSON log entries line by line
@@ -1237,8 +1237,8 @@ struct PipeConfigurationTests {
                 }
                 return 0
             }
-            | process(
-                executable: .name("head"),
+            | (
+                .name("head"),
                 arguments: ["-20"] // Limit to first 20 error/warning entries
             ) |> (
                 output: .string(limit: .max),
@@ -1264,7 +1264,7 @@ struct PipeConfigurationTests {
 
         let pipeline =
             pipe(
-                executable: .name("cat"),
+                .name("cat"),
                 arguments: ["sales_data.jsonl"] // JSON Lines format
             ) | { input, output, err in
                 // Aggregate JSON sales data
@@ -1324,11 +1324,11 @@ struct PipeConfigurationTests {
 
         let pipeline =
             pipe(
-                executable: .name("find"),
+                .name("find"),
                 arguments: ["/etc/configs", "-name", "*.json"]
             )
-            | process(
-                executable: .name("xargs"),
+            | (
+                .name("xargs"),
                 arguments: ["cat"]
             ) | { input, output, err in
                 // Validate JSON configurations
@@ -1401,7 +1401,7 @@ extension PipeConfigurationTests {
 
         // Basic pattern with error redirection
         let _ = pipe(
-            executable: .name("sh"),
+            .name("sh"),
             arguments: ["-c", "echo test >&2"],
             options: .stderrToStdout
         ).finally(
@@ -1411,15 +1411,15 @@ extension PipeConfigurationTests {
 
         // Pipe pattern
         let _ =
-            pipe(executable: .name("echo"))
+            pipe(.name("echo"))
             | .name("cat")
             | .name("wc")
             |> .string(limit: .max)
 
         // Pipe pattern with error redirection
         let _ =
-            pipe(executable: .name("echo"))
-            | withOptions(
+            pipe(.name("echo"))
+            | (
                 configuration: Configuration(executable: .name("cat")),
                 options: .mergeErrors
             )
@@ -1429,14 +1429,14 @@ extension PipeConfigurationTests {
         // Complex pipeline pattern with process helper and error redirection
         let _ =
             pipe(
-                executable: .name("find"),
+                .name("find"),
                 arguments: ["/tmp"]
-            ) | process(executable: .name("head"), arguments: ["-10"], options: .stderrToStdout)
+            ) | (.name("head"), arguments: ["-10"], options: .stderrToStdout)
             | .name("sort")
-            | process(executable: .name("tail"), arguments: ["-5"]) |> .string(limit: .max)
+            | (.name("tail"), arguments: ["-5"]) |> .string(limit: .max)
 
         // Configuration-based pattern with error redirection
-        let config = Configuration(executable: .name("ls"))
+        let config = Configuration(.name("ls"))
         let _ =
             pipe(
                 config,
@@ -1448,7 +1448,7 @@ extension PipeConfigurationTests {
 
         // Swift function patterns (compilation only)
         let _ = pipe(
-            swiftFunction: { input, output, error in
+            { input, output, error in
                 // Compilation test - no execution needed
                 return 0
             }
@@ -1457,7 +1457,7 @@ extension PipeConfigurationTests {
         )
 
         let _ = pipe(
-            swiftFunction: { input, output, error in
+            { input, output, error in
                 // Compilation test - no execution needed
                 return 0
             }
@@ -1470,7 +1470,7 @@ extension PipeConfigurationTests {
         // Mixed pipeline with Swift functions (compilation only)
         let _ =
             pipe(
-                executable: .name("echo"),
+                .name("echo"),
                 arguments: ["start"]
             ) | { input, output, error in
                 // This is a compilation test - the function body doesn't need to be executable
@@ -1488,7 +1488,7 @@ extension PipeConfigurationTests {
         // Swift function with finally helper
         let _ =
             pipe(
-                executable: .name("echo")
+                .name("echo")
             ) | { input, output, error in
                 return 0
             } |> (
