@@ -294,9 +294,7 @@ extension PipeConfiguration {
             group.addTask {
                 let errorReadFileDescriptor = createIODescriptor(from: sharedErrorPipe.readEnd, closeWhenDone: true)
                 let errorReadEnd = errorReadFileDescriptor.createIOChannel()
-
                 let stderr = try await self.error.captureOutput(from: errorReadEnd)
-
                 return .stderr(stderr)
             }
 
@@ -342,11 +340,9 @@ extension PipeConfiguration {
                                         let originalResult = try await Subprocess.run(
                                             configuration,
                                             input: self.input,
-                                            output: .fileDescriptor(writeEnd, closeAfterSpawningProcess: false),
+                                            output: .fileDescriptor(writeEnd, closeAfterSpawningProcess: true),
                                             error: .combineWithOutput
                                         )
-
-                                        try writeEnd.close()
 
                                         taskResult = PipelineTaskResult.success(
                                             0,
@@ -471,11 +467,9 @@ extension PipeConfiguration {
                                         let originalResult = try await Subprocess.run(
                                             configuration,
                                             input: .fileDescriptor(readEnd, closeAfterSpawningProcess: true),
-                                            output: .fileDescriptor(writeEnd, closeAfterSpawningProcess: false),
+                                            output: .fileDescriptor(writeEnd, closeAfterSpawningProcess: true),
                                             error: .combineWithOutput
                                         )
-
-                                        try writeEnd.close()
 
                                         taskResult = PipelineTaskResult.success(
                                             i,

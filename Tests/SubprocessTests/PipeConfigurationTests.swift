@@ -30,6 +30,15 @@ func pipe(
     return [PipeStage(configuration: configurable.configuration, options: options)]
 }
 
+extension [PipeStage] {
+    func stage(
+        _ configurable: any Configurable,
+        options: ProcessStageOptions = .default
+    ) -> [PipeStage] {
+        return self.stage(configurable.configuration, options: options)
+    }
+}
+
 /// Pipe operator for stage arrays with Configuration
 func | (
     left: [PipeStage],
@@ -237,6 +246,8 @@ struct PipeConfigurationTests {
     @Test func testBasicPipeConfiguration() async throws {
         let config = pipe(
             Echo("Hello World")
+        ).stage(
+            Cat()
         ).finally(
             output: .string(limit: .max),
             error: .discarded
@@ -342,7 +353,7 @@ struct PipeConfigurationTests {
         let processConfig =
             pipe(
                 Echo("Test Message")
-            ) |> .string(limit: .max)
+            ) | Cat() |> .string(limit: .max)
 
         let result = try await processConfig.run()
         #expect(result.standardOutput?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) == "Test Message")
@@ -868,9 +879,9 @@ struct PipeConfigurationTests {
                 .name("powershell.exe"),
                 arguments: Arguments(["-Command", "'shell stdout'; [Console]::Error.WriteLine('shell stderr')"]),
                 options: .mergeErrors
-            ) |> (
+            ) | Grep("shell") |> (
                 output: .string(limit: .max),
-                error: .string(limit: .max)
+                error: .discarded
             )
         #else
         let config =
@@ -878,9 +889,9 @@ struct PipeConfigurationTests {
                 .name("sh"),
                 arguments: ["-c", "echo 'shell stdout'; echo 'shell stderr' >&2"],
                 options: .mergeErrors
-            ) |> (
+            ) | Grep("shell") |> (
                 output: .string(limit: .max),
-                error: .string(limit: .max)
+                error: .discarded
             )
         #endif
 
