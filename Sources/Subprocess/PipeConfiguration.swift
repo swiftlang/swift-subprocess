@@ -270,89 +270,12 @@ private func createPipe() throws -> (readEnd: FileDescriptor, writeEnd: FileDesc
 
 extension PipeConfiguration {
     public func run() async throws -> CollectedResult<Output, Error> {
-        if stages.count == 1 {
-            let stage = stages[0]
-
-            switch stage.stageType {
-            case .process(let configuration, let options):
-                // Single process - run directly with error redirection
-                switch options.errorRedirection {
-                case .separate:
-                    // No redirection - use original configuration
-                    return try await Subprocess.run(
-                        configuration,
-                        input: self.input,
-                        output: self.output,
-                        error: self.error
-                    )
-                case .mergeWithStdout:
-                    // Redirect stderr to stdout, merge both streams
-                    let finalResult = try await Subprocess.run(
-                        configuration,
-                        input: self.input,
-                        output: self.output,
-                        error: .combineWithOutput
-                    )
-
-                    let emptyError: Error.OutputType =
-                        if Error.OutputType.self == Void.self {
-                            () as! Error.OutputType
-                        } else if Error.OutputType.self == String?.self {
-                            String?.none as! Error.OutputType
-                        } else if Error.OutputType.self == [UInt8]?.self {
-                            [UInt8]?.none as! Error.OutputType
-                        } else {
-                            fatalError()
-                        }
-
-                    // Merge the different kinds of output types (string, fd, etc.)
-                    if Output.OutputType.self == Void.self {
-                        return CollectedResult<Output, Error>(
-                            processIdentifier: finalResult.processIdentifier,
-                            terminationStatus: finalResult.terminationStatus,
-                            standardOutput: () as! Output.OutputType,
-                            standardError: finalResult.standardOutput as! Error.OutputType
-                        )
-                    } else if Output.OutputType.self == String?.self {
-                        let out: String? = finalResult.standardOutput as! String?
-                        let err: String? = finalResult.standardError as! String?
-
-                        let finalOutput = (out ?? "") + (err ?? "")
-                        // FIXME reduce the final output to the output.maxSize number of bytes
-
-                        return CollectedResult<Output, Error>(
-                            processIdentifier: finalResult.processIdentifier,
-                            terminationStatus: finalResult.terminationStatus,
-                            standardOutput: finalOutput as! Output.OutputType,
-                            standardError: emptyError
-                        )
-                    } else if Output.OutputType.self == [UInt8].self {
-                        let out: [UInt8]? = finalResult.standardOutput as! [UInt8]?
-                        let err: [UInt8]? = finalResult.standardError as! [UInt8]?
-
-                        var finalOutput = (out ?? []) + (err ?? [])
-                        if finalOutput.count > self.output.maxSize {
-                            finalOutput = [UInt8](finalOutput[...self.output.maxSize])
-                        }
-
-                        return CollectedResult<Output, Error>(
-                            processIdentifier: finalResult.processIdentifier,
-                            terminationStatus: finalResult.terminationStatus,
-                            standardOutput: finalOutput as! Output.OutputType,
-                            standardError: emptyError
-                        )
-                    } else {
-                        fatalError()
-                    }
-                }
-
-            case .swiftFunction:
-                fatalError("Trivial pipeline with only a single swift function isn't supported")
-            }
-        } else {
-            // Pipeline - run with task group
-            return try await runPipeline()
+        guard stages.count > 1 else {
+            fatalError("Trivial pipeline with only a single stage isn't supported")
         }
+
+        // Pipeline - run with task group
+        return try await runPipeline()
     }
 
     enum CollectedPipeResult {
