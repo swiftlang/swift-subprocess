@@ -861,47 +861,6 @@ struct PipeConfigurationTests {
 
     // FIXME these tend to cause hangs on Windows in CI
     #if !os(Windows)
-    @Test func testReplaceStdoutErrorRedirection() async throws {
-        #if os(Windows)
-        let config =
-            pipe(
-                { input, output, err in
-                    _ = try await err.write("Swift function error\n")
-                    return 0
-                }
-            )
-            | (
-                .name("powershell.exe"),
-                arguments: Arguments(["-Command", "'shell stdout'; [Console]::Error.WriteLine('shell stderr')"]),
-                options: .stderrToStdout
-            ) |> (
-                output: .string(limit: .max),
-                error: .string(limit: .max)
-            )
-        #else
-        let config =
-            pipe(
-                { input, output, err in
-                    _ = try await err.write("Swift function error\n")
-                    return 0
-                }
-            )
-            | (
-                .name("sh"),
-                arguments: ["-c", "echo 'shell stdout'; echo 'shell stderr' >&2"],
-                options: .stderrToStdout
-            ) |> (
-                output: .string(limit: .max),
-                error: .string(limit: .max)
-            )
-        #endif
-
-        let result = try await config.run()
-        // With replaceStdout, the stderr content should appear as stdout
-        #expect(result.standardOutput?.contains("stderr") == true)
-        #expect(result.terminationStatus.isSuccess)
-    }
-
     @Test func testMergeErrorRedirection() async throws {
         #if os(Windows)
         let config =
@@ -1403,7 +1362,7 @@ extension PipeConfigurationTests {
         let _ = pipe(
             .name("sh"),
             arguments: ["-c", "echo test >&2"],
-            options: .stderrToStdout
+            options: .mergeErrors
         ).finally(
             output: .string(limit: .max),
             error: .string(limit: .max)
@@ -1431,7 +1390,7 @@ extension PipeConfigurationTests {
             pipe(
                 .name("find"),
                 arguments: ["/tmp"]
-            ) | (.name("head"), arguments: ["-10"], options: .stderrToStdout)
+            ) | (.name("head"), arguments: ["-10"], options: .mergeErrors)
             | .name("sort")
             | (.name("tail"), arguments: ["-5"]) |> .string(limit: .max)
 
