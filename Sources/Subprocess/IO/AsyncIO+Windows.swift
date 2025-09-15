@@ -59,7 +59,7 @@ final class AsyncIO: @unchecked Sendable {
 
     internal init() {
         var maybeSetupError: SubprocessError? = nil
-        // Create the the completion port
+        // Create the completion port
         guard
             let ioCompletionPort = CreateIoCompletionPort(
                 INVALID_HANDLE_VALUE, nil, 0, 0

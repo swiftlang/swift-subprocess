@@ -130,7 +130,7 @@ internal func monitorProcessTermination(
                     case let .success(status?):
                         return .success(status)
                     case .success(nil):
-                        // Save this continuation to be called by signal hander
+                        // Save this continuation to be called by signal handler
                         var newState = storage
                         newState.continuations[processIdentifier.value] = continuation
                         state = .started(newState)
@@ -350,7 +350,7 @@ private let setup: () = {
             return
         }
         // Register the read end with epoll so we can get updates
-        // about it. The write end is written by the signal hander
+        // about it. The write end is written by the signal handler
         var event = epoll_event(
             events: EPOLLIN.rawValue,
             data: epoll_data(fd: _signalPipe.readEnd)
