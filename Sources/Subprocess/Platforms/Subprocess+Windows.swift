@@ -1015,7 +1015,13 @@ extension Configuration {
             // Combine current environment
             env = Environment.currentEnvironmentValues()
             for (key, value) in updateValues {
-                env.updateValue(value, forKey: key)
+                if let value {
+                    // Update env with ew value
+                    env.updateValue(value, forKey: key)
+                } else {
+                    // If `value` is `nil`, unset this value from env
+                    env.removeValue(forKey: key)
+                }
             }
         }
         // On Windows, the PATH is required in order to locate dlls needed by

@@ -310,6 +310,82 @@ extension SubprocessIntegrationTests {
         )
     }
 
+    @Test func testEnvironmentInheritOverrideUnsetValue() async throws {
+        #if os(Windows)
+        // First insert our dummy environment variable
+        "SubprocessTest".withCString(encodedAs: UTF16.self) { keyW in
+            "value".withCString(encodedAs: UTF16.self) { valueW in
+                SetEnvironmentVariableW(keyW, valueW)
+            }
+        }
+        defer {
+            "SubprocessTest".withCString(encodedAs: UTF16.self) { keyW in
+                SetEnvironmentVariableW(keyW, nil)
+            }
+        }
+
+        var setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: ["/c", "echo %SubprocessTest%"],
+            environment: .inherit
+        )
+        #else
+        // First insert our dummy environment variable
+        setenv("SubprocessTest", "value", 1);
+        defer {
+            unsetenv("SubprocessTest")
+        }
+
+        var setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "printenv SubprocessTest"],
+            environment: .inherit
+        )
+        #endif
+        // First make sure child process actually inherited SubprocessTest
+        let result = try await _run(
+            setup,
+            input: .none,
+            output: .string(limit: 32),
+            error: .discarded
+        )
+        #expect(result.terminationStatus.isSuccess)
+        // rdar://138670128
+        // https://github.com/swiftlang/swift/issues/77235
+        let output = result.standardOutput?
+            .trimmingNewLineAndQuotes()
+        #expect(output == "value")
+
+        // Now make sure we can remove `SubprocessTest`
+        #if os(Windows)
+        setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: ["/c", "echo %SubprocessTest%"],
+            environment: .inherit
+                .updating(["SubprocessTest": nil])
+        )
+        #else
+        setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "printenv SubprocessTest"],
+            environment: .inherit
+                .updating(["SubprocessTest": nil])
+        )
+        #endif
+        let result2 = try await _run(
+            setup,
+            input: .none,
+            output: .string(limit: 32),
+            error: .discarded
+        )
+        // The new echo/printenv should not find `SubprocessTest`
+        #if os(Windows)
+        #expect(result2.standardOutput?.trimmingNewLineAndQuotes() == "%SubprocessTest%")
+        #else
+        #expect(result2.terminationStatus == .exited(1))
+        #endif
+    }
+
     @Test(
         // Make sure we don't accidentally have this dummy value
         .enabled(if: ProcessInfo.processInfo.environment["SystemRoot"] != nil)

@@ -401,7 +401,7 @@ extension Arguments: CustomStringConvertible, CustomDebugStringConvertible {
 /// A set of environment variables to use when executing the subprocess.
 public struct Environment: Sendable, Hashable {
     internal enum Configuration: Sendable, Hashable {
-        case inherit([Key: String])
+        case inherit([Key: String?])
         case custom([Key: String])
         #if !os(Windows)
         case rawBytes([[UInt8]])
@@ -418,8 +418,10 @@ public struct Environment: Sendable, Hashable {
     public static var inherit: Self {
         return .init(config: .inherit([:]))
     }
-    /// Override the provided `newValue` in the existing `Environment`
-    public func updating(_ newValue: [Key: String]) -> Self {
+    /// Override the provided `newValue` in the existing `Environment`.
+    /// Keys with `nil` values in `newValue` will be removed from existing
+    /// `Environment` before passing to child process.
+    public func updating(_ newValue: [Key: String?]) -> Self {
         return .init(config: .inherit(newValue))
     }
     /// Use custom environment variables

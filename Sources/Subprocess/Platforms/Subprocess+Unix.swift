@@ -203,9 +203,13 @@ extension Environment {
             var current = Self.currentEnvironmentValues()
             for (key, value) in updates {
                 // Remove the value from current to override it
+                // If the `value` is nil, we effectively "unset"
+                // this value from current
                 current.removeValue(forKey: key)
-                let fullString = "\(key)=\(value)"
-                env.append(strdup(fullString))
+                if let value {
+                    let fullString = "\(key)=\(value)"
+                    env.append(strdup(fullString))
+                }
             }
             // Add the rest of `current` to env
             for (key, value) in current {
