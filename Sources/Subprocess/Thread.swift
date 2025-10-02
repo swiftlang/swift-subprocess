@@ -77,12 +77,33 @@ private struct BackgroundWorkItem {
 // We can't use Mutex directly here because we need the underlying `pthread_mutex_t` to be
 // exposed so we can use it with `pthread_cond_wait`.
 private final class WorkQueue: Sendable {
-    private nonisolated(unsafe) var queue: [BackgroundWorkItem]
+    // Queue needs to be a reference type because we pass it inout
+    final class Queue: Sendable {
+        internal nonisolated(unsafe) var queue: [BackgroundWorkItem]
+
+        var isEmpty: Bool { self.queue.isEmpty }
+
+        func append(_ item: BackgroundWorkItem) {
+            self.queue.append(item)
+        }
+
+        func removeFirst() -> BackgroundWorkItem {
+            return self.queue.removeFirst()
+        }
+
+        func removeAll() { self.queue.removeAll() }
+
+        init() {
+            self.queue = []
+        }
+    }
+
+    private nonisolated(unsafe) var queue: Queue
     internal nonisolated(unsafe) let mutex: UnsafeMutablePointer<MutexType>
     internal nonisolated(unsafe) let waitCondition: UnsafeMutablePointer<ConditionType>
 
     init() {
-        self.queue = []
+        self.queue = Queue()
         self.mutex = UnsafeMutablePointer<MutexType>.allocate(capacity: 1)
         self.waitCondition = UnsafeMutablePointer<ConditionType>.allocate(capacity: 1)
         #if canImport(WinSDK)
@@ -94,14 +115,14 @@ private final class WorkQueue: Sendable {
         #endif
     }
 
-    func withLock<R>(_ body: (inout [BackgroundWorkItem]) throws -> R) rethrows -> R {
+    func withLock<R>(_ body: (inout Queue) throws -> R) rethrows -> R {
         try withUnsafeUnderlyingLock { _, queue in
             try body(&queue)
         }
     }
 
     private func withUnsafeUnderlyingLock<R>(
-        _ body: (UnsafeMutablePointer<MutexType>, inout [BackgroundWorkItem]) throws -> R
+        _ body: (UnsafeMutablePointer<MutexType>, inout Queue) throws -> R
     ) rethrows -> R {
         #if canImport(WinSDK)
         EnterCriticalSection(self.mutex)
