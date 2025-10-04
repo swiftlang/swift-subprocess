@@ -35,6 +35,10 @@
 #include <sys/wait.h>
 #endif // TARGET_OS_LINUX || TARGET_OS_FREEBSD
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #if __has_include(<mach/vm_page_size.h>)
 vm_size_t _subprocess_vm_size(void);
 #endif
@@ -102,11 +106,19 @@ int _pidfd_open(pid_t pid);
 
 #endif
 
+#ifdef __cplusplus
+} // extern "C"
+#endif
+
 #endif // !TARGET_OS_WINDOWS
 
 #if TARGET_OS_WINDOWS
 
 #include <Windows.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #ifndef _WINDEF_
 typedef unsigned long DWORD;
@@ -121,6 +133,10 @@ unsigned int _subprocess_windows_get_errno(void);
 /// This function is provided because `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` is a
 /// complex macro and cannot be imported directly into Swift.
 DWORD_PTR _subprocess_PROC_THREAD_ATTRIBUTE_HANDLE_LIST(void);
+
+#ifdef __cplusplus
+} // extern "C"
+#endif
 
 #endif
 
