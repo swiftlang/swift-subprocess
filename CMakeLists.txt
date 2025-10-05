@@ -42,3 +42,5 @@ add_subdirectory(Sources)
 export(EXPORT SwiftSubprocessTargets
   FILE "cmake/SwiftSubprocess/SwiftSubprocessTargets.cmake"
   NAMESPACE "SwiftSubprocess::")
+
+add_subdirectory(cmake/modules)
