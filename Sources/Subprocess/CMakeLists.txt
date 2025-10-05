@@ -41,13 +41,13 @@ elseif(APPLE)
     Platforms/Subprocess+Darwin.swift
     Platforms/Subprocess+Unix.swift)
   target_compile_options(Subprocess PRIVATE
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-D SUBPROCESS_ASYNCIO_DISPATCH>")
+    "$<$<COMPILE_LANGUAGE:Swift>:-DSUBPROCESS_ASYNCIO_DISPATCH>")
 elseif(FREEBSD OR OPENBSD)
   target_sources(Subprocess PRIVATE
     Platforms/Subprocess+BSD.swift
     Platforms/Subprocess+Unix.swift)
   target_compile_options(Subprocess PRIVATE
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-D SUBPROCESS_ASYNCIO_DISPATCH>")
+    "$<$<COMPILE_LANGUAGE:Swift>:-DSUBPROCESS_ASYNCIO_DISPATCH>")
 endif()
 
 target_compile_options(Subprocess PRIVATE
