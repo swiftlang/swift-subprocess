@@ -1166,8 +1166,20 @@ extension Configuration {
             DeleteProcThreadAttributeList(attributeList)
         }
 
-        var handles = Array(inheritedHandles)
-        handles.withUnsafeMutableBufferPointer { inheritedHandlesPtr in
+        let handles = Array(inheritedHandles)
+
+        // Manually allocate an array instead of using withUnsafeMutableBufferPointer, since the
+        // UpdateProcThreadAttribute documentation states that the lpValue pointer must persist
+        // until the attribute list is destroyed using DeleteProcThreadAttributeList.
+        let handlesPointer = UnsafeMutablePointer<HANDLE>.allocate(capacity: handles.count)
+        defer {
+            handlesPointer.deinitialize(count: handles.count)
+            handlesPointer.deallocate()
+        }
+        handlesPointer.initialize(from: handles, count: handles.count)
+        let inheritedHandlesPtr = UnsafeMutableBufferPointer(start: handlesPointer, count: handles.count)
+
+        do {
             _ = UpdateProcThreadAttribute(
                 attributeList,
                 0,

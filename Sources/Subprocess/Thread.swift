@@ -101,7 +101,8 @@ private final class WorkQueue: Sendable {
     }
 
     private func withUnsafeUnderlyingLock<R>(
-        _ body: (UnsafeMutablePointer<MutexType>, inout [BackgroundWorkItem]) throws -> R
+        condition: (inout [BackgroundWorkItem]) -> Bool = { _ in false },
+        body: (UnsafeMutablePointer<MutexType>, inout [BackgroundWorkItem]) throws -> R
     ) rethrows -> R {
         #if canImport(WinSDK)
         EnterCriticalSection(self.mutex)
@@ -114,20 +115,22 @@ private final class WorkQueue: Sendable {
             pthread_mutex_unlock(mutex)
         }
         #endif
+        if condition(&queue) {
+            #if canImport(WinSDK)
+            SleepConditionVariableCS(self.waitCondition, mutex, INFINITE)
+            #else
+            pthread_cond_wait(self.waitCondition, mutex)
+            #endif
+        }
         return try body(mutex, &queue)
     }
 
     // Only called in worker thread. Sleeps the thread if there's no more item
     func dequeue() -> BackgroundWorkItem? {
-        return self.withUnsafeUnderlyingLock { mutex, queue in
-            if queue.isEmpty {
-                // Sleep the worker thread if there's no more work
-                #if canImport(WinSDK)
-                SleepConditionVariableCS(self.waitCondition, mutex, INFINITE)
-                #else
-                pthread_cond_wait(self.waitCondition, mutex)
-                #endif
-            }
+        return self.withUnsafeUnderlyingLock { queue in
+            // Sleep the worker thread if there's no more work
+            queue.isEmpty
+        } body: { mutex, queue in
             guard !queue.isEmpty else {
                 return nil
             }
