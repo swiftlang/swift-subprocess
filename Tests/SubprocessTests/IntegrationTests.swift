@@ -435,6 +435,132 @@ extension SubprocessIntegrationTests {
         )
         #endif
     }
+
+    @Test func testEnvironmentCustomUpdating() async throws {
+        #if os(Windows)
+        let pathValue = ProcessInfo.processInfo.environment["Path"] ?? ProcessInfo.processInfo.environment["PATH"] ?? ProcessInfo.processInfo.environment["path"]
+        let customPath = "C:\\Custom\\Path"
+        let setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: ["/c", "echo %CUSTOMPATH%"],
+            environment: .custom([
+                "Path": try #require(pathValue),
+                "ComSpec": try #require(ProcessInfo.processInfo.environment["ComSpec"]),
+            ]).updating([
+                "CUSTOMPATH": customPath
+            ])
+        )
+        #else
+        let customPath = "/custom/path"
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "printenv CUSTOMPATH"],
+            environment: .custom([
+                "PATH": "/bin:/usr/bin"
+            ]).updating([
+                "CUSTOMPATH": customPath
+            ])
+        )
+        #endif
+        let result = try await _run(
+            setup,
+            input: .none,
+            output: .string(limit: 32),
+            error: .discarded
+        )
+        #expect(result.terminationStatus.isSuccess)
+        let output = result.standardOutput?
+            .trimmingNewLineAndQuotes()
+        #expect(
+            output == customPath
+        )
+    }
+
+    @Test func testEnvironmentCustomUpdatingUnsetValue() async throws {
+        #if os(Windows)
+        let pathValue = ProcessInfo.processInfo.environment["Path"] ?? ProcessInfo.processInfo.environment["PATH"] ?? ProcessInfo.processInfo.environment["path"]
+        let setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: ["/c", "echo %REMOVEME%"],
+            environment: .custom([
+                "Path": try #require(pathValue),
+                "ComSpec": try #require(ProcessInfo.processInfo.environment["ComSpec"]),
+                "REMOVEME": "value",
+            ]).updating([
+                "REMOVEME": nil
+            ])
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "printenv REMOVEME"],
+            environment: .custom([
+                "PATH": "/bin:/usr/bin",
+                "REMOVEME": "value",
+            ]).updating([
+                "REMOVEME": nil
+            ])
+        )
+        #endif
+        let result = try await _run(
+            setup,
+            input: .none,
+            output: .string(limit: 32),
+            error: .discarded
+        )
+        #if os(Windows)
+        #expect(result.standardOutput?.trimmingNewLineAndQuotes() == "%REMOVEME%")
+        #else
+        #expect(result.terminationStatus == .exited(1))
+        #endif
+    }
+
+    #if !os(Windows)
+    @Test func testEnvironmentRawBytesUpdating() async throws {
+        let customValue = "rawbytes_value"
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "printenv CUSTOMVAR"],
+            environment: .custom([
+                Array("PATH=/bin:/usr/bin\0".utf8)
+            ]).updating([
+                "CUSTOMVAR": customValue
+            ])
+        )
+        let result = try await _run(
+            setup,
+            input: .none,
+            output: .string(limit: 32),
+            error: .discarded
+        )
+        #expect(result.terminationStatus.isSuccess)
+        let output = result.standardOutput?
+            .trimmingNewLineAndQuotes()
+        #expect(
+            output == customValue
+        )
+    }
+
+    @Test func testEnvironmentRawBytesUpdatingUnsetValue() async throws {
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "printenv REMOVEME"],
+            environment: .custom([
+                Array("PATH=/bin:/usr/bin\0".utf8),
+                Array("REMOVEME=value\0".utf8),
+            ]).updating([
+                "REMOVEME": nil
+            ])
+        )
+        let result = try await _run(
+            setup,
+            input: .none,
+            output: .string(limit: 32),
+            error: .discarded
+        )
+        #expect(result.terminationStatus == .exited(1))
+    }
+    #endif
 }
 
 // MARK: - Working Directory Tests

@@ -422,7 +422,32 @@ public struct Environment: Sendable, Hashable {
     /// Keys with `nil` values in `newValue` will be removed from existing
     /// `Environment` before passing to child process.
     public func updating(_ newValue: [Key: String?]) -> Self {
-        return .init(config: .inherit(newValue))
+        switch config {
+        case .inherit(var overrides):
+            for (key, value) in newValue {
+                overrides[key] = value
+            }
+            return .init(config: .inherit(overrides))
+        case .custom(var environment):
+            for (key, value) in newValue {
+                environment[key] = value
+            }
+            return .init(config: .custom(environment))
+        #if !os(Windows)
+        case .rawBytes(var rawBytesArray):
+            let overriddenKeys = newValue.keys.map { Array("\($0)=".utf8) }
+            rawBytesArray.removeAll {
+                overriddenKeys.contains(where: $0.starts)
+            }
+
+            for (key, value) in newValue {
+                if let value {
+                    rawBytesArray.append(Array("\(key)=\(value)\0".utf8))
+                }
+            }
+            return .init(config: .rawBytes(rawBytesArray))
+        #endif
+        }
     }
     /// Use custom environment variables
     public static func custom(_ newValue: [Key: String]) -> Self {
