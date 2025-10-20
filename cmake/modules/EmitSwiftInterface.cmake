@@ -38,6 +38,9 @@ function(emit_swift_interface target)
   target_sources(${target}
     INTERFACE
       $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/${module_name}.swiftmodule/${${PROJECT_NAME}_MODULE_TRIPLE}.swiftmodule>)
+      
+set_target_properties(${target} PROPERTIES
+  INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_CURRENT_BINARY_DIR})
 
   # Generate textual swift interfaces is library-evolution is enabled
   if(${PROJECT_NAME}_ENABLE_LIBRARY_EVOLUTION)
