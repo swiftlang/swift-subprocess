@@ -79,6 +79,15 @@ int _was_process_suspended(int status) {
     return WIFSTOPPED(status);
 }
 
+int _subprocess_pthread_create(
+    pthread_t * _Nonnull ptr,
+    pthread_attr_t const * _Nullable attr,
+    void * _Nullable (* _Nonnull start)(void * _Nullable),
+    void * _Nullable context
+) {
+    return pthread_create(ptr, attr, start, context);
+}
+
 #endif
 
 #if __has_include(<mach/vm_page_size.h>)

@@ -15,6 +15,7 @@
 #include "target_conditionals.h"
 
 #if !TARGET_OS_WINDOWS
+#include <pthread.h>
 #include <unistd.h>
 
 #if _POSIX_SPAWN
@@ -38,6 +39,13 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+int _subprocess_pthread_create(
+    pthread_t * _Nonnull ptr,
+    pthread_attr_t const * _Nullable attr,
+    void * _Nullable (* _Nonnull start)(void * _Nullable),
+    void * _Nullable context
+);
 
 #if __has_include(<mach/vm_page_size.h>)
 vm_size_t _subprocess_vm_size(void);
