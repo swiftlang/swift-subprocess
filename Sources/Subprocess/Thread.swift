@@ -307,29 +307,16 @@ internal func pthread_create(
             self.body = body
         }
     }
-    #if canImport(Darwin)
-    func proc(_ context: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer? {
-        (Unmanaged<AnyObject>.fromOpaque(context).takeRetainedValue() as! Context).body()
-        return context
-    }
-    #elseif canImport(Glibc) || canImport(Musl)
     func proc(_ context: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
         (Unmanaged<AnyObject>.fromOpaque(context!).takeRetainedValue() as! Context).body()
         return context
     }
-    #elseif canImport(Bionic)
-    func proc(_ context: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer {
-        (Unmanaged<AnyObject>.fromOpaque(context).takeRetainedValue() as! Context).body()
-        return context
-    }
-    #endif
-
     #if canImport(Glibc) || canImport(Bionic)
     var thread = pthread_t()
     #else
     var thread: pthread_t?
     #endif
-    let rc = pthread_create(
+    let rc = _subprocess_pthread_create(
         &thread,
         nil,
         proc,
