@@ -166,8 +166,16 @@ final class AsyncIO: Sendable {
     }
 }
 
-#if !canImport(Darwin)
+#if canImport(Darwin)
+// Dispatch has a -user-module-version of 54 in the macOS 15.3 SDK
+#if canImport(Dispatch, _version: "54")
+// DispatchData is annotated as Sendable
+#else
+// Retroactively conform DispatchData to Sendable
 extension DispatchData: @retroactive @unchecked Sendable {}
-#endif
+#endif // canImport(Dispatch, _version: "54")
+#else
+extension DispatchData: @retroactive @unchecked Sendable {}
+#endif // canImport(Darwin)
 
-#endif
+#endif // SUBPROCESS_ASYNCIO_DISPATCH
