@@ -39,7 +39,7 @@ jobs:
       macos_build_command: 'xcrun swift-format lint -s -r --configuration ./.swift-format . && xcrun swift test && xcrun swift test -c release && xcrun swift test --disable-default-traits'
       enable_linux_static_sdk_build: true
       enable_android_sdk_build: true
-      android_ndk_version: '["r27d", "r29"]'
+      android_ndk_versions: '["r27d", "r29"]'
       linux_static_sdk_versions: '["6.1", "nightly-6.2"]'
       linux_static_sdk_build_command: |
         for triple in aarch64-swift-linux-musl x86_64-swift-linux-musl ; do
