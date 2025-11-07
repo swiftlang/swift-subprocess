@@ -21,7 +21,7 @@ dep.append(
 // Enable SubprocessFoundation by default
 var defaultTraits: Set<String> = ["SubprocessFoundation"]
 
-#if compiler(>=6.3) || (compiler(>=6.2) && (os(Linux) || os(Windows) || os(FreeBSD)))
+#if compiler(>=6.2)
 // Enable SubprocessSpan when Span is available
 defaultTraits.insert("SubprocessSpan")
 #endif
