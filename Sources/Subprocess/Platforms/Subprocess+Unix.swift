@@ -271,15 +271,13 @@ extension Arguments {
 
 // MARK: -  Executable Searching
 extension Executable {
-    internal static var defaultSearchPaths: Set<String> {
-        return Set([
-            "/usr/bin",
-            "/bin",
-            "/usr/sbin",
-            "/sbin",
-            "/usr/local/bin",
-        ])
-    }
+    internal static let defaultSearchPaths = [
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+        "/usr/local/bin",
+    ]
 
     internal func resolveExecutablePath(withPathValue pathValue: String?) throws -> String {
         switch self.storage {
@@ -288,21 +286,10 @@ extension Executable {
             if Configuration.pathAccessible(executableName, mode: X_OK) {
                 return executableName
             }
-            // Get $PATH from environment
-            let searchPaths: Set<String>
-            if let pathValue = pathValue {
-                let localSearchPaths = pathValue.split(separator: ":").map { String($0) }
-                searchPaths = Set(localSearchPaths).union(Self.defaultSearchPaths)
-            } else {
-                searchPaths = Self.defaultSearchPaths
-            }
-
-            for path in searchPaths {
-                let fullPath = "\(path)/\(executableName)"
-                let fileExists = Configuration.pathAccessible(fullPath, mode: X_OK)
-                if fileExists {
-                    return fullPath
-                }
+            let firstAccessibleExecutable = possibleExecutablePaths(withPathValue: pathValue)
+                .first { Configuration.pathAccessible($0, mode: X_OK) }
+            if let firstAccessibleExecutable {
+                return firstAccessibleExecutable
             }
             throw SubprocessError(
                 code: .init(.executableNotFound(executableName)),
@@ -323,13 +310,12 @@ extension Executable {
             // executableName could be a full path
             results.insert(executableName)
             // Get $PATH from environment
-            let searchPaths: Set<String>
-            if let pathValue = pathValue {
-                let localSearchPaths = pathValue.split(separator: ":").map { String($0) }
-                searchPaths = Set(localSearchPaths).union(Self.defaultSearchPaths)
-            } else {
-                searchPaths = Self.defaultSearchPaths
-            }
+            let searchPaths =
+                if let pathValue = pathValue {
+                    pathValue.split(separator: ":").map { String($0) } + Self.defaultSearchPaths
+                } else {
+                    Self.defaultSearchPaths
+                }
             for path in searchPaths {
                 results.insert(
                     FilePath(path).appending(executableName).string

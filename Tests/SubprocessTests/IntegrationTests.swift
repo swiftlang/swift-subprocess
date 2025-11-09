@@ -136,6 +136,66 @@ extension SubprocessIntegrationTests {
             _ = try await Subprocess.run(.path(fakePath), output: .discarded)
         }
     }
+
+    #if !os(Windows)
+    /// Integration test verifying that subprocess execution respects PATH ordering.
+    @Test func testPathOrderingIsRespected() async throws {
+        // Create temporary directories to simulate a PATH with multiple executables.
+        let tempDir = FileManager.default.temporaryDirectory
+        let firstDir = tempDir.appendingPathComponent("path-test-first-\(UUID().uuidString)")
+        let secondDir = tempDir.appendingPathComponent("path-test-second-\(UUID().uuidString)")
+
+        try FileManager.default.createDirectory(at: firstDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: secondDir, withIntermediateDirectories: true)
+
+        defer {
+            try? FileManager.default.removeItem(at: firstDir)
+            try? FileManager.default.removeItem(at: secondDir)
+        }
+
+        // Create two different "test-executable" scripts that output different values.
+        let executableName = "test-executable-\(UUID().uuidString)"
+
+        // First
+        let firstExecutable = firstDir.appendingPathComponent(executableName)
+        try """
+        #!/bin/sh
+        echo "FIRST"
+        """.write(to: firstExecutable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: firstExecutable.path())
+
+        // Second
+        let secondExecutable = secondDir.appendingPathComponent(executableName)
+        try """
+        #!/bin/sh
+        echo "SECOND"
+        """.write(to: secondExecutable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: secondExecutable.path())
+
+        // Run repeatedly to increase chance of catching any ordering issues.
+        for _ in 0..<10 {
+            let first = try await Subprocess.run(
+                .name(executableName),
+                environment: .inherit.updating([
+                    "PATH": "\(firstDir.path()):\(secondDir.path())"
+                ]),
+                output: .string(limit: 8)
+            )
+            #expect(first.terminationStatus.isSuccess)
+            #expect(first.standardOutput?.trimmingNewLineAndQuotes() == "FIRST")
+
+            let second = try await Subprocess.run(
+                .name(executableName),
+                environment: .inherit.updating([
+                    "PATH": "\(secondDir.path()):\(firstDir.path())"
+                ]),
+                output: .string(limit: 8)
+            )
+            #expect(second.terminationStatus.isSuccess)
+            #expect(second.standardOutput?.trimmingNewLineAndQuotes() == "SECOND")
+        }
+    }
+    #endif
 }
 
 // MARK: - Argument Tests
