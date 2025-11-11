@@ -201,6 +201,58 @@ extension SubprocessUnixTests {
     }
 }
 
+// MARK: - PATH Resolution Tests
+extension SubprocessUnixTests {
+    @Test func testExecutablePathsPreserveOrder() throws {
+        let executable = Executable.name("test-bin")
+        let pathValue = "/first/path:/second/path:/third/path"
+
+        let paths = executable.possibleExecutablePaths(withPathValue: pathValue)
+        let pathsArray = Array(paths)
+
+        #expect(
+            pathsArray == [
+                "test-bin",
+                "/first/path/test-bin",
+                "/second/path/test-bin",
+                "/third/path/test-bin",
+
+                // Default search paths
+                "/usr/bin/test-bin",
+                "/bin/test-bin",
+                "/usr/sbin/test-bin",
+                "/sbin/test-bin",
+                "/usr/local/bin/test-bin",
+            ])
+    }
+
+    @Test func testNoDuplicatedExecutablePaths() throws {
+        let executable = Executable.name("test-bin")
+        let duplicatePath = "/first/path:/first/path:/second/path"
+        let duplicatePaths = executable.possibleExecutablePaths(withPathValue: duplicatePath)
+
+        #expect(Array(duplicatePaths).count == Set(duplicatePaths).count)
+    }
+
+    @Test func testPossibleExecutablePathsWithNilPATH() throws {
+        let executable = Executable.name("test-bin")
+        let paths = executable.possibleExecutablePaths(withPathValue: nil)
+        let pathsArray = Array(paths)
+
+        #expect(
+            pathsArray == [
+                "test-bin",
+
+                // Default search paths
+                "/usr/bin/test-bin",
+                "/bin/test-bin",
+                "/usr/sbin/test-bin",
+                "/sbin/test-bin",
+                "/usr/local/bin/test-bin",
+            ])
+    }
+}
+
 // MARK: - Misc
 extension SubprocessUnixTests {
     @Test func testExitSignal() async throws {
