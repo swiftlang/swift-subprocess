@@ -31,17 +31,20 @@ final class AsyncIO: Sendable {
 
     internal func read(
         from diskIO: borrowing IOChannel,
-        upTo maxLength: Int
+        upTo maxLength: Int,
+        isAsyncIO: Bool = true,
     ) async throws -> DispatchData? {
         return try await self.read(
             from: diskIO.channel,
             upTo: maxLength,
+            isAsyncIO: isAsyncIO,
         )
     }
 
     internal func read(
         from dispatchIO: DispatchIO,
-        upTo maxLength: Int
+        upTo maxLength: Int,
+        isAsyncIO: Bool,
     ) async throws -> DispatchData? {
         return try await withCheckedThrowingContinuation { continuation in
             var buffer: DispatchData = .empty
