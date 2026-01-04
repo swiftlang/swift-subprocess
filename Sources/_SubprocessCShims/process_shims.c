@@ -30,7 +30,6 @@
 #include <unistd.h>
 #include <grp.h>
 #include <signal.h>
-#include <signal.h>
 #include <string.h>
 #include <fcntl.h>
 #include <pthread.h>
