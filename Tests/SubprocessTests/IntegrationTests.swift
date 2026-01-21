@@ -620,6 +620,30 @@ extension SubprocessIntegrationTests {
         )
         #expect(result.terminationStatus == .exited(1))
     }
+
+    @Test func testEnvironmentPathWithNonDirectoryPaths() async throws {
+        // This test makes sure we can handle environment path value like
+        // PATH="$PATH:$HOME/Desktop/.DS_Store"
+        // posix_spawn returns ENOTDIR in this case because `.DS_Store` is a valid
+        // file, but not a directory so it can't append the executable name.
+        let setup = TestSetup(
+            executable: .name("echo"),
+            arguments: ["testEnvironmentPathWithNonDirectoryPaths"],
+            environment: .inherit.updating([
+                // /bin/ls is a valid file, but not directory
+                "PATH": "/bin/ls"
+            ])
+        )
+
+        let result = try await _run(
+            setup,
+            input: .none,
+            output: .string(limit: 64),
+            error: .discarded
+        )
+        #expect(result.terminationStatus.isSuccess)
+        #expect(result.standardOutput?.trimmingNewLineAndQuotes() == "testEnvironmentPathWithNonDirectoryPaths")
+    }
     #endif
 }
 
