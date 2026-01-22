@@ -77,7 +77,8 @@ public struct PlatformOptions: Sendable {
     /// they are sent to `posix_spawn()`.
     public var preSpawnProcessConfigurator:
         (
-            @Sendable (
+            @Sendable
+            (
                 inout posix_spawnattr_t?,
                 inout posix_spawn_file_actions_t?
             ) throws -> Void
@@ -438,7 +439,7 @@ extension Configuration {
                 }
                 // Spawn error
                 if spawnError != 0 {
-                    if spawnError == ENOENT || spawnError == EACCES {
+                    if [ENOENT, EACCES, ENOTDIR].contains(spawnError) {
                         // Move on to another possible path
                         continue
                     }

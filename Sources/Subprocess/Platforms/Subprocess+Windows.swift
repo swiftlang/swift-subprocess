@@ -568,7 +568,8 @@ public struct PlatformOptions: Sendable {
     /// they are sent to `CreateProcessW()`.
     public var preSpawnProcessConfigurator:
         (
-            @Sendable (
+            @Sendable
+            (
                 inout DWORD,
                 inout STARTUPINFOW
             ) throws -> Void
