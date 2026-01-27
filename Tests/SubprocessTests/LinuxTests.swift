@@ -20,6 +20,12 @@ import Glibc
 import Musl
 #endif
 
+#if canImport(System)
+@preconcurrency import System
+#else
+@preconcurrency import SystemPackage
+#endif
+
 import FoundationEssentials
 
 import Testing
@@ -42,7 +48,7 @@ struct SubprocessLinuxTests {
                         var suspendedStatus: Int32 = 0
                         let rc = waitpid(pid, &suspendedStatus, targetSignal)
                         if rc == -1 {
-                            continuation.resume(throwing: SubprocessError.UnderlyingError(rawValue: errno))
+                            continuation.resume(throwing: Errno(rawValue: errno))
                             return
                         }
                         handler(suspendedStatus)

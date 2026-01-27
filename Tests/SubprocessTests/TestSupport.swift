@@ -20,10 +20,16 @@ import FoundationEssentials
 import Testing
 import Subprocess
 
+#if canImport(System)
+@preconcurrency import System
+#else
+@preconcurrency import SystemPackage
+#endif
+
 // Workaround: https://github.com/swiftlang/swift-testing/issues/543
 internal func _require<T: ~Copyable>(_ value: consuming T?) throws -> T {
     guard let value else {
-        throw SubprocessError.UnderlyingError(rawValue: .max)
+        throw Errno(rawValue: .max)
     }
     return value
 }
@@ -72,3 +78,23 @@ extension Trait where Self == ConditionTrait {
         )
     }
 }
+
+#if os(Windows)
+extension SubprocessError.WindowsError {
+    func equals(to error: (any Error)?) -> Bool {
+        guard let windowsError = error as? SubprocessError.WindowsError else {
+            return false
+        }
+        return self.rawValue == windowsError.rawValue
+    }
+}
+#else
+extension Errno {
+    func equals(to error: (any Error)?) -> Bool {
+        guard let errnoError = error as? Errno else {
+            return false
+        }
+        return self.rawValue == errnoError.rawValue
+    }
+}
+#endif

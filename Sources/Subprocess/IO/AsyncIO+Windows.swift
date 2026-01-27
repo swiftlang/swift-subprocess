@@ -65,9 +65,9 @@ final class AsyncIO: @unchecked Sendable {
                 INVALID_HANDLE_VALUE, nil, 0, 0
             ), ioCompletionPort != INVALID_HANDLE_VALUE
         else {
-            let error = SubprocessError(
-                code: .init(.asyncIOFailed("CreateIoCompletionPort failed")),
-                underlyingError: .init(rawValue: GetLastError())
+            let error: SubprocessError = .asyncIOFailed(
+                reason: "CreateIoCompletionPort failed",
+                underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
             )
             self.ioCompletionPort = .failure(error)
             self.monitorThread = .failure(error)
@@ -119,9 +119,9 @@ final class AsyncIO: @unchecked Sendable {
                             continuation?.finish()
                             continue
                         } else {
-                            let error = SubprocessError(
-                                code: .init(.asyncIOFailed("GetQueuedCompletionStatus failed")),
-                                underlyingError: .init(rawValue: lastError)
+                            let error: SubprocessError = .asyncIOFailed(
+                                reason: "GetQueuedCompletionStatus failed",
+                                underlyingError: SubprocessError.WindowsError(rawValue: lastError)
                             )
                             reportError(error)
                             break
@@ -145,8 +145,8 @@ final class AsyncIO: @unchecked Sendable {
                 return 0
             }
         } catch let underlyingError {
-            let error = SubprocessError(
-                code: .init(.asyncIOFailed("Failed to create monitor thread")),
+            let error: SubprocessError = .asyncIOFailed(
+                reason: "Failed to create monitor thread",
                 underlyingError: underlyingError
             )
             self.monitorThread = .failure(error)
@@ -185,7 +185,7 @@ final class AsyncIO: @unchecked Sendable {
     }
 
     private func registerHandle(_ handle: HANDLE) -> SignalStream {
-        return SignalStream { continuation in
+        return SignalStream { (continuation: SignalStream.Continuation) in
             switch self.ioCompletionPort {
             case .success(let ioPort):
                 // Make sure thread setup also succeed
@@ -219,9 +219,9 @@ final class AsyncIO: @unchecked Sendable {
                         handle, ioPort, completionKey, 0
                     ) == ioPort
                 else {
-                    let error = SubprocessError(
-                        code: .init(.asyncIOFailed("CreateIoCompletionPort failed")),
-                        underlyingError: .init(rawValue: GetLastError())
+                    let error: SubprocessError = .asyncIOFailed(
+                        reason: "CreateIoCompletionPort failed",
+                        underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
                     )
                     continuation.finish(throwing: error)
                     return
@@ -246,14 +246,14 @@ final class AsyncIO: @unchecked Sendable {
     func read(
         from diskIO: borrowing IOChannel,
         upTo maxLength: Int
-    ) async throws -> [UInt8]? {
+    ) async throws(SubprocessError) -> [UInt8]? {
         return try await self.read(from: diskIO.channel, upTo: maxLength)
     }
 
     func read(
         from handle: HANDLE,
         upTo maxLength: Int
-    ) async throws -> [UInt8]? {
+    ) async throws(SubprocessError) -> [UInt8]? {
         guard maxLength > 0 else {
             return nil
         }
@@ -304,16 +304,25 @@ final class AsyncIO: @unchecked Sendable {
                     return resultBuffer
                 }
                 guard lastError == ERROR_IO_PENDING else {
-                    let error = SubprocessError(
-                        code: .init(.failedToReadFromSubprocess),
-                        underlyingError: .init(rawValue: lastError)
+                    let error: SubprocessError = .failedToReadFromProcess(
+                        withUnderlyingError: SubprocessError.WindowsError(rawValue: lastError)
                     )
                     throw error
                 }
 
             }
             // Now wait for read to finish
-            let bytesRead = try await signalStream.next() ?? 0
+            let bytesRead: DWORD
+            do {
+                bytesRead = try await signalStream.next() ?? 0
+            } catch {
+                if let subprocessError = error as? SubprocessError {
+                    throw subprocessError
+                }
+                throw SubprocessError.failedToReadFromProcess(
+                    withUnderlyingError: error as? SubprocessError.UnderlyingError
+                )
+            }
 
             if bytesRead == 0 {
                 // We reached EOF. Return whatever's left
@@ -344,7 +353,7 @@ final class AsyncIO: @unchecked Sendable {
     func write(
         _ array: [UInt8],
         to diskIO: borrowing IOChannel
-    ) async throws -> Int {
+    ) async throws(SubprocessError) -> Int {
         return try await self._write(array, to: diskIO)
     }
 
@@ -352,7 +361,7 @@ final class AsyncIO: @unchecked Sendable {
     func write(
         _ span: borrowing RawSpan,
         to diskIO: borrowing IOChannel
-    ) async throws -> Int {
+    ) async throws(SubprocessError) -> Int {
         guard span.byteCount > 0 else {
             return 0
         }
@@ -385,16 +394,26 @@ final class AsyncIO: @unchecked Sendable {
                 // Make sure we only get `ERROR_IO_PENDING`
                 let lastError = GetLastError()
                 guard lastError == ERROR_IO_PENDING else {
-                    let error = SubprocessError(
-                        code: .init(.failedToWriteToSubprocess),
-                        underlyingError: .init(rawValue: lastError)
+                    let error: SubprocessError = .failedToWriteToProcess(
+                        withUnderlyingError: SubprocessError.WindowsError(rawValue: lastError)
                     )
                     throw error
                 }
 
             }
-            // Now wait for read to finish
-            let bytesWritten: DWORD = try await signalStream.next() ?? 0
+            // Now wait for write to finish
+            let bytesWritten: DWORD
+
+            do {
+                bytesWritten = try await signalStream.next() ?? 0
+            } catch {
+                if let subprocessError = error as? SubprocessError {
+                    throw subprocessError
+                }
+                throw SubprocessError.failedToWriteToProcess(
+                    withUnderlyingError: error as? SubprocessError.UnderlyingError
+                )
+            }
 
             writtenLength += Int(truncatingIfNeeded: bytesWritten)
             if writtenLength >= span.byteCount {
@@ -407,7 +426,7 @@ final class AsyncIO: @unchecked Sendable {
     func _write<Bytes: _ContiguousBytes>(
         _ bytes: Bytes,
         to diskIO: borrowing IOChannel
-    ) async throws -> Int {
+    ) async throws(SubprocessError) -> Int {
         guard bytes.count > 0 else {
             return 0
         }
@@ -440,15 +459,24 @@ final class AsyncIO: @unchecked Sendable {
                 // Make sure we only get `ERROR_IO_PENDING`
                 let lastError = GetLastError()
                 guard lastError == ERROR_IO_PENDING else {
-                    let error = SubprocessError(
-                        code: .init(.failedToWriteToSubprocess),
-                        underlyingError: .init(rawValue: lastError)
+                    let error: SubprocessError = .failedToWriteToProcess(
+                        withUnderlyingError: SubprocessError.WindowsError(rawValue: lastError)
                     )
                     throw error
                 }
             }
-            // Now wait for read to finish
-            let bytesWritten: DWORD = try await signalStream.next() ?? 0
+            // Now wait for write to finish
+            let bytesWritten: DWORD
+            do {
+                bytesWritten = try await signalStream.next() ?? 0
+            } catch {
+                if let subprocessError = error as? SubprocessError {
+                    throw subprocessError
+                }
+                throw SubprocessError.failedToWriteToProcess(
+                    withUnderlyingError: error as? SubprocessError.UnderlyingError
+                )
+            }
             writtenLength += Int(truncatingIfNeeded: bytesWritten)
             if writtenLength >= bytes.count {
                 return writtenLength

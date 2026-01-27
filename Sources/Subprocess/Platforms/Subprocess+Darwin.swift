@@ -77,8 +77,7 @@ public struct PlatformOptions: Sendable {
     /// they are sent to `posix_spawn()`.
     public var preSpawnProcessConfigurator:
         (
-            @Sendable
-            (
+            @Sendable (
                 inout posix_spawnattr_t?,
                 inout posix_spawn_file_actions_t?
             ) throws -> Void
@@ -132,18 +131,32 @@ extension PlatformOptions {
 
 extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible {
     internal func description(withIndent indent: Int) -> String {
-        let indent = String(repeating: " ", count: indent * 4)
-        return """
-            PlatformOptions(
-            \(indent)    qualityOfService: \(self.qualityOfService),
-            \(indent)    userID: \(String(describing: userID)),
-            \(indent)    groupID: \(String(describing: groupID)),
-            \(indent)    supplementaryGroups: \(String(describing: supplementaryGroups)),
-            \(indent)    processGroupID: \(String(describing: processGroupID)),
-            \(indent)    createSession: \(createSession),
-            \(indent)    preSpawnProcessConfigurator: \(self.preSpawnProcessConfigurator == nil ? "not set" : "set")
-            \(indent))
-            """
+        if #available(macOS 15.0, *) {
+            let indent = String(repeating: " ", count: indent * 4)
+            return """
+                PlatformOptions(
+                \(indent)    qualityOfService: \(self.qualityOfService),
+                \(indent)    userID: \(String(describing: userID)),
+                \(indent)    groupID: \(String(describing: groupID)),
+                \(indent)    supplementaryGroups: \(String(describing: supplementaryGroups)),
+                \(indent)    processGroupID: \(String(describing: processGroupID)),
+                \(indent)    createSession: \(createSession),
+                \(indent)    preSpawnProcessConfigurator: \(self.preSpawnProcessConfigurator == nil ? "not set" : "set")
+                \(indent))
+                """
+        } else {
+            let indent = String(repeating: " ", count: indent * 4)
+            return """
+                PlatformOptions(
+                \(indent)    qualityOfService: \(self.qualityOfService),
+                \(indent)    userID: \(String(describing: userID)),
+                \(indent)    groupID: \(String(describing: groupID)),
+                \(indent)    supplementaryGroups: \(String(describing: supplementaryGroups)),
+                \(indent)    processGroupID: \(String(describing: processGroupID)),
+                \(indent)    createSession: \(createSession)
+                \(indent))
+                """
+        }
     }
 
     /// A textual representation of the platform options.
@@ -231,9 +244,8 @@ extension Configuration {
                             errorRead: errorReadFileDescriptor,
                             errorWrite: errorWriteFileDescriptor
                         )
-                        throw SubprocessError(
-                            code: .init(.spawnFailed),
-                            underlyingError: .init(rawValue: result)
+                        throw SubprocessError.spawnFailed(
+                            withUnderlyingError: Errno(rawValue: result)
                         )
                     }
                 }
@@ -251,9 +263,8 @@ extension Configuration {
                             errorRead: errorReadFileDescriptor,
                             errorWrite: errorWriteFileDescriptor
                         )
-                        throw SubprocessError(
-                            code: .init(.spawnFailed),
-                            underlyingError: .init(rawValue: result)
+                        throw SubprocessError.spawnFailed(
+                            withUnderlyingError: Errno(rawValue: result)
                         )
                     }
                 }
@@ -271,9 +282,8 @@ extension Configuration {
                             errorRead: errorReadFileDescriptor,
                             errorWrite: errorWriteFileDescriptor
                         )
-                        throw SubprocessError(
-                            code: .init(.spawnFailed),
-                            underlyingError: .init(rawValue: result)
+                        throw SubprocessError.spawnFailed(
+                            withUnderlyingError: Errno(rawValue: result)
                         )
                     }
                 }
@@ -291,9 +301,8 @@ extension Configuration {
                             errorRead: errorReadFileDescriptor,
                             errorWrite: errorWriteFileDescriptor
                         )
-                        throw SubprocessError(
-                            code: .init(.spawnFailed),
-                            underlyingError: .init(rawValue: result)
+                        throw SubprocessError.spawnFailed(
+                            withUnderlyingError: Errno(rawValue: result)
                         )
                     }
                 }
@@ -311,9 +320,8 @@ extension Configuration {
                             errorRead: errorReadFileDescriptor,
                             errorWrite: errorWriteFileDescriptor
                         )
-                        throw SubprocessError(
-                            code: .init(.spawnFailed),
-                            underlyingError: .init(rawValue: result)
+                        throw SubprocessError.spawnFailed(
+                            withUnderlyingError: Errno(rawValue: result)
                         )
                     }
                 }
@@ -331,9 +339,8 @@ extension Configuration {
                             errorRead: errorReadFileDescriptor,
                             errorWrite: errorWriteFileDescriptor
                         )
-                        throw SubprocessError(
-                            code: .init(.spawnFailed),
-                            underlyingError: .init(rawValue: result)
+                        throw SubprocessError.spawnFailed(
+                            withUnderlyingError: Errno(rawValue: result)
                         )
                     }
                 }
@@ -388,14 +395,11 @@ extension Configuration {
 
                     let error: SubprocessError
                     if spawnAttributeError != 0 {
-                        error = SubprocessError(
-                            code: .init(.spawnFailed),
-                            underlyingError: .init(rawValue: spawnAttributeError)
-                        )
+                        error = SubprocessError.spawnFailed(withUnderlyingError: Errno(rawValue: result))
                     } else {
-                        error = SubprocessError(
-                            code: .init(.failedToChangeWorkingDirectory(self.workingDirectory?.string ?? "unknown")),
-                            underlyingError: .init(rawValue: chdirError)
+                        error = SubprocessError.failedToChangeWorkingDirectory(
+                            self.workingDirectory?.string,
+                            underlyingError: Errno(rawValue: chdirError)
                         )
                     }
                     throw error
@@ -415,7 +419,7 @@ extension Configuration {
                     gidPtr: gidPtr
                 )
                 let (spawnError, pid) = try await runOnBackgroundThread {
-                    return possibleExecutablePath.withCString { exePath in
+                    return possibleExecutablePath._withCString { exePath in
                         return supplementaryGroups.withOptionalUnsafeBufferPointer { sgroups in
                             var pid: pid_t = 0
                             var _fileActions = spawnContext.fileActions
@@ -452,10 +456,7 @@ extension Configuration {
                         errorRead: errorReadFileDescriptor,
                         errorWrite: errorWriteFileDescriptor
                     )
-                    throw SubprocessError(
-                        code: .init(.spawnFailed),
-                        underlyingError: .init(rawValue: spawnError)
-                    )
+                    throw SubprocessError.spawnFailed(withUnderlyingError: Errno(rawValue: spawnError))
                 }
 
                 // After spawn finishes, close all child side fds
@@ -494,15 +495,15 @@ extension Configuration {
             )
             if let workingDirectory = self.workingDirectory?.string {
                 guard Configuration.pathAccessible(workingDirectory, mode: F_OK) else {
-                    throw SubprocessError(
-                        code: .init(.failedToChangeWorkingDirectory(workingDirectory)),
-                        underlyingError: .init(rawValue: ENOENT)
+                    throw SubprocessError.failedToChangeWorkingDirectory(
+                        workingDirectory,
+                        underlyingError: Errno(rawValue: ENOENT)
                     )
                 }
             }
-            throw SubprocessError(
-                code: .init(.executableNotFound(self.executable.description)),
-                underlyingError: .init(rawValue: ENOENT)
+            throw SubprocessError.executableNotFound(
+                self.executable.description,
+                underlyingError: Errno(rawValue: ENOENT)
             )
         }
     }

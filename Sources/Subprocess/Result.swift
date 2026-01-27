@@ -20,7 +20,7 @@
 /// A simple wrapper around the generic result returned by the
 /// `run` closure with the corresponding termination status of
 /// the child process.
-public struct ExecutionResult<Result> {
+public struct ExecutionResult<Result: Sendable>: Sendable {
     /// The termination status of the child process
     public let terminationStatus: TerminationStatus
     /// The result returned by the closure passed to `.run` methods

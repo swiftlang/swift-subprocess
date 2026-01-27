@@ -99,12 +99,12 @@ extension Execution {
     public func send(
         signal: Signal,
         toProcessGroup shouldSendToProcessGroup: Bool = false
-    ) throws {
-        func _kill(_ pid: pid_t, signal: Signal) throws {
+    ) throws(SubprocessError) {
+        func _kill(_ pid: pid_t, signal: Signal) throws(SubprocessError) {
             guard kill(pid, signal.rawValue) == 0 else {
-                throw SubprocessError(
-                    code: .init(.failedToSendSignal(signal.rawValue)),
-                    underlyingError: .init(rawValue: errno)
+                throw SubprocessError.processControlFailed(
+                    .sendSignal(signal.rawValue),
+                    underlyingError: Errno(rawValue: errno)
                 )
             }
         }
@@ -132,9 +132,9 @@ extension Execution {
             }
 
             // Throw all other errors
-            throw SubprocessError(
-                code: .init(.failedToSendSignal(signal.rawValue)),
-                underlyingError: .init(rawValue: capturedErrno)
+            throw SubprocessError.processControlFailed(
+                .sendSignal(signal.rawValue),
+                underlyingError: Errno(rawValue: errno)
             )
         }
         #else
@@ -279,7 +279,7 @@ extension Executable {
         "/usr/local/bin",
     ]
 
-    internal func resolveExecutablePath(withPathValue pathValue: String?) throws -> String {
+    internal func resolveExecutablePath(withPathValue pathValue: String?) throws(SubprocessError) -> String {
         switch self.storage {
         case .executable(let executableName):
             // If the executableName in is already a full path, return it directly
@@ -291,10 +291,7 @@ extension Executable {
             if let firstAccessibleExecutable {
                 return firstAccessibleExecutable
             }
-            throw SubprocessError(
-                code: .init(.executableNotFound(executableName)),
-                underlyingError: nil
-            )
+            throw SubprocessError.executableNotFound(executableName, underlyingError: nil)
         case .path(let executablePath):
             // Use path directly
             return executablePath.string
@@ -385,11 +382,18 @@ extension Configuration {
 
 // MARK: - FileDescriptor extensions
 extension FileDescriptor {
-    internal static func ssp_pipe() throws -> (
+    internal static func ssp_pipe() throws(SubprocessError) -> (
         readEnd: FileDescriptor,
         writeEnd: FileDescriptor
     ) {
-        try pipe()
+        do {
+            return try pipe()
+        } catch {
+            throw SubprocessError.asyncIOFailed(
+                reason: "Failed to create pipe",
+                underlyingError: error as? SubprocessError.UnderlyingError
+            )
+        }
     }
 
     internal var platformDescriptor: PlatformFileDescriptor {
@@ -476,9 +480,9 @@ extension Configuration {
                 let spawnContext = SpawnContext(
                     argv: argv, env: env, uidPtr: uidPtr, gidPtr: gidPtr, processGroupIDPtr: processGroupIDPtr
                 )
-                let (pid, processDescriptor, spawnError) = try await runOnBackgroundThread {
-                    return possibleExecutablePath.withCString { exePath in
-                        return (self.workingDirectory?.string).withOptionalCString { workingDir in
+                let (pid, processDescriptor, spawnError) = try await runOnBackgroundThread { () throws(SubprocessError) in
+                    return try possibleExecutablePath._withCString { exePath throws(SubprocessError) in
+                        return try (self.workingDirectory?.string).withOptionalCString { workingDir in
                             return supplementaryGroups.withOptionalUnsafeBufferPointer { sgroups in
                                 return fileDescriptors.withUnsafeBufferPointer { fds in
                                     var pid: pid_t = 0
@@ -520,10 +524,7 @@ extension Configuration {
                         errorRead: errorReadFileDescriptor,
                         errorWrite: errorWriteFileDescriptor
                     )
-                    throw SubprocessError(
-                        code: .init(.spawnFailed),
-                        underlyingError: .init(rawValue: spawnError)
-                    )
+                    throw SubprocessError.spawnFailed(withUnderlyingError: Errno(rawValue: spawnError))
                 }
                 // After spawn finishes, close all child side fds
                 try self.safelyCloseMultiple(
@@ -563,15 +564,15 @@ extension Configuration {
             )
             if let workingDirectory = self.workingDirectory?.string {
                 guard Configuration.pathAccessible(workingDirectory, mode: F_OK) else {
-                    throw SubprocessError(
-                        code: .init(.failedToChangeWorkingDirectory(workingDirectory)),
-                        underlyingError: .init(rawValue: ENOENT)
+                    throw SubprocessError.failedToChangeWorkingDirectory(
+                        workingDirectory,
+                        underlyingError: Errno(rawValue: ENOENT)
                     )
                 }
             }
-            throw SubprocessError(
-                code: .init(.executableNotFound(self.executable.description)),
-                underlyingError: .init(rawValue: ENOENT)
+            throw SubprocessError.executableNotFound(
+                self.executable.description,
+                underlyingError: Errno(rawValue: ENOENT)
             )
         }
     }
@@ -671,22 +672,23 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
 extension ProcessIdentifier {
     /// Reaps the zombie for the exited process. This function may block.
     @available(*, noasync)
-    internal func blockingReap() throws(SubprocessError.UnderlyingError) -> TerminationStatus {
+    internal func blockingReap() throws(Errno) -> TerminationStatus {
         try _blockingReap(pid: value)
     }
 
     /// Reaps the zombie for the exited process, or returns `nil` if the process is still running. This function will not block.
-    internal func reap() throws(SubprocessError.UnderlyingError) -> TerminationStatus? {
+    internal func reap() throws(Errno) -> TerminationStatus? {
         try _reap(pid: value)
     }
 }
 
 @available(*, noasync)
-internal func _blockingReap(pid: pid_t) throws(SubprocessError.UnderlyingError) -> TerminationStatus {
-    return try TerminationStatus(_waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED))
+internal func _blockingReap(pid: pid_t) throws(Errno) -> TerminationStatus {
+    let siginfo = try _waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED)
+    return TerminationStatus(siginfo)
 }
 
-internal func _reap(pid: pid_t) throws(SubprocessError.UnderlyingError) -> TerminationStatus? {
+internal func _reap(pid: pid_t) throws(Errno) -> TerminationStatus? {
     let siginfo = try _waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED | WNOHANG)
     // If si_pid and si_signo are both 0, the child is still running since we used WNOHANG
     if siginfo.si_pid == 0 && siginfo.si_signo == 0 {
@@ -695,13 +697,13 @@ internal func _reap(pid: pid_t) throws(SubprocessError.UnderlyingError) -> Termi
     return TerminationStatus(siginfo)
 }
 
-internal func _waitid(idtype: idtype_t, id: id_t, flags: Int32) throws(SubprocessError.UnderlyingError) -> siginfo_t {
+internal func _waitid(idtype: idtype_t, id: id_t, flags: Int32) throws(Errno) -> siginfo_t {
     while true {
         var siginfo = siginfo_t()
         if waitid(idtype, id, &siginfo, flags) != -1 {
             return siginfo
         } else if errno != EINTR {
-            throw SubprocessError.UnderlyingError(rawValue: errno)
+            throw Errno(rawValue: errno)
         }
     }
 }
