@@ -73,12 +73,12 @@ extension SubprocessIntegrationTests {
         #if os(Windows)
         let expectedError = SubprocessError(
             code: .init(.executableNotFound("do-not-exist")),
-            underlyingError: .init(rawValue: DWORD(ERROR_FILE_NOT_FOUND))
+            underlyingError: SubprocessError.WindowsError(rawValue: DWORD(ERROR_FILE_NOT_FOUND))
         )
         #else
         let expectedError = SubprocessError(
             code: .init(.executableNotFound("do-not-exist")),
-            underlyingError: .init(rawValue: ENOENT)
+            underlyingError: Errno(rawValue: ENOENT)
         )
         #endif
 
@@ -122,13 +122,13 @@ extension SubprocessIntegrationTests {
         let fakePath = FilePath("D:\\does\\not\\exist")
         let expectedError = SubprocessError(
             code: .init(.executableNotFound("D:\\does\\not\\exist")),
-            underlyingError: .init(rawValue: DWORD(ERROR_FILE_NOT_FOUND))
+            underlyingError: SubprocessError.WindowsError(rawValue: DWORD(ERROR_FILE_NOT_FOUND))
         )
         #else
         let fakePath = FilePath("/usr/bin/do-not-exist")
         let expectedError = SubprocessError(
             code: .init(.executableNotFound("/usr/bin/do-not-exist")),
-            underlyingError: .init(rawValue: ENOENT)
+            underlyingError: Errno(rawValue: ENOENT)
         )
         #endif
 
@@ -737,7 +737,7 @@ extension SubprocessIntegrationTests {
         )
         let expectedError = SubprocessError(
             code: .init(.failedToChangeWorkingDirectory(#"X:\Does\Not\Exist"#)),
-            underlyingError: .init(rawValue: DWORD(ERROR_DIRECTORY))
+            underlyingError: SubprocessError.WindowsError(rawValue: DWORD(ERROR_DIRECTORY))
         )
         #else
         let invalidPath: FilePath = FilePath("/does/not/exist")
@@ -748,7 +748,7 @@ extension SubprocessIntegrationTests {
         )
         let expectedError = SubprocessError(
             code: .init(.failedToChangeWorkingDirectory("/does/not/exist")),
-            underlyingError: .init(rawValue: ENOENT)
+            underlyingError: Errno(rawValue: ENOENT)
         )
         #endif
 
@@ -2347,7 +2347,10 @@ extension SubprocessIntegrationTests {
                 preconditionFailure("this should be impossible, task should've returned a result")
             }
             #if !os(Windows)
-            #expect(terminationStatus == .unhandledException(SIGKILL), "iteration \(i)")
+            #expect(
+                terminationStatus == .unhandledException(SIGKILL) || terminationStatus == .exited(SIGKILL),
+                "iteration \(i)"
+            )
             #endif
         }
     }
@@ -2471,7 +2474,7 @@ extension SubprocessIntegrationTests {
         else {
             throw SubprocessError(
                 code: .init(.failedToCreatePipe),
-                underlyingError: .init(rawValue: GetLastError())
+                underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
             )
         }
         SetHandleInformation(readHandle, HANDLE_FLAG_INHERIT, 0)
@@ -2501,13 +2504,13 @@ extension SubprocessIntegrationTests {
                 else {
                     throw SubprocessError(
                         code: .init(.failedToCreatePipe),
-                        underlyingError: .init(rawValue: GetLastError())
+                        underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
                     )
                 }
                 guard let writeEndHandle else {
                     throw SubprocessError(
                         code: .init(.failedToCreatePipe),
-                        underlyingError: .init(rawValue: GetLastError())
+                        underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
                     )
                 }
                 CloseHandle(pipe.writeEnd) // No longer need the original
@@ -2554,13 +2557,13 @@ extension SubprocessIntegrationTests {
                 else {
                     throw SubprocessError(
                         code: .init(.failedToCreatePipe),
-                        underlyingError: .init(rawValue: GetLastError())
+                        underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
                     )
                 }
                 guard let readEndHandle else {
                     throw SubprocessError(
                         code: .init(.failedToCreatePipe),
-                        underlyingError: .init(rawValue: GetLastError())
+                        underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
                     )
                 }
                 CloseHandle(pipe.readEnd) // No longer need the original

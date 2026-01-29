@@ -182,7 +182,7 @@ extension SubprocessProcessMonitoringTests {
             let monitorResult = try await monitorProcessTermination(
                 for: execution.processIdentifier
             )
-            #expect(monitorResult == .exited(0))
+            #expect(monitorResult == TerminationStatus.exited(0))
         }
     }
 
@@ -201,7 +201,7 @@ extension SubprocessProcessMonitoringTests {
         #if os(Windows)
         let expectedError = SubprocessError(
             code: .init(.failedToMonitorProcess),
-            underlyingError: .init(rawValue: DWORD(ERROR_INVALID_PARAMETER))
+            underlyingError: SubprocessError.WindowsError(rawValue: DWORD(ERROR_INVALID_PARAMETER))
         )
         let processIdentifier = ProcessIdentifier(
             value: .max, processDescriptor: INVALID_HANDLE_VALUE, threadHandle: INVALID_HANDLE_VALUE
@@ -209,7 +209,7 @@ extension SubprocessProcessMonitoringTests {
         #elseif os(Linux) || os(Android) || os(FreeBSD)
         let expectedError = SubprocessError(
             code: .init(.failedToMonitorProcess),
-            underlyingError: .init(rawValue: ECHILD)
+            underlyingError: Errno(rawValue: ECHILD)
         )
         let processIdentifier = ProcessIdentifier(
             value: .max, processDescriptor: -1
@@ -217,7 +217,7 @@ extension SubprocessProcessMonitoringTests {
         #else
         let expectedError = SubprocessError(
             code: .init(.failedToMonitorProcess),
-            underlyingError: .init(rawValue: ECHILD)
+            underlyingError: Errno(rawValue: ECHILD)
         )
         let processIdentifier = ProcessIdentifier(value: .max)
         #endif

@@ -21,12 +21,39 @@ import Musl
 @preconcurrency import WinSDK
 #endif
 
+#if canImport(System)
+@preconcurrency import System
+#else
+@preconcurrency import SystemPackage
+#endif
+
 /// Error thrown from Subprocess
-public struct SubprocessError: Swift.Error, Hashable, Sendable {
+public struct SubprocessError: Swift.Error, Sendable, Equatable {
     /// The error code of this error
     public let code: SubprocessError.Code
     /// The underlying error that caused this error, if any
-    public let underlyingError: UnderlyingError?
+    public let underlyingError: (any Error)?
+
+    public static func == (lhs: SubprocessError, rhs: SubprocessError) -> Bool {
+        guard lhs.code == rhs.code else {
+            return false
+        }
+
+        switch (lhs.underlyingError, rhs.underlyingError) {
+        case (.none, .none):
+            return true
+        case (let lhsErrno as Errno, let rhsErrno as Errno):
+            return lhsErrno == rhsErrno
+        case (let lhsSubError as SubprocessError, let rhsSubError as SubprocessError):
+            return lhsSubError == rhsSubError
+        #if os(Windows)
+        case (let lhsWindowsError as WindowsError, let rhsWindowsError as WindowsError):
+            return lhsWindowsError == rhsWindowsError
+        #endif
+        default:
+            return false
+        }
+    }
 }
 
 // MARK: - Error Codes
@@ -51,6 +78,8 @@ extension SubprocessError {
             case failedToResume
             case failedToCreatePipe
             case invalidWindowsPath(String)
+
+            case executionBodyThrewError
         }
 
         /// The numeric value of this code.
@@ -86,6 +115,8 @@ extension SubprocessError {
                 return 13
             case .invalidWindowsPath(_):
                 return 14
+            case .executionBodyThrewError:
+                return 15
             }
         }
 
@@ -132,6 +163,12 @@ extension SubprocessError: CustomStringConvertible, CustomDebugStringConvertible
             return "Failed to create a pipe to communicate to child process."
         case .invalidWindowsPath(let badPath):
             return "\"\(badPath)\" is not a valid Windows path."
+        case .executionBodyThrewError:
+            if let error = self.underlyingError {
+                return "Execution body threw an error: \(error)"
+            } else {
+                return "Execution body threw an error."
+            }
         }
     }
 
@@ -139,24 +176,17 @@ extension SubprocessError: CustomStringConvertible, CustomDebugStringConvertible
     public var debugDescription: String { self.description }
 }
 
-extension SubprocessError {
-    /// The underlying error that caused this SubprocessError.
-    /// - On Unix-like systems, `UnderlyingError` wraps `errno` from libc;
-    /// - On Windows, `UnderlyingError` wraps Windows Error code
-    public struct UnderlyingError: Swift.Error, RawRepresentable, Hashable, Sendable {
-        #if os(Windows)
-        /// The type for the raw value of the underlying error.
-        public typealias RawValue = DWORD
-        #else
-        /// The type for the raw value of the underlying error.
-        public typealias RawValue = Int32
-        #endif
+#if os(Windows)
 
-        /// The platform specific value for this underlying error.
-        public let rawValue: RawValue
-        /// Initialize a `UnderlyingError` with given error value
-        public init(rawValue: RawValue) {
+extension SubprocessError {
+    /// An error that represents a Windows error code returned by `GetLastError`
+    public struct WindowsError: Error, RawRepresentable {
+        public let rawValue: DWORD
+
+        public init(rawValue: DWORD) {
             self.rawValue = rawValue
         }
     }
 }
+
+#endif

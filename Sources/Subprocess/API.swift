@@ -42,7 +42,7 @@ public func run<
     input: Input = .none,
     output: Output,
     error: Error = .discarded
-) async throws -> CollectedResult<Output, Error> {
+) async throws(SubprocessError) -> CollectedResult<Output, Error> {
     let configuration = Configuration(
         executable: executable,
         arguments: arguments,
@@ -84,7 +84,7 @@ public func run<
     input: borrowing Span<InputElement>,
     output: Output,
     error: Error = .discarded
-) async throws -> CollectedResult<Output, Error> {
+) async throws(SubprocessError) -> CollectedResult<Output, Error> {
     let configuration = Configuration(
         executable: executable,
         arguments: arguments,
@@ -128,7 +128,7 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol, Error: Err
     error: Error = .discarded,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
+) async throws(SubprocessError) -> ExecutionResult<Result> where Error.OutputType == Void {
     let configuration = Configuration(
         executable: executable,
         arguments: arguments,
@@ -175,7 +175,7 @@ public func run<Result, Input: InputProtocol, Error: ErrorOutputProtocol>(
     preferredBufferSize: Int? = nil,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
+) async throws(SubprocessError) -> ExecutionResult<Result> where Error.OutputType == Void {
     let configuration = Configuration(
         executable: executable,
         arguments: arguments,
@@ -222,7 +222,7 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
     preferredBufferSize: Int? = nil,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Output.OutputType == Void {
+) async throws(SubprocessError) -> ExecutionResult<Result> where Output.OutputType == Void {
     let configuration = Configuration(
         executable: executable,
         arguments: arguments,
@@ -267,7 +267,7 @@ public func run<Result, Error: ErrorOutputProtocol>(
     preferredBufferSize: Int? = nil,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
+) async throws(SubprocessError) -> ExecutionResult<Result> where Error.OutputType == Void {
     let configuration = Configuration(
         executable: executable,
         arguments: arguments,
@@ -311,7 +311,7 @@ public func run<Result, Output: OutputProtocol>(
     preferredBufferSize: Int? = nil,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Output.OutputType == Void {
+) async throws(SubprocessError) -> ExecutionResult<Result> where Output.OutputType == Void {
     let configuration = Configuration(
         executable: executable,
         arguments: arguments,
@@ -361,7 +361,7 @@ public func run<Result>(
             AsyncBufferSequence
         ) async throws -> Result
     )
-) async throws -> ExecutionResult<Result> {
+) async throws(SubprocessError) -> ExecutionResult<Result> {
     let configuration = Configuration(
         executable: executable,
         arguments: arguments,
@@ -397,7 +397,7 @@ public func run<
     input: borrowing Span<InputElement>,
     output: Output,
     error: Error = .discarded
-) async throws -> CollectedResult<Output, Error> {
+) async throws(SubprocessError) -> CollectedResult<Output, Error> {
     typealias RunResult = (
         processIdentifier: ProcessIdentifier,
         standardOutput: Output.OutputType,
@@ -409,7 +409,7 @@ public func run<
         input: try customInput.createPipe(),
         output: try output.createPipe(),
         error: try error.createPipe()
-    ) { execution, inputIO, outputIO, errorIO in
+    ) { (execution, inputIO, outputIO, errorIO) throws(SubprocessError) in
         var inputIOBox: IOChannel? = consume inputIO
         var outputIOBox: IOChannel? = consume outputIO
         var errorIOBox: IOChannel? = consume errorIO
@@ -424,11 +424,21 @@ public func run<
             try await writer.finish()
         }
 
-        return (
-            processIdentifier: execution.processIdentifier,
-            standardOutput: try await stdout,
-            standardError: try await stderr
-        )
+        do {
+            let capturedOutput = try await stdout
+            let capturedError = try await stderr
+
+            return (
+                processIdentifier: execution.processIdentifier,
+                standardOutput: capturedOutput,
+                standardError: capturedError
+            )
+        } catch {
+            // https://github.com/swiftlang/swift/issues/76169
+            // Async let does not preserve typed throw
+            throw error as! SubprocessError
+        }
+
     }
 
     return CollectedResult(
@@ -457,7 +467,7 @@ public func run<
     input: Input = .none,
     output: Output,
     error: Error = .discarded
-) async throws -> CollectedResult<Output, Error> {
+) async throws(SubprocessError) -> CollectedResult<Output, Error> {
     typealias RunResult = (
         processIdentifier: ProcessIdentifier,
         standardOutput: Output.OutputType,
@@ -470,57 +480,59 @@ public func run<
         input: inputPipe,
         output: outputPipe,
         error: errorPipe
-    ) { (execution, inputIO, outputIO, errorIO) -> RunResult in
+    ) { (execution, inputIO, outputIO, errorIO) throws(SubprocessError) -> RunResult in
         // Write input, capture output and error in parallel
         var inputIOBox: IOChannel? = consume inputIO
         var outputIOBox: IOChannel? = consume outputIO
         var errorIOBox: IOChannel? = consume errorIO
-        return try await withThrowingTaskGroup(
-            of: OutputCapturingState<Output.OutputType, Error.OutputType>?.self,
-            returning: RunResult.self
-        ) { group in
-            var inputIOContainer: IOChannel? = inputIOBox.take()
-            var outputIOContainer: IOChannel? = outputIOBox.take()
-            var errorIOContainer: IOChannel? = errorIOBox.take()
-            group.addTask {
-                if let writeFd = inputIOContainer.take() {
-                    let writer = StandardInputWriter(diskIO: writeFd)
-                    try await input.write(with: writer)
-                    try await writer.finish()
+        return try await _castError {
+            return try await withThrowingTaskGroup(
+                of: OutputCapturingState<Output.OutputType, Error.OutputType>?.self,
+                returning: RunResult.self
+            ) { group throws in
+                var inputIOContainer: IOChannel? = inputIOBox.take()
+                var outputIOContainer: IOChannel? = outputIOBox.take()
+                var errorIOContainer: IOChannel? = errorIOBox.take()
+                group.addTask { () throws(SubprocessError) -> OutputCapturingState<Output.OutputType, Error.OutputType>? in
+                    if let writeFd = inputIOContainer.take() {
+                        let writer = StandardInputWriter(diskIO: writeFd)
+                        try await input.write(with: writer)
+                        try await writer.finish()
+                    }
+                    return nil
                 }
-                return nil
-            }
-            group.addTask {
-                let stdout = try await output.captureOutput(
-                    from: outputIOContainer.take()
-                )
-                return .standardOutputCaptured(stdout)
-            }
-            group.addTask {
-                let stderr = try await error.captureOutput(
-                    from: errorIOContainer.take()
-                )
-                return .standardErrorCaptured(stderr)
-            }
-
-            var stdout: Output.OutputType!
-            var stderror: Error.OutputType!
-            while let state = try await group.next() {
-                switch state {
-                case .standardOutputCaptured(let output):
-                    stdout = output
-                case .standardErrorCaptured(let error):
-                    stderror = error
-                case .none:
-                    continue
+                group.addTask { () throws(SubprocessError) -> OutputCapturingState<Output.OutputType, Error.OutputType>? in
+                    let stdout = try await output.captureOutput(
+                        from: outputIOContainer.take()
+                    )
+                    return .standardOutputCaptured(stdout)
                 }
-            }
+                group.addTask { () throws(SubprocessError) -> OutputCapturingState<Output.OutputType, Error.OutputType>? in
+                    let stderr = try await error.captureOutput(
+                        from: errorIOContainer.take()
+                    )
+                    return .standardErrorCaptured(stderr)
+                }
 
-            return (
-                processIdentifier: execution.processIdentifier,
-                standardOutput: stdout,
-                standardError: stderror
-            )
+                var stdout: Output.OutputType!
+                var stderror: Error.OutputType!
+                while let state = try await group.next() {
+                    switch state {
+                    case .standardOutputCaptured(let output):
+                        stdout = output
+                    case .standardErrorCaptured(let error):
+                        stderror = error
+                    case .none:
+                        continue
+                    }
+                }
+
+                return (
+                    processIdentifier: execution.processIdentifier,
+                    standardOutput: stdout,
+                    standardError: stderror
+                )
+            }
         }
     }
 
@@ -550,7 +562,7 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol, Error: Err
     error: Error = .discarded,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
+) async throws(SubprocessError) -> ExecutionResult<Result> where Error.OutputType == Void {
     let inputPipe = try input.createPipe()
     let outputPipe = try output.createPipe()
     let errorPipe = try error.createPipe(from: outputPipe)
@@ -558,25 +570,34 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol, Error: Err
         input: inputPipe,
         output: outputPipe,
         error: errorPipe
-    ) { execution, inputIO, outputIO, errorIO in
+    ) { (execution, inputIO, outputIO, errorIO) throws(SubprocessError) in
         var inputIOBox: IOChannel? = consume inputIO
-        return try await withThrowingTaskGroup(
-            of: Void.self,
-            returning: Result.self
-        ) { group in
-            var inputIOContainer: IOChannel? = inputIOBox.take()
-            group.addTask {
-                if let inputIO = inputIOContainer.take() {
-                    let writer = StandardInputWriter(diskIO: inputIO)
-                    try await input.write(with: writer)
-                    try await writer.finish()
+        return try await _castError {
+            return try await withThrowingTaskGroup(
+                of: Void.self,
+                returning: Result.self
+            ) { group throws(SubprocessError) in
+                var inputIOContainer: IOChannel? = inputIOBox.take()
+                group.addTask {
+                    if let inputIO = inputIOContainer.take() {
+                        let writer = StandardInputWriter(diskIO: inputIO)
+                        try await input.write(with: writer)
+                        try await writer.finish()
+                    }
+                }
+
+                // Body runs in the same isolation
+                do {
+                    let result = try await body(execution)
+                    try await group.waitForAll()
+                    return result
+                } catch {
+                    throw SubprocessError(
+                        code: .init(.executionBodyThrewError),
+                        underlyingError: error
+                    )
                 }
             }
-
-            // Body runs in the same isolation
-            let result = try await body(execution)
-            try await group.waitForAll()
-            return result
         }
     }
 }
@@ -603,7 +624,7 @@ public func run<Result, Input: InputProtocol, Error: ErrorOutputProtocol>(
     preferredBufferSize: Int? = nil,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
+) async throws(SubprocessError) -> ExecutionResult<Result> where Error.OutputType == Void {
     let output = SequenceOutput()
     let inputPipe = try input.createPipe()
     let outputPipe = try output.createPipe()
@@ -612,30 +633,39 @@ public func run<Result, Input: InputProtocol, Error: ErrorOutputProtocol>(
         input: inputPipe,
         output: outputPipe,
         error: errorPipe
-    ) { execution, inputIO, outputIO, errorIO in
+    ) { (execution, inputIO, outputIO, errorIO) throws(SubprocessError) in
         var inputIOBox: IOChannel? = consume inputIO
         var outputIOBox: IOChannel? = consume outputIO
-        return try await withThrowingTaskGroup(
-            of: Void.self,
-            returning: Result.self
-        ) { group in
-            var inputIOContainer: IOChannel? = inputIOBox.take()
-            group.addTask {
-                if let inputIO = inputIOContainer.take() {
-                    let writer = StandardInputWriter(diskIO: inputIO)
-                    try await input.write(with: writer)
-                    try await writer.finish()
+        return try await _castError {
+            return try await withThrowingTaskGroup(
+                of: Void.self,
+                returning: Result.self
+            ) { group throws(SubprocessError) in
+                var inputIOContainer: IOChannel? = inputIOBox.take()
+                group.addTask {
+                    if let inputIO = inputIOContainer.take() {
+                        let writer = StandardInputWriter(diskIO: inputIO)
+                        try await input.write(with: writer)
+                        try await writer.finish()
+                    }
+                }
+
+                // Body runs in the same isolation
+                let outputSequence = AsyncBufferSequence(
+                    diskIO: outputIOBox.take()!.consumeIOChannel(),
+                    preferredBufferSize: preferredBufferSize
+                )
+                do {
+                    let result = try await body(execution, outputSequence)
+                    try await group.waitForAll()
+                    return result
+                } catch {
+                    throw SubprocessError(
+                        code: .init(.executionBodyThrewError),
+                        underlyingError: error
+                    )
                 }
             }
-
-            // Body runs in the same isolation
-            let outputSequence = AsyncBufferSequence(
-                diskIO: outputIOBox.take()!.consumeIOChannel(),
-                preferredBufferSize: preferredBufferSize
-            )
-            let result = try await body(execution, outputSequence)
-            try await group.waitForAll()
-            return result
         }
     }
 }
@@ -662,36 +692,45 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
     preferredBufferSize: Int? = nil,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Output.OutputType == Void {
+) async throws(SubprocessError) -> ExecutionResult<Result> where Output.OutputType == Void {
     let error = SequenceOutput()
     return try await configuration.run(
         input: try input.createPipe(),
         output: try output.createPipe(),
         error: try error.createPipe()
-    ) { execution, inputIO, outputIO, errorIO in
+    ) { (execution, inputIO, outputIO, errorIO) throws(SubprocessError) in
         var inputIOBox: IOChannel? = consume inputIO
         var errorIOBox: IOChannel? = consume errorIO
-        return try await withThrowingTaskGroup(
-            of: Void.self,
-            returning: Result.self
-        ) { group in
-            var inputIOContainer: IOChannel? = inputIOBox.take()
-            group.addTask {
-                if let inputIO = inputIOContainer.take() {
-                    let writer = StandardInputWriter(diskIO: inputIO)
-                    try await input.write(with: writer)
-                    try await writer.finish()
+        return try await _castError {
+            return try await withThrowingTaskGroup(
+                of: Void.self,
+                returning: Result.self
+            ) { group throws(SubprocessError) in
+                var inputIOContainer: IOChannel? = inputIOBox.take()
+                group.addTask {
+                    if let inputIO = inputIOContainer.take() {
+                        let writer = StandardInputWriter(diskIO: inputIO)
+                        try await input.write(with: writer)
+                        try await writer.finish()
+                    }
+                }
+
+                // Body runs in the same isolation
+                let errorSequence = AsyncBufferSequence(
+                    diskIO: errorIOBox.take()!.consumeIOChannel(),
+                    preferredBufferSize: preferredBufferSize
+                )
+                do {
+                    let result = try await body(execution, errorSequence)
+                    try await group.waitForAll()
+                    return result
+                } catch {
+                    throw SubprocessError(
+                        code: .init(.executionBodyThrewError),
+                        underlyingError: error
+                    )
                 }
             }
-
-            // Body runs in the same isolation
-            let errorSequence = AsyncBufferSequence(
-                diskIO: errorIOBox.take()!.consumeIOChannel(),
-                preferredBufferSize: preferredBufferSize
-            )
-            let result = try await body(execution, errorSequence)
-            try await group.waitForAll()
-            return result
         }
     }
 }
@@ -717,7 +756,7 @@ public func run<Result, Error: ErrorOutputProtocol>(
     preferredBufferSize: Int? = nil,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
+) async throws(SubprocessError) -> ExecutionResult<Result> where Error.OutputType == Void {
     let input = CustomWriteInput()
     let output = SequenceOutput()
     let inputPipe = try input.createPipe()
@@ -727,13 +766,20 @@ public func run<Result, Error: ErrorOutputProtocol>(
         input: inputPipe,
         output: outputPipe,
         error: errorPipe
-    ) { execution, inputIO, outputIO, errorIO in
+    ) { (execution, inputIO, outputIO, errorIO) throws(SubprocessError) in
         let writer = StandardInputWriter(diskIO: inputIO!)
         let outputSequence = AsyncBufferSequence(
             diskIO: outputIO!.consumeIOChannel(),
             preferredBufferSize: preferredBufferSize
         )
-        return try await body(execution, writer, outputSequence)
+        do {
+            return try await body(execution, writer, outputSequence)
+        } catch {
+            throw SubprocessError(
+                code: .init(.executionBodyThrewError),
+                underlyingError: error
+            )
+        }
     }
 }
 
@@ -758,20 +804,27 @@ public func run<Result, Output: OutputProtocol>(
     preferredBufferSize: Int? = nil,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Output.OutputType == Void {
+) async throws(SubprocessError) -> ExecutionResult<Result> where Output.OutputType == Void {
     let input = CustomWriteInput()
     let error = SequenceOutput()
     return try await configuration.run(
         input: try input.createPipe(),
         output: try output.createPipe(),
         error: try error.createPipe()
-    ) { execution, inputIO, outputIO, errorIO in
+    ) { (execution, inputIO, outputIO, errorIO) throws(SubprocessError) in
         let writer = StandardInputWriter(diskIO: inputIO!)
         let errorSequence = AsyncBufferSequence(
             diskIO: errorIO!.consumeIOChannel(),
             preferredBufferSize: preferredBufferSize
         )
-        return try await body(execution, writer, errorSequence)
+        do {
+            return try await body(execution, writer, errorSequence)
+        } catch {
+            throw SubprocessError(
+                code: .init(.executionBodyThrewError),
+                underlyingError: error
+            )
+        }
     }
 }
 
@@ -795,7 +848,7 @@ public func run<Result>(
     preferredBufferSize: Int? = nil,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, StandardInputWriter, AsyncBufferSequence, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionResult<Result> {
+) async throws(SubprocessError) -> ExecutionResult<Result> {
     let input = CustomWriteInput()
     let output = SequenceOutput()
     let error = SequenceOutput()
@@ -803,7 +856,7 @@ public func run<Result>(
         input: try input.createPipe(),
         output: try output.createPipe(),
         error: try error.createPipe()
-    ) { execution, inputIO, outputIO, errorIO in
+    ) { (execution, inputIO, outputIO, errorIO) throws(SubprocessError) in
         let writer = StandardInputWriter(diskIO: inputIO!)
         let outputSequence = AsyncBufferSequence(
             diskIO: outputIO!.consumeIOChannel(),
@@ -813,6 +866,13 @@ public func run<Result>(
             diskIO: errorIO!.consumeIOChannel(),
             preferredBufferSize: preferredBufferSize
         )
-        return try await body(execution, writer, outputSequence, errorSequence)
+        do {
+            return try await body(execution, writer, outputSequence, errorSequence)
+        } catch {
+            throw SubprocessError(
+                code: .init(.executionBodyThrewError),
+                underlyingError: error
+            )
+        }
     }
 }

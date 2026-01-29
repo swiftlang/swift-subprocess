@@ -81,7 +81,7 @@ public struct PlatformOptions: Sendable {
             (
                 inout posix_spawnattr_t?,
                 inout posix_spawn_file_actions_t?
-            ) throws -> Void
+            ) throws(SubprocessError) -> Void
         )? = nil
 
     /// Create platform options with the default values.
@@ -132,18 +132,32 @@ extension PlatformOptions {
 
 extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible {
     internal func description(withIndent indent: Int) -> String {
-        let indent = String(repeating: " ", count: indent * 4)
-        return """
-            PlatformOptions(
-            \(indent)    qualityOfService: \(self.qualityOfService),
-            \(indent)    userID: \(String(describing: userID)),
-            \(indent)    groupID: \(String(describing: groupID)),
-            \(indent)    supplementaryGroups: \(String(describing: supplementaryGroups)),
-            \(indent)    processGroupID: \(String(describing: processGroupID)),
-            \(indent)    createSession: \(createSession),
-            \(indent)    preSpawnProcessConfigurator: \(self.preSpawnProcessConfigurator == nil ? "not set" : "set")
-            \(indent))
-            """
+        if #available(macOS 15.0, *) {
+            let indent = String(repeating: " ", count: indent * 4)
+            return """
+                PlatformOptions(
+                \(indent)    qualityOfService: \(self.qualityOfService),
+                \(indent)    userID: \(String(describing: userID)),
+                \(indent)    groupID: \(String(describing: groupID)),
+                \(indent)    supplementaryGroups: \(String(describing: supplementaryGroups)),
+                \(indent)    processGroupID: \(String(describing: processGroupID)),
+                \(indent)    createSession: \(createSession),
+                \(indent)    preSpawnProcessConfigurator: \(self.preSpawnProcessConfigurator == nil ? "not set" : "set")
+                \(indent))
+                """
+        } else {
+            let indent = String(repeating: " ", count: indent * 4)
+            return """
+                PlatformOptions(
+                \(indent)    qualityOfService: \(self.qualityOfService),
+                \(indent)    userID: \(String(describing: userID)),
+                \(indent)    groupID: \(String(describing: groupID)),
+                \(indent)    supplementaryGroups: \(String(describing: supplementaryGroups)),
+                \(indent)    processGroupID: \(String(describing: processGroupID)),
+                \(indent)    createSession: \(createSession)
+                \(indent))
+                """
+        }
     }
 
     /// A textual representation of the platform options.
@@ -176,7 +190,7 @@ extension Configuration {
         withInput inputPipe: consuming CreatedPipe,
         outputPipe: consuming CreatedPipe,
         errorPipe: consuming CreatedPipe
-    ) async throws -> SpawnResult {
+    ) async throws(SubprocessError) -> SpawnResult {
         // Instead of checking if every possible executable path
         // is valid, spawn each directly and catch ENOENT
         let possiblePaths = self.executable.possibleExecutablePaths(
@@ -186,7 +200,7 @@ extension Configuration {
         var outputPipeBox: CreatedPipe? = consume outputPipe
         var errorPipeBox: CreatedPipe? = consume errorPipe
 
-        return try await self.preSpawn { args throws -> SpawnResult in
+        return try await self.preSpawn { args throws(SubprocessError) -> SpawnResult in
             let (env, uidPtr, gidPtr, supplementaryGroups) = args
             var _inputPipe = inputPipeBox.take()!
             var _outputPipe = outputPipeBox.take()!
@@ -233,7 +247,7 @@ extension Configuration {
                         )
                         throw SubprocessError(
                             code: .init(.spawnFailed),
-                            underlyingError: .init(rawValue: result)
+                            underlyingError: Errno(rawValue: result)
                         )
                     }
                 }
@@ -253,7 +267,7 @@ extension Configuration {
                         )
                         throw SubprocessError(
                             code: .init(.spawnFailed),
-                            underlyingError: .init(rawValue: result)
+                            underlyingError: Errno(rawValue: result)
                         )
                     }
                 }
@@ -273,7 +287,7 @@ extension Configuration {
                         )
                         throw SubprocessError(
                             code: .init(.spawnFailed),
-                            underlyingError: .init(rawValue: result)
+                            underlyingError: Errno(rawValue: result)
                         )
                     }
                 }
@@ -293,7 +307,7 @@ extension Configuration {
                         )
                         throw SubprocessError(
                             code: .init(.spawnFailed),
-                            underlyingError: .init(rawValue: result)
+                            underlyingError: Errno(rawValue: result)
                         )
                     }
                 }
@@ -313,7 +327,7 @@ extension Configuration {
                         )
                         throw SubprocessError(
                             code: .init(.spawnFailed),
-                            underlyingError: .init(rawValue: result)
+                            underlyingError: Errno(rawValue: result)
                         )
                     }
                 }
@@ -333,7 +347,7 @@ extension Configuration {
                         )
                         throw SubprocessError(
                             code: .init(.spawnFailed),
-                            underlyingError: .init(rawValue: result)
+                            underlyingError: Errno(rawValue: result)
                         )
                     }
                 }
@@ -390,12 +404,12 @@ extension Configuration {
                     if spawnAttributeError != 0 {
                         error = SubprocessError(
                             code: .init(.spawnFailed),
-                            underlyingError: .init(rawValue: spawnAttributeError)
+                            underlyingError: Errno(rawValue: spawnAttributeError)
                         )
                     } else {
                         error = SubprocessError(
                             code: .init(.failedToChangeWorkingDirectory(self.workingDirectory?.string ?? "unknown")),
-                            underlyingError: .init(rawValue: chdirError)
+                            underlyingError: Errno(rawValue: chdirError)
                         )
                     }
                     throw error
@@ -415,7 +429,7 @@ extension Configuration {
                     gidPtr: gidPtr
                 )
                 let (spawnError, pid) = try await runOnBackgroundThread {
-                    return possibleExecutablePath.withCString { exePath in
+                    return possibleExecutablePath._withCString { exePath in
                         return supplementaryGroups.withOptionalUnsafeBufferPointer { sgroups in
                             var pid: pid_t = 0
                             var _fileActions = spawnContext.fileActions
@@ -454,7 +468,7 @@ extension Configuration {
                     )
                     throw SubprocessError(
                         code: .init(.spawnFailed),
-                        underlyingError: .init(rawValue: spawnError)
+                        underlyingError: Errno(rawValue: spawnError)
                     )
                 }
 
@@ -496,13 +510,13 @@ extension Configuration {
                 guard Configuration.pathAccessible(workingDirectory, mode: F_OK) else {
                     throw SubprocessError(
                         code: .init(.failedToChangeWorkingDirectory(workingDirectory)),
-                        underlyingError: .init(rawValue: ENOENT)
+                        underlyingError: Errno(rawValue: ENOENT)
                     )
                 }
             }
             throw SubprocessError(
                 code: .init(.executableNotFound(self.executable.description)),
-                underlyingError: .init(rawValue: ENOENT)
+                underlyingError: Errno(rawValue: ENOENT)
             )
         }
     }

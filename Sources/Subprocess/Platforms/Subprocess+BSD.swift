@@ -17,14 +17,20 @@ import Darwin
 import Glibc
 #endif
 
+#if canImport(System)
+@preconcurrency import System
+#else
+@preconcurrency import SystemPackage
+#endif
+
 internal import Dispatch
 
 // MARK: - Process Monitoring
 @Sendable
 internal func monitorProcessTermination(
     for processIdentifier: ProcessIdentifier
-) async throws -> TerminationStatus {
-    switch Result(catching: { () throws(SubprocessError.UnderlyingError) -> TerminationStatus? in try processIdentifier.reap() }) {
+) async throws(SubprocessError) -> TerminationStatus {
+    switch Result(catching: { () throws(Errno) -> TerminationStatus? in try processIdentifier.reap() }) {
     case let .success(status?):
         return status
     case .success(nil):
@@ -35,28 +41,33 @@ internal func monitorProcessTermination(
             underlyingError: error
         )
     }
-    return try await withCheckedThrowingContinuation { continuation in
-        let source = DispatchSource.makeProcessSource(
-            identifier: processIdentifier.value,
-            eventMask: [.exit],
-            queue: .global()
-        )
-        source.setEventHandler {
-            source.cancel()
-            continuation.resume(
-                with: Result(catching: { () throws(SubprocessError.UnderlyingError) -> TerminationStatus in
+    return try await _castError {
+        let result = try await withCheckedThrowingContinuation { continuation in
+            let source = DispatchSource.makeProcessSource(
+                identifier: processIdentifier.value,
+                eventMask: [.exit],
+                queue: .global()
+            )
+            source.setEventHandler {
+                source.cancel()
+
+                do {
                     // NOTE_EXIT may be delivered slightly before the process becomes reapable,
                     // so we must call waitid without WNOHANG to avoid a narrow possibility of a race condition.
                     // If waitid does block, it won't do so for very long at all.
-                    try processIdentifier.blockingReap()
-                }).mapError { underlyingError in
-                    SubprocessError(
+                    let status = try processIdentifier.blockingReap()
+                    continuation.resume(returning: status)
+                } catch {
+                    let subprocessError = SubprocessError(
                         code: .init(.failedToMonitorProcess),
-                        underlyingError: underlyingError
+                        underlyingError: error
                     )
-                })
+                    continuation.resume(throwing: subprocessError)
+                }
+            }
+            source.resume()
         }
-        source.resume()
+        return result
     }
 }
 

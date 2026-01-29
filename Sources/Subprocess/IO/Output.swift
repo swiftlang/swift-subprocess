@@ -34,11 +34,11 @@ public protocol OutputProtocol: Sendable, ~Copyable {
 
     #if SubprocessSpan
     /// Convert the output from span to expected output type
-    func output(from span: RawSpan) throws -> OutputType
+    func output(from span: RawSpan) throws(SubprocessError) -> OutputType
     #endif
 
     /// Convert the output from buffer to expected output type
-    func output(from buffer: some Sequence<UInt8>) throws -> OutputType
+    func output(from buffer: some Sequence<UInt8>) throws(SubprocessError) -> OutputType
 
     /// The max amount of data to collect for this output.
     var maxSize: Int { get }
@@ -60,7 +60,7 @@ public struct DiscardedOutput: OutputProtocol, ErrorOutputProtocol {
     /// The type for the output.
     public typealias OutputType = Void
 
-    internal func createPipe() throws -> CreatedPipe {
+    internal func createPipe() throws(SubprocessError) -> CreatedPipe {
 
         #if os(Windows)
         let devnullFd: FileDescriptor = try .openDevNull(withAccessMode: .writeOnly)
@@ -89,7 +89,7 @@ public struct FileDescriptorOutput: OutputProtocol, ErrorOutputProtocol {
     private let closeAfterSpawningProcess: Bool
     private let fileDescriptor: FileDescriptor
 
-    internal func createPipe() throws -> CreatedPipe {
+    internal func createPipe() throws(SubprocessError) -> CreatedPipe {
         #if canImport(WinSDK)
         let writeFd = HANDLE(bitPattern: _get_osfhandle(self.fileDescriptor.rawValue))!
         #else
@@ -123,7 +123,7 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol, ErrorOut
 
     #if SubprocessSpan
     /// Create a string from a raw span.
-    public func output(from span: RawSpan) throws -> String? {
+    public func output(from span: RawSpan) throws(SubprocessError) -> String? {
         // FIXME: Span to String
         var array: [UInt8] = []
         for index in 0..<span.byteCount {
@@ -134,7 +134,7 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol, ErrorOut
     #endif
 
     /// Create a String from a sequence of 8-bit unsigned integers.
-    public func output(from buffer: some Sequence<UInt8>) throws -> String? {
+    public func output(from buffer: some Sequence<UInt8>) throws(SubprocessError) -> String? {
         // FIXME: Span to String
         let array = Array(buffer)
         return String(decodingBytes: array, as: Encoding.self)
@@ -155,7 +155,7 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
 
     internal func captureOutput(
         from diskIO: consuming IOChannel
-    ) async throws -> [UInt8] {
+    ) async throws(SubprocessError) -> [UInt8] {
         #if SUBPROCESS_ASYNCIO_DISPATCH
         var result: DispatchData? = nil
         #else
@@ -191,13 +191,13 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
     #if SubprocessSpan
     /// Create an Array from `RawSpawn`.
     /// Not implemented
-    public func output(from span: RawSpan) throws -> [UInt8] {
+    public func output(from span: RawSpan) throws(SubprocessError) -> [UInt8] {
         fatalError("Not implemented")
     }
     #endif
     /// Create an Array from `Sequence<UInt8>`.
     /// Not implemented
-    public func output(from buffer: some Sequence<UInt8>) throws -> [UInt8] {
+    public func output(from buffer: some Sequence<UInt8>) throws(SubprocessError) -> [UInt8] {
         fatalError("Not implemented")
     }
 
@@ -311,7 +311,7 @@ public struct CombinedErrorOutput: ErrorOutputProtocol {
 }
 
 extension ErrorOutputProtocol {
-    internal func createPipe(from outputPipe: borrowing CreatedPipe) throws -> CreatedPipe {
+    internal func createPipe(from outputPipe: borrowing CreatedPipe) throws(SubprocessError) -> CreatedPipe {
         if self is CombinedErrorOutput {
             return try CreatedPipe(duplicating: outputPipe)
         }
@@ -341,7 +341,7 @@ extension ErrorOutputProtocol where Self == CombinedErrorOutput {
 #if SubprocessSpan
 extension OutputProtocol {
     /// Create an Array from `Sequence<UInt8>`.
-    public func output(from buffer: some Sequence<UInt8>) throws -> OutputType {
+    public func output(from buffer: some Sequence<UInt8>) throws(SubprocessError) -> OutputType {
         guard let rawBytes: UnsafeRawBufferPointer = buffer as? UnsafeRawBufferPointer else {
             fatalError("Unexpected input type passed: \(type(of: buffer))")
         }
@@ -354,7 +354,7 @@ extension OutputProtocol {
 // MARK: - Default Implementations
 extension OutputProtocol {
     @_disfavoredOverload
-    internal func createPipe() throws -> CreatedPipe {
+    internal func createPipe() throws(SubprocessError) -> CreatedPipe {
         if let discard = self as? DiscardedOutput {
             return try discard.createPipe()
         } else if let fdOutput = self as? FileDescriptorOutput {
@@ -368,7 +368,7 @@ extension OutputProtocol {
     @_disfavoredOverload
     internal func captureOutput(
         from diskIO: consuming IOChannel?
-    ) async throws -> OutputType {
+    ) async throws(SubprocessError) -> OutputType {
         if OutputType.self == Void.self {
             try diskIO?.safelyClose()
             return () as! OutputType
@@ -422,16 +422,16 @@ extension OutputProtocol {
 }
 
 extension OutputProtocol where OutputType == Void {
-    internal func captureOutput(from fileDescriptor: consuming IOChannel?) async throws {}
+    internal func captureOutput(from fileDescriptor: consuming IOChannel?) async throws(SubprocessError) {}
 
     #if SubprocessSpan
     /// Convert the output from raw span to expected output type
-    public func output(from span: RawSpan) throws {
+    public func output(from span: RawSpan) throws(SubprocessError) {
         fatalError("Unexpected call to \(#function)")
     }
     #endif
     /// Convert the output from a sequence of 8-bit unsigned integers to expected output type.
-    public func output(from buffer: some Sequence<UInt8>) throws {
+    public func output(from buffer: some Sequence<UInt8>) throws(SubprocessError) {
         fatalError("Unexpected call to \(#function)")
     }
 }
@@ -439,30 +439,34 @@ extension OutputProtocol where OutputType == Void {
 #if SubprocessSpan
 extension OutputProtocol {
     #if SUBPROCESS_ASYNCIO_DISPATCH
-    internal func output(from data: DispatchData) throws -> OutputType {
+    internal func output(from data: DispatchData) throws(SubprocessError) -> OutputType {
         guard !data.isEmpty else {
             let empty = UnsafeRawBufferPointer(start: nil, count: 0)
             let span = RawSpan(_unsafeBytes: empty)
             return try self.output(from: span)
         }
 
-        return try data.withUnsafeBytes { ptr in
-            let bufferPtr = UnsafeRawBufferPointer(start: ptr, count: data.count)
-            let span = RawSpan(_unsafeBytes: bufferPtr)
-            return try self.output(from: span)
+        return try _castError {
+            return try data.withUnsafeBytes { ptr in
+                let bufferPtr = UnsafeRawBufferPointer(start: ptr, count: data.count)
+                let span = RawSpan(_unsafeBytes: bufferPtr)
+                return try self.output(from: span)
+            }
         }
     }
     #else
-    internal func output(from data: [UInt8]) throws -> OutputType {
+    internal func output(from data: [UInt8]) throws(SubprocessError) -> OutputType {
         guard !data.isEmpty else {
             let empty = UnsafeRawBufferPointer(start: nil, count: 0)
             let span = RawSpan(_unsafeBytes: empty)
             return try self.output(from: span)
         }
 
-        return try data.withUnsafeBufferPointer { ptr in
-            let span = RawSpan(_unsafeBytes: UnsafeRawBufferPointer(ptr))
-            return try self.output(from: span)
+        return try _castError {
+            return try data.withUnsafeBufferPointer { ptr in
+                let span = RawSpan(_unsafeBytes: UnsafeRawBufferPointer(ptr))
+                return try self.output(from: span)
+            }
         }
     }
     #endif // SUBPROCESS_ASYNCIO_DISPATCH
@@ -487,12 +491,17 @@ extension DispatchData {
 extension FileDescriptor {
     internal static func openDevNull(
         withAccessMode mode: FileDescriptor.AccessMode
-    ) throws -> FileDescriptor {
-        #if os(Windows)
-        let devnull: FileDescriptor = try .open("NUL", mode)
-        #else
-        let devnull: FileDescriptor = try .open("/dev/null", mode)
-        #endif
-        return devnull
+    ) throws(SubprocessError) -> FileDescriptor {
+        do {
+            #if os(Windows)
+            let devnull: FileDescriptor = try .open("NUL", mode)
+            #else
+            let devnull: FileDescriptor = try .open("/dev/null", mode)
+            #endif
+            return devnull
+        } catch {
+            let errorCode = SubprocessError.Code(.asyncIOFailed("Failed to open /dev/null"))
+            throw SubprocessError(code: errorCode, underlyingError: error)
+        }
     }
 }

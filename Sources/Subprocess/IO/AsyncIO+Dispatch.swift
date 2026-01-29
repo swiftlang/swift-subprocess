@@ -32,7 +32,7 @@ final class AsyncIO: Sendable {
     internal func read(
         from diskIO: borrowing IOChannel,
         upTo maxLength: Int
-    ) async throws -> DispatchData? {
+    ) async throws(SubprocessError) -> DispatchData? {
         return try await self.read(
             from: diskIO.channel,
             upTo: maxLength,
@@ -42,35 +42,37 @@ final class AsyncIO: Sendable {
     internal func read(
         from dispatchIO: DispatchIO,
         upTo maxLength: Int
-    ) async throws -> DispatchData? {
-        return try await withCheckedThrowingContinuation { continuation in
-            var buffer: DispatchData = .empty
-            dispatchIO.read(
-                offset: 0,
-                length: maxLength,
-                queue: DispatchQueue(label: "SubprocessReadQueue")
-            ) { done, data, error in
-                if error != 0 {
-                    continuation.resume(
-                        throwing: SubprocessError(
-                            code: .init(.failedToReadFromSubprocess),
-                            underlyingError: .init(rawValue: error)
+    ) async throws(SubprocessError) -> DispatchData? {
+        return try await _castError {
+            return try await withCheckedThrowingContinuation { continuation in
+                var buffer: DispatchData = .empty
+                dispatchIO.read(
+                    offset: 0,
+                    length: maxLength,
+                    queue: DispatchQueue(label: "SubprocessReadQueue")
+                ) { done, data, error in
+                    if error != 0 {
+                        continuation.resume(
+                            throwing: SubprocessError(
+                                code: .init(.failedToReadFromSubprocess),
+                                underlyingError: Errno(rawValue: error)
+                            )
                         )
-                    )
-                    return
-                }
-                if let data {
-                    if buffer.isEmpty {
-                        buffer = data
-                    } else {
-                        buffer.append(data)
+                        return
                     }
-                }
-                if done {
-                    if !buffer.isEmpty {
-                        continuation.resume(returning: buffer)
-                    } else {
-                        continuation.resume(returning: nil)
+                    if let data {
+                        if buffer.isEmpty {
+                            buffer = data
+                        } else {
+                            buffer.append(data)
+                        }
+                    }
+                    if done {
+                        if !buffer.isEmpty {
+                            continuation.resume(returning: buffer)
+                        } else {
+                            continuation.resume(returning: nil)
+                        }
                     }
                 }
             }
@@ -81,24 +83,26 @@ final class AsyncIO: Sendable {
     internal func write(
         _ span: borrowing RawSpan,
         to diskIO: borrowing IOChannel
-    ) async throws -> Int {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int, any Error>) in
-            span.withUnsafeBytes {
-                let dispatchData = DispatchData(
-                    bytesNoCopy: $0,
-                    deallocator: .custom(
-                        nil,
-                        {
-                            // noop
-                        }
+    ) async throws(SubprocessError) -> Int {
+        return try await _castError {
+            return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int, any Error>) in
+                span.withUnsafeBytes {
+                    let dispatchData = DispatchData(
+                        bytesNoCopy: $0,
+                        deallocator: .custom(
+                            nil,
+                            {
+                                // noop
+                            }
+                        )
                     )
-                )
 
-                self.write(dispatchData, to: diskIO) { writtenLength, error in
-                    if let error {
-                        continuation.resume(throwing: error)
-                    } else {
-                        continuation.resume(returning: writtenLength)
+                    self.write(dispatchData, to: diskIO) { writtenLength, error in
+                        if let error {
+                            continuation.resume(throwing: error)
+                        } else {
+                            continuation.resume(returning: writtenLength)
+                        }
                     }
                 }
             }
@@ -109,24 +113,26 @@ final class AsyncIO: Sendable {
     internal func write(
         _ array: [UInt8],
         to diskIO: borrowing IOChannel
-    ) async throws -> Int {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int, any Error>) in
-            array.withUnsafeBytes {
-                let dispatchData = DispatchData(
-                    bytesNoCopy: $0,
-                    deallocator: .custom(
-                        nil,
-                        {
-                            // noop
-                        }
+    ) async throws(SubprocessError) -> Int {
+        return try await _castError {
+            return try await withCheckedThrowingContinuation { continuation in
+                array.withUnsafeBytes {
+                    let dispatchData = DispatchData(
+                        bytesNoCopy: $0,
+                        deallocator: .custom(
+                            nil,
+                            {
+                                // noop
+                            }
+                        )
                     )
-                )
 
-                self.write(dispatchData, to: diskIO) { writtenLength, error in
-                    if let error {
-                        continuation.resume(throwing: error)
-                    } else {
-                        continuation.resume(returning: writtenLength)
+                    self.write(dispatchData, to: diskIO) { writtenLength, error in
+                        if let error {
+                            continuation.resume(throwing: error)
+                        } else {
+                            continuation.resume(returning: writtenLength)
+                        }
                     }
                 }
             }
@@ -137,7 +143,7 @@ final class AsyncIO: Sendable {
         _ dispatchData: DispatchData,
         to diskIO: borrowing IOChannel,
         queue: DispatchQueue = .global(),
-        completion: @escaping (Int, Error?) -> Void
+        completion: @escaping (Int, SubprocessError?) -> Void
     ) {
         diskIO.channel.write(
             offset: 0,
@@ -159,7 +165,7 @@ final class AsyncIO: Sendable {
                 writtenLength,
                 SubprocessError(
                     code: .init(.failedToWriteToSubprocess),
-                    underlyingError: .init(rawValue: error)
+                    underlyingError: Errno(rawValue: error)
                 )
             )
         }

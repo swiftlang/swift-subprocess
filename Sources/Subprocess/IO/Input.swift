@@ -40,7 +40,7 @@ import FoundationEssentials
 public protocol InputProtocol: Sendable, ~Copyable {
     /// Asynchronously write the input to the subprocess using the
     /// write file descriptor
-    func write(with writer: StandardInputWriter) async throws
+    func write(with writer: StandardInputWriter) async throws(SubprocessError)
 }
 
 /// A concrete input type for subprocesses that indicates the absence
@@ -49,7 +49,7 @@ public protocol InputProtocol: Sendable, ~Copyable {
 /// On Unix-like systems, `NoInput` redirects the standard input of the subprocess to /dev/null,
 /// while on Windows, it redirects to `NUL`.
 public struct NoInput: InputProtocol {
-    internal func createPipe() throws -> CreatedPipe {
+    internal func createPipe() throws(SubprocessError) -> CreatedPipe {
         #if os(Windows)
         let devnullFd: FileDescriptor = try .openDevNull(withAccessMode: .writeOnly)
         let devnull = HANDLE(bitPattern: _get_osfhandle(devnullFd.rawValue))!
@@ -64,7 +64,7 @@ public struct NoInput: InputProtocol {
 
     /// Asynchronously write the input to the subprocess that uses the
     /// write file descriptor.
-    public func write(with writer: StandardInputWriter) async throws {
+    public func write(with writer: StandardInputWriter) async throws(SubprocessError) {
         fatalError("Unexpected call to \(#function)")
     }
 
@@ -79,7 +79,7 @@ public struct FileDescriptorInput: InputProtocol {
     private let fileDescriptor: FileDescriptor
     private let closeAfterSpawningProcess: Bool
 
-    internal func createPipe() throws -> CreatedPipe {
+    internal func createPipe() throws(SubprocessError) -> CreatedPipe {
         #if canImport(WinSDK)
         let readFd = HANDLE(bitPattern: _get_osfhandle(self.fileDescriptor.rawValue))!
         #else
@@ -96,7 +96,7 @@ public struct FileDescriptorInput: InputProtocol {
 
     /// Asynchronously write the input to the subprocess that use the
     /// write file descriptor.
-    public func write(with writer: StandardInputWriter) async throws {
+    public func write(with writer: StandardInputWriter) async throws(SubprocessError) {
         fatalError("Unexpected call to \(#function)")
     }
 
@@ -121,7 +121,7 @@ public struct StringInput<
 
     /// Asynchronously write the input to the subprocess that use the
     /// write file descriptor.
-    public func write(with writer: StandardInputWriter) async throws {
+    public func write(with writer: StandardInputWriter) async throws(SubprocessError) {
         guard let array = self.string.byteArray(using: Encoding.self) else {
             return
         }
@@ -140,7 +140,7 @@ public struct ArrayInput: InputProtocol {
 
     /// Asynchronously write the input to the subprocess using the
     /// write file descriptor
-    public func write(with writer: StandardInputWriter) async throws {
+    public func write(with writer: StandardInputWriter) async throws(SubprocessError) {
         _ = try await writer.write(self.array)
     }
 
@@ -154,7 +154,7 @@ public struct ArrayInput: InputProtocol {
 internal struct CustomWriteInput: InputProtocol {
     /// Asynchronously write the input to the subprocess using the
     /// write file descriptor.
-    public func write(with writer: StandardInputWriter) async throws {
+    public func write(with writer: StandardInputWriter) async throws(SubprocessError) {
         fatalError("Unexpected call to \(#function)")
     }
 
@@ -222,7 +222,7 @@ extension InputProtocol {
 }
 
 extension InputProtocol {
-    internal func createPipe() throws -> CreatedPipe {
+    internal func createPipe() throws(SubprocessError) -> CreatedPipe {
         if let noInput = self as? NoInput {
             return try noInput.createPipe()
         } else if let fdInput = self as? FileDescriptorInput {
@@ -249,7 +249,7 @@ public final actor StandardInputWriter: Sendable {
     /// - Returns: the number of bytes written.
     public func write(
         _ array: [UInt8]
-    ) async throws -> Int {
+    ) async throws(SubprocessError) -> Int {
         return try await AsyncIO.shared.write(array, to: self.diskIO)
     }
 
@@ -258,7 +258,7 @@ public final actor StandardInputWriter: Sendable {
     ///
     /// - Parameter `span`: The span to write.
     /// - Returns: the number of bytes written.
-    public func write(_ span: borrowing RawSpan) async throws -> Int {
+    public func write(_ span: borrowing RawSpan) async throws(SubprocessError) -> Int {
         return try await AsyncIO.shared.write(span, to: self.diskIO)
     }
     #endif
@@ -271,7 +271,7 @@ public final actor StandardInputWriter: Sendable {
     public func write<Encoding: Unicode.Encoding>(
         _ string: some StringProtocol,
         using encoding: Encoding.Type = UTF8.self
-    ) async throws -> Int {
+    ) async throws(SubprocessError) -> Int {
         if let array = string.byteArray(using: encoding) {
             return try await self.write(array)
         }
@@ -279,7 +279,7 @@ public final actor StandardInputWriter: Sendable {
     }
 
     /// Signal all writes are finished
-    public func finish() async throws {
+    public func finish() async throws(SubprocessError) {
         try self.diskIO.safelyClose()
     }
 }

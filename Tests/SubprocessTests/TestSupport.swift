@@ -20,10 +20,16 @@ import FoundationEssentials
 import Testing
 import Subprocess
 
+#if canImport(System)
+@preconcurrency import System
+#else
+@preconcurrency import SystemPackage
+#endif
+
 // Workaround: https://github.com/swiftlang/swift-testing/issues/543
 internal func _require<T: ~Copyable>(_ value: consuming T?) throws -> T {
     guard let value else {
-        throw SubprocessError.UnderlyingError(rawValue: .max)
+        throw Errno(rawValue: .max)
     }
     return value
 }

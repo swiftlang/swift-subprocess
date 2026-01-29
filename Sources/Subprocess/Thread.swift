@@ -39,17 +39,25 @@ private typealias ConditionType = pthread_cond_t
 private typealias ThreadType = pthread_t
 #endif
 
-internal func runOnBackgroundThread<Result>(
-    _ body: @Sendable @escaping () throws -> Result
-) async throws -> Result {
+#if canImport(System)
+@preconcurrency import System
+#else
+@preconcurrency import SystemPackage
+#endif
+
+internal func runOnBackgroundThread<Result: Sendable>(
+    _ body: @Sendable @escaping () throws(SubprocessError) -> Result
+) async throws(SubprocessError) -> Result {
     // Only executed once
     _setupWorkerThread
 
-    let result = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Result, any Error>) in
-        let workItem = BackgroundWorkItem(body, continuation: continuation)
-        _workQueue.enqueue(workItem)
+    return try await _castError {
+        let result = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Result, any Error>) in
+            let workItem = BackgroundWorkItem(body, continuation: continuation)
+            _workQueue.enqueue(workItem)
+        }
+        return result
     }
-    return result
 }
 
 private struct BackgroundWorkItem {
@@ -94,16 +102,16 @@ private final class WorkQueue: Sendable {
         #endif
     }
 
-    func withLock<R>(_ body: (inout [BackgroundWorkItem]) throws -> R) rethrows -> R {
-        try withUnsafeUnderlyingLock { _, queue in
-            try body(&queue)
+    func withLock<R>(_ body: (inout [BackgroundWorkItem]) -> R) -> R {
+        withUnsafeUnderlyingLock { _, queue in
+            body(&queue)
         }
     }
 
     private func withUnsafeUnderlyingLock<R>(
         condition: (inout [BackgroundWorkItem]) -> Bool = { _ in false },
-        body: (UnsafeMutablePointer<MutexType>, inout [BackgroundWorkItem]) throws -> R
-    ) rethrows -> R {
+        body: (UnsafeMutablePointer<MutexType>, inout [BackgroundWorkItem]) -> R
+    ) -> R {
         #if canImport(WinSDK)
         EnterCriticalSection(self.mutex)
         defer {
@@ -122,7 +130,7 @@ private final class WorkQueue: Sendable {
             pthread_cond_wait(self.waitCondition, mutex)
             #endif
         }
-        return try body(mutex, &queue)
+        return body(mutex, &queue)
     }
 
     // Only called in worker thread. Sleeps the thread if there's no more item
@@ -166,7 +174,7 @@ private let _workQueue = WorkQueue()
 private let _workQueueShutdownFlag = AtomicCounter()
 
 // Okay to be unlocked global mutable because this value is only set once like dispatch_once
-private nonisolated(unsafe) var _workerThread: Result<ThreadType, any Error> = .failure(SubprocessError(code: .init(.spawnFailed), underlyingError: nil))
+private nonisolated(unsafe) var _workerThread: Result<ThreadType, SubprocessError> = .failure(SubprocessError(code: .init(.spawnFailed), underlyingError: nil))
 
 private let _setupWorkerThread: () = {
     do {
@@ -194,7 +202,8 @@ private let _setupWorkerThread: () = {
         #endif
         _workerThread = .success(workerThread)
     } catch {
-        _workerThread = .failure(error)
+        let subprocessError = SubprocessError(code: .init(.spawnFailed), underlyingError: error)
+        _workerThread = .failure(subprocessError)
     }
 
     atexit {
@@ -266,7 +275,7 @@ internal struct AtomicCounter: ~Copyable {
 /// > thread management rather than CreateThread and ExitThread
 internal func begin_thread_x(
     _ body: @Sendable @escaping () -> UInt32
-) throws(SubprocessError.UnderlyingError) -> HANDLE {
+) throws(SubprocessError.WindowsError) -> HANDLE {
     final class Context {
         let body: @Sendable () -> UInt32
         init(body: @Sendable @escaping () -> UInt32) {
@@ -291,7 +300,7 @@ internal func begin_thread_x(
     else {
         // _beginthreadex uses errno instead of GetLastError()
         let capturedError = _subprocess_windows_get_errno()
-        throw SubprocessError.UnderlyingError(rawValue: DWORD(capturedError))
+        throw SubprocessError.WindowsError(rawValue: DWORD(capturedError))
     }
 
     return threadHandle
@@ -300,7 +309,7 @@ internal func begin_thread_x(
 
 internal func pthread_create(
     _ body: @Sendable @escaping () -> ()
-) throws(SubprocessError.UnderlyingError) -> pthread_t {
+) throws(Errno) -> pthread_t {
     final class Context {
         let body: @Sendable () -> ()
         init(body: @Sendable @escaping () -> Void) {
@@ -323,7 +332,7 @@ internal func pthread_create(
         Unmanaged.passRetained(Context(body: body)).toOpaque()
     )
     if rc != 0 {
-        throw SubprocessError.UnderlyingError(rawValue: rc)
+        throw Errno(rawValue: rc)
     }
     #if canImport(Glibc) || canImport(Bionic)
     return thread

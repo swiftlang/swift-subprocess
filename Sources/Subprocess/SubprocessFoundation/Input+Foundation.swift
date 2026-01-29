@@ -33,7 +33,7 @@ public struct DataInput: InputProtocol {
 
     /// Asynchronously write the input to the subprocess using the
     /// write file descriptor.
-    public func write(with writer: StandardInputWriter) async throws {
+    public func write(with writer: StandardInputWriter) async throws(SubprocessError) {
         _ = try await writer.write(self.data)
     }
 
@@ -51,7 +51,7 @@ public struct DataSequenceInput<
 
     /// Asynchronously write the input to the subprocess using the
     /// write file descriptor.
-    public func write(with writer: StandardInputWriter) async throws {
+    public func write(with writer: StandardInputWriter) async throws(SubprocessError) {
         var buffer = Data()
         for chunk in self.sequence {
             buffer.append(chunk)
@@ -71,15 +71,22 @@ public struct DataAsyncSequenceInput<
 >: InputProtocol where InputSequence.Element == Data {
     private let sequence: InputSequence
 
-    private func writeChunk(_ chunk: Data, with writer: StandardInputWriter) async throws {
+    private func writeChunk(_ chunk: Data, with writer: StandardInputWriter) async throws(SubprocessError) {
         _ = try await writer.write(chunk)
     }
 
     /// Asynchronously write the input to the subprocess using the
     /// write file descriptor.
-    public func write(with writer: StandardInputWriter) async throws {
-        for try await chunk in self.sequence {
-            try await self.writeChunk(chunk, with: writer)
+    public func write(with writer: StandardInputWriter) async throws(SubprocessError) {
+        do {
+            for try await chunk in self.sequence {
+                try await self.writeChunk(chunk, with: writer)
+            }
+        } catch {
+            let errorCode = SubprocessError.Code(.failedToWriteToSubprocess)
+            throw SubprocessError(
+                code: errorCode, underlyingError: error
+            )
         }
     }
 
@@ -115,7 +122,7 @@ extension StandardInputWriter {
     /// - Returns number of bytes written.
     public func write(
         _ data: Data
-    ) async throws -> Int {
+    ) async throws(SubprocessError) -> Int {
         return try await AsyncIO.shared.write(data, to: self.diskIO)
     }
 
@@ -124,12 +131,19 @@ extension StandardInputWriter {
     /// - Returns number of bytes written.
     public func write<AsyncSendableSequence: AsyncSequence & Sendable>(
         _ asyncSequence: AsyncSendableSequence
-    ) async throws -> Int where AsyncSendableSequence.Element == Data {
-        var buffer = Data()
-        for try await data in asyncSequence {
-            buffer.append(data)
+    ) async throws(SubprocessError) -> Int where AsyncSendableSequence.Element == Data {
+        do {
+            var buffer = Data()
+            for try await data in asyncSequence {
+                buffer.append(data)
+            }
+            return try await self.write(buffer)
+        } catch {
+            let errorCode = SubprocessError.Code(.failedToWriteToSubprocess)
+            throw SubprocessError(
+                code: errorCode, underlyingError: error
+            )
         }
-        return try await self.write(buffer)
     }
 }
 
@@ -138,24 +152,26 @@ extension AsyncIO {
     internal func write(
         _ data: Data,
         to diskIO: borrowing IOChannel
-    ) async throws -> Int {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int, any Error>) in
-            let dispatchData = data.withUnsafeBytes {
-                return DispatchData(
-                    bytesNoCopy: $0,
-                    deallocator: .custom(
-                        nil,
-                        {
-                            // noop
-                        }
+    ) async throws(SubprocessError) -> Int {
+        try await _castError {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int, any Error>) in
+                let dispatchData = data.withUnsafeBytes {
+                    return DispatchData(
+                        bytesNoCopy: $0,
+                        deallocator: .custom(
+                            nil,
+                            {
+                                // noop
+                            }
+                        )
                     )
-                )
-            }
-            self.write(dispatchData, to: diskIO) { writtenLength, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume(returning: writtenLength)
+                }
+                self.write(dispatchData, to: diskIO) { writtenLength, error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume(returning: writtenLength)
+                    }
                 }
             }
         }
@@ -168,7 +184,7 @@ extension AsyncIO {
     internal func write(
         _ data: Data,
         to diskIO: borrowing IOChannel
-    ) async throws -> Int {
+    ) async throws(SubprocessError) -> Int {
         return try await self._write(data, to: diskIO)
     }
 }

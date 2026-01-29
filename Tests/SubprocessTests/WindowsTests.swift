@@ -298,10 +298,10 @@ extension SubprocessWindowsTests {
             output: .discarded
         ) { execution, _ in
             guard AssignProcessToJobObject(hJob, execution.processIdentifier.processDescriptor) else {
-                throw SubprocessError.UnderlyingError(rawValue: GetLastError())
+                throw SubprocessError.WindowsError(rawValue: GetLastError())
             }
             guard ResumeThread(execution.processIdentifier.threadHandle) != DWORD(bitPattern: -1) else {
-                throw SubprocessError.UnderlyingError(rawValue: GetLastError())
+                throw SubprocessError.WindowsError(rawValue: GetLastError())
             }
         }
         #expect(result.terminationStatus.isSuccess)
@@ -459,7 +459,7 @@ extension FileDescriptor {
                 if let lastError = lastError {
                     let windowsError = SubprocessError(
                         code: .init(.failedToReadFromSubprocess),
-                        underlyingError: .init(rawValue: lastError)
+                        underlyingError: SubprocessError.WindowsError(rawValue: lastError)
                     )
                     continuation.resume(throwing: windowsError)
                 } else {

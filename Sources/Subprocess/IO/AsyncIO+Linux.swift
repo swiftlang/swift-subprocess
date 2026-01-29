@@ -77,7 +77,7 @@ final class AsyncIO: Sendable {
         guard epollFileDescriptor >= 0 else {
             let error = SubprocessError(
                 code: .init(.asyncIOFailed("epoll_create1 failed")),
-                underlyingError: .init(rawValue: errno)
+                underlyingError: Errno(rawValue: errno)
             )
             self.state = .failure(error)
             return
@@ -87,7 +87,7 @@ final class AsyncIO: Sendable {
         guard shutdownFileDescriptor >= 0 else {
             let error = SubprocessError(
                 code: .init(.asyncIOFailed("eventfd failed")),
-                underlyingError: .init(rawValue: errno)
+                underlyingError: Errno(rawValue: errno)
             )
             self.state = .failure(error)
             return
@@ -110,7 +110,7 @@ final class AsyncIO: Sendable {
                     .asyncIOFailed(
                         "failed to add shutdown fd \(shutdownFileDescriptor) to epoll list")
                 ),
-                underlyingError: .init(rawValue: errno)
+                underlyingError: Errno(rawValue: errno)
             )
             self.state = .failure(error)
             return
@@ -155,7 +155,7 @@ final class AsyncIO: Sendable {
                                 .asyncIOFailed(
                                     "epoll_wait failed")
                             ),
-                            underlyingError: .init(rawValue: errno)
+                            underlyingError: Errno(rawValue: errno)
                         )
                         reportError(error)
                         break monitorLoop
@@ -183,10 +183,10 @@ final class AsyncIO: Sendable {
                     }
                 }
             }
-        } catch let underlyingError {
+        } catch let errno {
             let error = SubprocessError(
                 code: .init(.asyncIOFailed("Failed to create monitor thread")),
-                underlyingError: underlyingError
+                underlyingError: errno
             )
             self.state = .failure(error)
             return
@@ -246,7 +246,7 @@ final class AsyncIO: Sendable {
                             .asyncIOFailed(
                                 "failed to get flags for \(fileDescriptor.rawValue)")
                         ),
-                        underlyingError: .init(rawValue: errno)
+                        underlyingError: Errno(rawValue: errno)
                     )
                     continuation.finish(throwing: error)
                     return
@@ -257,7 +257,7 @@ final class AsyncIO: Sendable {
                             .asyncIOFailed(
                                 "failed to set \(fileDescriptor.rawValue) to be non-blocking")
                         ),
-                        underlyingError: .init(rawValue: errno)
+                        underlyingError: Errno(rawValue: errno)
                     )
                     continuation.finish(throwing: error)
                     return
@@ -297,7 +297,7 @@ final class AsyncIO: Sendable {
                             .asyncIOFailed(
                                 "failed to add \(fileDescriptor.rawValue) to epoll list")
                         ),
-                        underlyingError: .init(rawValue: capturedError)
+                        underlyingError: Errno(rawValue: capturedError)
                     )
                     continuation.finish(throwing: error)
                     return
@@ -309,7 +309,7 @@ final class AsyncIO: Sendable {
         }
     }
 
-    private func removeRegistration(for fileDescriptor: FileDescriptor) throws {
+    private func removeRegistration(for fileDescriptor: FileDescriptor) throws(SubprocessError) {
         switch self.state {
         case .success(let state):
             let rc = epoll_ctl(
@@ -324,7 +324,7 @@ final class AsyncIO: Sendable {
                         .asyncIOFailed(
                             "failed to remove \(fileDescriptor.rawValue) to epoll list")
                     ),
-                    underlyingError: .init(rawValue: errno)
+                    underlyingError: Errno(rawValue: errno)
                 )
             }
             _registration.withLock { store in
@@ -349,14 +349,14 @@ extension AsyncIO {
     func read(
         from diskIO: borrowing IOChannel,
         upTo maxLength: Int
-    ) async throws -> [UInt8]? {
+    ) async throws(SubprocessError) -> [UInt8]? {
         return try await self.read(from: diskIO.channel, upTo: maxLength)
     }
 
     func read(
         from fileDescriptor: FileDescriptor,
         upTo maxLength: Int
-    ) async throws -> [UInt8]? {
+    ) async throws(SubprocessError) -> [UInt8]? {
         guard maxLength > 0 else {
             return nil
         }
@@ -423,7 +423,7 @@ extension AsyncIO {
                             try self.removeRegistration(for: fileDescriptor)
                             throw SubprocessError(
                                 code: .init(.failedToReadFromSubprocess),
-                                underlyingError: .init(rawValue: capturedErrno)
+                                underlyingError: Errno(rawValue: capturedErrno)
                             )
                         }
                     }
@@ -432,7 +432,10 @@ extension AsyncIO {
         } catch {
             // Reset error code to .failedToRead to match other platforms
             guard let originalError = error as? SubprocessError else {
-                throw error
+                throw SubprocessError(
+                    code: .init(.failedToReadFromSubprocess),
+                    underlyingError: error
+                )
             }
             throw SubprocessError(
                 code: .init(.failedToReadFromSubprocess),
@@ -446,14 +449,14 @@ extension AsyncIO {
     func write(
         _ array: [UInt8],
         to diskIO: borrowing IOChannel
-    ) async throws -> Int {
+    ) async throws(SubprocessError) -> Int {
         return try await self._write(array, to: diskIO)
     }
 
     func _write<Bytes: _ContiguousBytes>(
         _ bytes: Bytes,
         to diskIO: borrowing IOChannel
-    ) async throws -> Int {
+    ) async throws(SubprocessError) -> Int {
         guard bytes.count > 0 else {
             return 0
         }
@@ -491,7 +494,7 @@ extension AsyncIO {
                             try self.removeRegistration(for: fileDescriptor)
                             throw SubprocessError(
                                 code: .init(.failedToWriteToSubprocess),
-                                underlyingError: .init(rawValue: capturedErrno)
+                                underlyingError: Errno(rawValue: capturedErrno)
                             )
                         }
                     }
@@ -500,7 +503,10 @@ extension AsyncIO {
         } catch {
             // Reset error code to .failedToWrite to match other platforms
             guard let originalError = error as? SubprocessError else {
-                throw error
+                throw SubprocessError(
+                    code: .init(.failedToWriteToSubprocess),
+                    underlyingError: error
+                )
             }
             throw SubprocessError(
                 code: .init(.failedToWriteToSubprocess),
@@ -514,7 +520,7 @@ extension AsyncIO {
     func write(
         _ span: borrowing RawSpan,
         to diskIO: borrowing IOChannel
-    ) async throws -> Int {
+    ) async throws(SubprocessError) -> Int {
         guard span.byteCount > 0 else {
             return 0
         }
@@ -552,7 +558,7 @@ extension AsyncIO {
                             try self.removeRegistration(for: fileDescriptor)
                             throw SubprocessError(
                                 code: .init(.failedToWriteToSubprocess),
-                                underlyingError: .init(rawValue: capturedErrno)
+                                underlyingError: Errno(rawValue: capturedErrno)
                             )
                         }
                     }
@@ -561,7 +567,10 @@ extension AsyncIO {
         } catch {
             // Reset error code to .failedToWrite to match other platforms
             guard let originalError = error as? SubprocessError else {
-                throw error
+                throw SubprocessError(
+                    code: .init(.failedToWriteToSubprocess),
+                    underlyingError: error
+                )
             }
             throw SubprocessError(
                 code: .init(.failedToWriteToSubprocess),
