@@ -41,7 +41,11 @@ extern "C" {
 #endif
 
 int _subprocess_pthread_create(
+#if TARGET_OS_MAC
+    pthread_t _Nullable * _Nonnull ptr,
+#else
     pthread_t * _Nonnull ptr,
+#endif
     pthread_attr_t const * _Nullable attr,
     void * _Nullable (* _Nonnull start)(void * _Nullable),
     void * _Nullable context
