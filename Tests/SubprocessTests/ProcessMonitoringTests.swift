@@ -182,7 +182,7 @@ extension SubprocessProcessMonitoringTests {
             let monitorResult = try await monitorProcessTermination(
                 for: execution.processIdentifier
             )
-            #expect(monitorResult == .exited(0))
+            #expect(monitorResult == TerminationStatus.exited(0))
         }
     }
 
@@ -199,31 +199,25 @@ extension SubprocessProcessMonitoringTests {
 
     @Test func testInvalidProcessIdentifier() async throws {
         #if os(Windows)
-        let expectedError = SubprocessError(
-            code: .init(.failedToMonitorProcess),
-            underlyingError: .init(rawValue: DWORD(ERROR_INVALID_PARAMETER))
-        )
+        let expectedError = SubprocessError.WindowsError(rawValue: DWORD(ERROR_INVALID_PARAMETER))
         let processIdentifier = ProcessIdentifier(
             value: .max, processDescriptor: INVALID_HANDLE_VALUE, threadHandle: INVALID_HANDLE_VALUE
         )
         #elseif os(Linux) || os(Android) || os(FreeBSD)
-        let expectedError = SubprocessError(
-            code: .init(.failedToMonitorProcess),
-            underlyingError: .init(rawValue: ECHILD)
-        )
+        let expectedError = Errno(rawValue: ECHILD)
         let processIdentifier = ProcessIdentifier(
             value: .max, processDescriptor: -1
         )
         #else
-        let expectedError = SubprocessError(
-            code: .init(.failedToMonitorProcess),
-            underlyingError: .init(rawValue: ECHILD)
-        )
+        let expectedError = Errno(rawValue: ECHILD)
         let processIdentifier = ProcessIdentifier(value: .max)
         #endif
-        await #expect(throws: expectedError) {
+        let caughtError = await #expect(throws: SubprocessError.self) {
             _ = try await monitorProcessTermination(for: processIdentifier)
         }
+        #expect(caughtError?.code == .failedToMonitorProcess)
+        let underlying = try #require(caughtError?.underlyingError)
+        #expect(expectedError.equals(to: underlying))
     }
 
     @Test func testDoesNotReapUnrelatedChildProcess() async throws {

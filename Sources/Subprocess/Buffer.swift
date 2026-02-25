@@ -71,10 +71,14 @@ extension AsyncBufferSequence.Buffer {
     ///   the method creates it. The argument is valid only for the duration of the
     ///   closure's execution.
     /// - Returns: The return value of the body closure.
-    public func withUnsafeBytes<ResultType>(
-        _ body: (UnsafeRawBufferPointer) throws -> ResultType
-    ) rethrows -> ResultType {
-        return try self.data.withUnsafeBytes(body)
+    public func withUnsafeBytes<ResultType, Error: Swift.Error>(
+        _ body: (UnsafeRawBufferPointer) throws(Error) -> ResultType
+    ) throws(Error) -> ResultType {
+        do {
+            return try self.data.withUnsafeBytes(body)
+        } catch {
+            throw error as! Error
+        }
     }
 
     #if SubprocessSpan

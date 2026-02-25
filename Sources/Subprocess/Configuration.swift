@@ -91,7 +91,14 @@ public struct Configuration: Sendable {
         output: consuming CreatedPipe,
         error: consuming CreatedPipe,
         isolation: isolated (any Actor)? = #isolation,
-        _ body: ((Execution, consuming IOChannel?, consuming IOChannel?, consuming IOChannel?) async throws -> Result)
+        _ body: (
+            (
+                Execution,
+                consuming IOChannel?,
+                consuming IOChannel?,
+                consuming IOChannel?
+            ) async throws -> Result
+        )
     ) async throws -> ExecutionResult<Result> {
         let spawnResults = try await self.spawn(
             withInput: input,
@@ -108,12 +115,12 @@ public struct Configuration: Sendable {
             execution.processIdentifier.close()
         }
 
-        return try await withAsyncTaskCleanupHandler {
+        return try await withAsyncTaskCleanupHandler { () throws -> ExecutionResult<Result> in
             let inputIO = _spawnResult.inputWriteEnd()
             let outputIO = _spawnResult.outputReadEnd()
             let errorIO = _spawnResult.errorReadEnd()
 
-            let result: Swift.Result<Result, Error>
+            let result: Swift.Result<Result, any Error>
             do {
                 // Body runs in the same isolation
                 let bodyResult = try await body(_spawnResult.execution, inputIO, outputIO, errorIO)
@@ -184,8 +191,8 @@ extension Configuration {
         outputWrite: consuming IODescriptor?,
         errorRead: consuming IODescriptor?,
         errorWrite: consuming IODescriptor?
-    ) throws {
-        var possibleError: (any Swift.Error)? = nil
+    ) throws(SubprocessError) {
+        var possibleError: SubprocessError? = nil
 
         // To avoid closing the same descriptor multiple times,
         // keep track of the list of descriptors that we have
@@ -291,7 +298,7 @@ public struct Executable: Sendable, Hashable {
         return .init(_config: .path(filePath))
     }
     /// Returns the full executable path given the environment value.
-    public func resolveExecutablePath(in environment: Environment) throws -> FilePath {
+    public func resolveExecutablePath(in environment: Environment) throws(SubprocessError) -> FilePath {
         let path = try self.resolveExecutablePath(withPathValue: environment.pathValue())
         return FilePath(path)
     }
@@ -747,14 +754,15 @@ internal enum StringOrRawBytes: Sendable, Hashable {
 internal enum _CloseTarget {
     #if canImport(WinSDK)
     case handle(HANDLE)
-    #endif
+    #else
     case fileDescriptor(FileDescriptor)
+    #endif
     case dispatchIO(DispatchIO)
 }
 
-internal func _safelyClose(_ target: _CloseTarget) throws {
+internal func _safelyClose(_ target: _CloseTarget) throws(SubprocessError) {
     switch target {
-    #if canImport(WinSDK)
+    #if os(Windows)
     case .handle(let handle):
         /// Windows does not provide a “deregistration” API (the reverse of
         /// `CreateIoCompletionPort`) for handles and it reuses HANDLE
@@ -775,19 +783,22 @@ internal func _safelyClose(_ target: _CloseTarget) throws {
                     "HANDLE \(handle) is already closed"
                 )
             }
-            let subprocessError = SubprocessError(
-                code: .init(.asyncIOFailed("Failed to close HANDLE")),
-                underlyingError: .init(rawValue: error)
+            let subprocessError: SubprocessError = .asyncIOFailed(
+                reason: "Failed to close HANDLE",
+                underlyingError: SubprocessError.WindowsError(rawValue: error)
             )
+
             throw subprocessError
         }
-    #endif
+    #else
     case .fileDescriptor(let fileDescriptor):
         do {
             try fileDescriptor.close()
         } catch {
             guard let errno: Errno = error as? Errno else {
-                throw error
+                throw .asyncIOFailed(
+                    reason: "Failed to close file descriptor \(fileDescriptor.rawValue)"
+                )
             }
             // Getting `.badFileDescriptor` suggests that the file descriptor
             // might have been closed unexpectedly. This can pose security risks
@@ -802,8 +813,12 @@ internal func _safelyClose(_ target: _CloseTarget) throws {
                 )
             }
             // Throw other kinds of errors to allow user to catch them
-            throw error
+            throw .asyncIOFailed(
+                reason: "Failed to close file descriptor \(fileDescriptor.rawValue)",
+                underlyingError: errno
+            )
         }
+    #endif
     case .dispatchIO(let dispatchIO):
         dispatchIO.close()
     }
@@ -838,7 +853,7 @@ internal struct IODescriptor: ~Copyable {
         self.closeWhenDone = closeWhenDone
     }
 
-    internal init?(duplicating ioDescriptor: borrowing IODescriptor?) throws {
+    internal init?(duplicating ioDescriptor: borrowing IODescriptor?) throws(SubprocessError) {
         let descriptor = try ioDescriptor?.duplicate()
         if let descriptor {
             self = descriptor
@@ -847,8 +862,15 @@ internal struct IODescriptor: ~Copyable {
         }
     }
 
-    func duplicate() throws -> IODescriptor {
-        return try IODescriptor(self.descriptor.duplicate(), closeWhenDone: self.closeWhenDone)
+    func duplicate() throws(SubprocessError) -> IODescriptor {
+        do {
+            return try IODescriptor(self.descriptor.duplicate(), closeWhenDone: self.closeWhenDone)
+        } catch {
+            throw .asyncIOFailed(
+                reason: "Failed to duplicate file descriptor \(self.descriptor)",
+                underlyingError: error as? SubprocessError.UnderlyingError
+            )
+        }
     }
 
     consuming func createIOChannel() -> IOChannel {
@@ -874,7 +896,7 @@ internal struct IODescriptor: ~Copyable {
         #endif
     }
 
-    internal mutating func safelyClose() throws {
+    internal mutating func safelyClose() throws(SubprocessError) {
         guard self.closeWhenDone else {
             return
         }
@@ -887,7 +909,7 @@ internal struct IODescriptor: ~Copyable {
         #endif
     }
 
-    internal mutating func markAsClosed() throws {
+    internal mutating func markAsClosed() throws(SubprocessError) {
         self.closeWhenDone = false
     }
 
@@ -928,7 +950,7 @@ internal struct IOChannel: ~Copyable, @unchecked Sendable {
         self.closeWhenDone = closeWhenDone
     }
 
-    internal mutating func safelyClose() throws {
+    internal mutating func safelyClose() throws(SubprocessError) {
         guard self.closeWhenDone else {
             return
         }
@@ -943,6 +965,7 @@ internal struct IOChannel: ~Copyable, @unchecked Sendable {
         #endif
     }
 
+    @_optimize(none) // rdar://170094646
     internal consuming func consumeIOChannel() -> Channel {
         let result = self.channel
         // Transfer the ownership out and therefor
@@ -1002,14 +1025,14 @@ internal struct CreatedPipe: ~Copyable {
         return self._writeFileDescriptor.take()
     }
 
-    internal init(duplicating createdPipe: borrowing CreatedPipe) throws {
+    internal init(duplicating createdPipe: borrowing CreatedPipe) throws(SubprocessError) {
         self.init(
             readFileDescriptor: try IODescriptor(duplicating: createdPipe._readFileDescriptor),
             writeFileDescriptor: try IODescriptor(duplicating: createdPipe._writeFileDescriptor)
         )
     }
 
-    internal init(closeWhenDone: Bool, purpose: Purpose) throws {
+    internal init(closeWhenDone: Bool, purpose: Purpose) throws(SubprocessError) {
         #if canImport(WinSDK)
         /// On Windows, we need to create a named pipe.
         /// According to Microsoft documentation:
@@ -1059,9 +1082,9 @@ internal struct CreatedPipe: ~Copyable {
                     continue
                 }
                 // Throw all other errors
-                throw SubprocessError(
-                    code: .init(.asyncIOFailed("CreateNamedPipeW failed")),
-                    underlyingError: .init(rawValue: GetLastError())
+                throw .asyncIOFailed(
+                    reason: "CreateNamedPipeW failed",
+                    underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
                 )
             }
 
@@ -1087,9 +1110,9 @@ internal struct CreatedPipe: ~Copyable {
                 )
             }
             guard let childEnd, childEnd != INVALID_HANDLE_VALUE else {
-                throw SubprocessError(
-                    code: .init(.asyncIOFailed("CreateFileW failed")),
-                    underlyingError: .init(rawValue: GetLastError())
+                throw .asyncIOFailed(
+                    reason: "CreateFileW failed",
+                    underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
                 )
             }
             switch purpose {
@@ -1103,47 +1126,54 @@ internal struct CreatedPipe: ~Copyable {
             return
         }
         #else
-        let pipe = try FileDescriptor.pipe()
-        self._readFileDescriptor = .init(
-            pipe.readEnd,
-            closeWhenDone: closeWhenDone
-        )
-        self._writeFileDescriptor = .init(
-            pipe.writeEnd,
-            closeWhenDone: closeWhenDone
-        )
+        do {
+            let pipe = try FileDescriptor.pipe()
+            self._readFileDescriptor = .init(
+                pipe.readEnd,
+                closeWhenDone: closeWhenDone
+            )
+            self._writeFileDescriptor = .init(
+                pipe.writeEnd,
+                closeWhenDone: closeWhenDone
+            )
+        } catch {
+            throw .asyncIOFailed(
+                reason: "Failed to create pipe",
+                underlyingError: error as? SubprocessError.UnderlyingError
+            )
+        }
         #endif
     }
 }
 
 extension Optional where Wrapped: Collection {
     func withOptionalUnsafeBufferPointer<Result>(
-        _ body: ((UnsafeBufferPointer<Wrapped.Element>)?) throws -> Result
-    ) rethrows -> Result {
+        _ body: ((UnsafeBufferPointer<Wrapped.Element>)?) -> Result
+    ) -> Result {
         switch self {
         case .some(let wrapped):
             guard let array: [Wrapped.Element] = wrapped as? Array else {
-                return try body(nil)
+                return body(nil)
             }
-            return try array.withUnsafeBufferPointer { ptr in
-                return try body(ptr)
+            return array.withUnsafeBufferPointer { ptr in
+                return body(ptr)
             }
         case .none:
-            return try body(nil)
+            return body(nil)
         }
     }
 }
 
 extension Optional where Wrapped == String {
     func withOptionalCString<Result>(
-        _ body: ((UnsafePointer<Int8>)?) throws -> Result
-    ) rethrows -> Result {
+        _ body: ((UnsafePointer<Int8>)?) throws(SubprocessError) -> Result
+    ) throws(SubprocessError) -> Result {
         switch self {
         case .none:
             return try body(nil)
         case .some(let wrapped):
-            return try wrapped.withCString {
-                return try body($0)
+            return try wrapped._withCString { (str) throws(SubprocessError) in
+                return try body(str)
             }
         }
     }
@@ -1159,11 +1189,11 @@ extension Optional where Wrapped == String {
 /// In the latter case, `onCleanup` may be run concurrently with `body`.
 /// The `body` closure is guaranteed to run exactly once.
 /// The `onCleanup` closure is guaranteed to run only once, or not at all.
-internal func withAsyncTaskCleanupHandler<Result>(
+internal func withAsyncTaskCleanupHandler<Result: Sendable>(
     _ body: () async throws -> Result,
     onCleanup handler: @Sendable @escaping () async -> Void,
     isolation: isolated (any Actor)? = #isolation
-) async rethrows -> Result {
+) async throws -> Result {
     let (runCancellationHandlerStream, runCancellationHandlerContinuation) = AsyncThrowingStream.makeStream(of: Void.self)
     return try await withThrowingTaskGroup(
         of: Void.self,
@@ -1263,7 +1293,7 @@ extension Set {
 
 #if canImport(WinSDK)
 extension HANDLE {
-    func duplicate() throws -> HANDLE {
+    func duplicate() throws(SubprocessError) -> HANDLE {
         var handle: HANDLE? = nil
         guard
             DuplicateHandle(
@@ -1274,18 +1304,65 @@ extension HANDLE {
                 0, true, DWORD(DUPLICATE_SAME_ACCESS)
             )
         else {
-            throw SubprocessError(
-                code: .init(.failedToCreatePipe),
-                underlyingError: .init(rawValue: GetLastError())
+            throw .asyncIOFailed(
+                reason: "Failed to create pipe",
+                underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
             )
         }
         guard let handle else {
-            throw SubprocessError(
-                code: .init(.failedToCreatePipe),
-                underlyingError: .init(rawValue: GetLastError())
+            throw .asyncIOFailed(
+                reason: "Failed to create pipe",
+                underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
             )
         }
         return handle
     }
 }
 #endif
+
+/// Many standard library functions such as `withCheckedThrowingContinuation`
+/// does not support typed throw yet. This method casts `any Error` thrown by
+/// those methods back to `SubprocessError`
+@Sendable internal func _castError<Success: Sendable>(
+    _ body: () async throws -> Success,
+    isolation: isolated (any Actor)? = #isolation
+) async throws(SubprocessError) -> Success {
+    do {
+        return try await body()
+    } catch {
+        throw (error as! SubprocessError)
+    }
+}
+
+@Sendable internal func _castError<Success: Sendable>(
+    _ body: () throws -> Success
+) throws(SubprocessError) -> Success {
+    do {
+        return try body()
+    } catch {
+        throw (error as! SubprocessError)
+    }
+}
+
+extension StringProtocol {
+    func _withCString<Result, Error: Swift.Error>(
+        _ body: (UnsafePointer<Int8>) throws(Error) -> Result
+    ) throws(Error) -> Result {
+        do {
+            return try self.withCString(body)
+        } catch {
+            throw error as! Error
+        }
+    }
+
+    func _withCString<Result, TargetEncoding, Error: Swift.Error>(
+        encodedAs targetEncoding: TargetEncoding.Type,
+        _ body: (UnsafePointer<TargetEncoding.CodeUnit>) throws(Error) -> Result
+    ) throws(Error) -> Result where TargetEncoding: _UnicodeEncoding {
+        do {
+            return try self.withCString(encodedAs: targetEncoding, body)
+        } catch {
+            throw error as! Error
+        }
+    }
+}
