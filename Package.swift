@@ -60,6 +60,7 @@ let package = Package(
                 .enableExperimentalFeature("StrictConcurrency"),
                 .enableExperimentalFeature("NonescapableTypes"),
                 .enableExperimentalFeature("LifetimeDependence"),
+                .enableExperimentalFeature("Lifetimes"),
                 .enableExperimentalFeature("Span"),
             ] + packageSwiftSettings
         ),

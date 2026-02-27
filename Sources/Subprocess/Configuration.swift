@@ -863,10 +863,10 @@ internal struct IODescriptor: ~Copyable {
     }
 
     func duplicate() throws(SubprocessError) -> IODescriptor {
-        do {
+        do throws(any Error) {
             return try IODescriptor(self.descriptor.duplicate(), closeWhenDone: self.closeWhenDone)
         } catch {
-            throw .asyncIOFailed(
+            throw SubprocessError.asyncIOFailed(
                 reason: "Failed to duplicate file descriptor \(self.descriptor)",
                 underlyingError: error as? SubprocessError.UnderlyingError
             )

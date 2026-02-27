@@ -56,7 +56,7 @@ extension SubprocessWindowsTests {
                 output: .string(limit: .max)
             )
 
-            try await withKnownIssue {
+            try withKnownIssue {
                 #expect(whoamiResult.terminationStatus.isSuccess)
                 let result = try #require(
                     whoamiResult.standardOutput
@@ -334,7 +334,7 @@ extension SubprocessWindowsTests {
 
                     var error: DWORD = 0
 
-                    var status = NetUserAdd(
+                    let status = NetUserAdd(
                         nil,
                         1,
                         &userInfo,
