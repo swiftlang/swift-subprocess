@@ -34,11 +34,11 @@ public protocol OutputProtocol: Sendable, ~Copyable {
 
     #if SubprocessSpan
     /// Convert the output from span to expected output type
-    func output(from span: RawSpan) throws(SubprocessError) -> OutputType
+    func output(from span: RawSpan) throws -> OutputType
     #endif
 
     /// Convert the output from buffer to expected output type
-    func output(from buffer: some Sequence<UInt8>) throws(SubprocessError) -> OutputType
+    func output(from buffer: some Sequence<UInt8>) throws -> OutputType
 
     /// The max amount of data to collect for this output.
     var maxSize: Int { get }
@@ -123,7 +123,7 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol, ErrorOut
 
     #if SubprocessSpan
     /// Create a string from a raw span.
-    public func output(from span: RawSpan) throws(SubprocessError) -> String? {
+    public func output(from span: RawSpan) throws -> String? {
         // FIXME: Span to String
         var array: [UInt8] = []
         for index in 0..<span.byteCount {
@@ -134,7 +134,7 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol, ErrorOut
     #endif
 
     /// Create a String from a sequence of 8-bit unsigned integers.
-    public func output(from buffer: some Sequence<UInt8>) throws(SubprocessError) -> String? {
+    public func output(from buffer: some Sequence<UInt8>) throws -> String? {
         // FIXME: Span to String
         let array = Array(buffer)
         return String(decodingBytes: array, as: Encoding.self)
@@ -188,13 +188,13 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
     #if SubprocessSpan
     /// Create an Array from `RawSpawn`.
     /// Not implemented
-    public func output(from span: RawSpan) throws(SubprocessError) -> [UInt8] {
+    public func output(from span: RawSpan) throws -> [UInt8] {
         fatalError("Not implemented")
     }
     #endif
     /// Create an Array from `Sequence<UInt8>`.
     /// Not implemented
-    public func output(from buffer: some Sequence<UInt8>) throws(SubprocessError) -> [UInt8] {
+    public func output(from buffer: some Sequence<UInt8>) throws -> [UInt8] {
         fatalError("Not implemented")
     }
 
@@ -338,7 +338,7 @@ extension ErrorOutputProtocol where Self == CombinedErrorOutput {
 #if SubprocessSpan
 extension OutputProtocol {
     /// Create an Array from `Sequence<UInt8>`.
-    public func output(from buffer: some Sequence<UInt8>) throws(SubprocessError) -> OutputType {
+    public func output(from buffer: some Sequence<UInt8>) throws -> OutputType {
         guard let rawBytes: UnsafeRawBufferPointer = buffer as? UnsafeRawBufferPointer else {
             fatalError("Unexpected input type passed: \(type(of: buffer))")
         }
@@ -365,7 +365,7 @@ extension OutputProtocol {
     @_disfavoredOverload
     internal func captureOutput(
         from diskIO: consuming IOChannel?
-    ) async throws(SubprocessError) -> OutputType {
+    ) async throws -> OutputType {
         if OutputType.self == Void.self {
             try diskIO?.safelyClose()
             return () as! OutputType
@@ -404,7 +404,7 @@ extension OutputProtocol {
 
         try diskIO.safelyClose()
         if let result, result.count > self.maxSize {
-            throw .outputLimitExceeded(limit: self.maxSize)
+            throw SubprocessError.outputLimitExceeded(limit: self.maxSize)
         }
 
         #if SUBPROCESS_ASYNCIO_DISPATCH
@@ -416,16 +416,16 @@ extension OutputProtocol {
 }
 
 extension OutputProtocol where OutputType == Void {
-    internal func captureOutput(from fileDescriptor: consuming IOChannel?) async throws(SubprocessError) {}
+    internal func captureOutput(from fileDescriptor: consuming IOChannel?) async throws {}
 
     #if SubprocessSpan
     /// Convert the output from raw span to expected output type
-    public func output(from span: RawSpan) throws(SubprocessError) {
+    public func output(from span: RawSpan) throws {
         fatalError("Unexpected call to \(#function)")
     }
     #endif
     /// Convert the output from a sequence of 8-bit unsigned integers to expected output type.
-    public func output(from buffer: some Sequence<UInt8>) throws(SubprocessError) {
+    public func output(from buffer: some Sequence<UInt8>) throws {
         fatalError("Unexpected call to \(#function)")
     }
 }
@@ -433,34 +433,30 @@ extension OutputProtocol where OutputType == Void {
 #if SubprocessSpan
 extension OutputProtocol {
     #if SUBPROCESS_ASYNCIO_DISPATCH
-    internal func output(from data: DispatchData) throws(SubprocessError) -> OutputType {
+    internal func output(from data: DispatchData) throws -> OutputType {
         guard !data.isEmpty else {
             let empty = UnsafeRawBufferPointer(start: nil, count: 0)
             let span = RawSpan(_unsafeBytes: empty)
             return try self.output(from: span)
         }
 
-        return try _castError {
-            return try data.withUnsafeBytes { ptr in
-                let bufferPtr = UnsafeRawBufferPointer(start: ptr, count: data.count)
-                let span = RawSpan(_unsafeBytes: bufferPtr)
-                return try self.output(from: span)
-            }
+        return try data.withUnsafeBytes { ptr in
+            let bufferPtr = UnsafeRawBufferPointer(start: ptr, count: data.count)
+            let span = RawSpan(_unsafeBytes: bufferPtr)
+            return try self.output(from: span)
         }
     }
     #else
-    internal func output(from data: [UInt8]) throws(SubprocessError) -> OutputType {
+    internal func output(from data: [UInt8]) throws -> OutputType {
         guard !data.isEmpty else {
             let empty = UnsafeRawBufferPointer(start: nil, count: 0)
             let span = RawSpan(_unsafeBytes: empty)
             return try self.output(from: span)
         }
 
-        return try _castError {
-            return try data.withUnsafeBufferPointer { ptr in
-                let span = RawSpan(_unsafeBytes: UnsafeRawBufferPointer(ptr))
-                return try self.output(from: span)
-            }
+        return try data.withUnsafeBufferPointer { ptr in
+            let span = RawSpan(_unsafeBytes: UnsafeRawBufferPointer(ptr))
+            return try self.output(from: span)
         }
     }
     #endif // SUBPROCESS_ASYNCIO_DISPATCH

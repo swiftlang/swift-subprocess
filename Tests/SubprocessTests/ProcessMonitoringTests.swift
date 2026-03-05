@@ -199,25 +199,25 @@ extension SubprocessProcessMonitoringTests {
 
     @Test func testInvalidProcessIdentifier() async throws {
         #if os(Windows)
-        let expectedError = SubprocessError.WindowsError(rawValue: DWORD(ERROR_INVALID_PARAMETER))
+        let underlying = SubprocessError.WindowsError(rawValue: DWORD(ERROR_INVALID_PARAMETER))
         let processIdentifier = ProcessIdentifier(
             value: .max, processDescriptor: INVALID_HANDLE_VALUE, threadHandle: INVALID_HANDLE_VALUE
         )
         #elseif os(Linux) || os(Android) || os(FreeBSD)
-        let expectedError = Errno(rawValue: ECHILD)
+        let underlying = Errno(rawValue: ECHILD)
         let processIdentifier = ProcessIdentifier(
             value: .max, processDescriptor: -1
         )
         #else
-        let expectedError = Errno(rawValue: ECHILD)
+        let underlying = Errno(rawValue: ECHILD)
         let processIdentifier = ProcessIdentifier(value: .max)
         #endif
-        let caughtError = await #expect(throws: SubprocessError.self) {
+
+        let expectedError: SubprocessError = .failedToMonitor(withUnderlyingError: underlying)
+
+        await #expect(throws: expectedError) {
             _ = try await monitorProcessTermination(for: processIdentifier)
         }
-        #expect(caughtError?.code == .failedToMonitorProcess)
-        let underlying = try #require(caughtError?.underlyingError)
-        #expect(expectedError.equals(to: underlying))
     }
 
     @Test func testDoesNotReapUnrelatedChildProcess() async throws {

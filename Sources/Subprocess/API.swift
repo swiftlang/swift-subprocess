@@ -530,13 +530,13 @@ public func run<
                     standardError: stderror
                 )
             } catch {
-                if let subprocessError = error as? SubprocessError {
-                    throw subprocessError
+                if let underlying = error as? SubprocessError.UnderlyingError {
+                    throw SubprocessError.asyncIOFailed(
+                        reason: "Failed to capture output",
+                        underlyingError: underlying
+                    )
                 }
-                throw SubprocessError.asyncIOFailed(
-                    reason: "Failed to capture output",
-                    underlyingError: error as? SubprocessError.UnderlyingError
-                )
+                throw error
             }
         }
     }

@@ -78,23 +78,3 @@ extension Trait where Self == ConditionTrait {
         )
     }
 }
-
-#if os(Windows)
-extension SubprocessError.WindowsError {
-    func equals(to error: (any Error)?) -> Bool {
-        guard let windowsError = error as? SubprocessError.WindowsError else {
-            return false
-        }
-        return self.rawValue == windowsError.rawValue
-    }
-}
-#else
-extension Errno {
-    func equals(to error: (any Error)?) -> Bool {
-        guard let errnoError = error as? Errno else {
-            return false
-        }
-        return self.rawValue == errnoError.rawValue
-    }
-}
-#endif

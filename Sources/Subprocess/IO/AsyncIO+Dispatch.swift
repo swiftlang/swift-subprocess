@@ -43,6 +43,7 @@ final class AsyncIO: Sendable {
         from dispatchIO: DispatchIO,
         upTo maxLength: Int
     ) async throws(SubprocessError) -> DispatchData? {
+        // https://github.com/swiftlang/swift/issues/87810
         return try await _castError {
             return try await withCheckedThrowingContinuation { continuation in
                 var buffer: DispatchData = .empty
@@ -85,6 +86,7 @@ final class AsyncIO: Sendable {
         _ span: borrowing RawSpan,
         to diskIO: borrowing IOChannel
     ) async throws(SubprocessError) -> Int {
+        // https://github.com/swiftlang/swift/issues/87810
         return try await _castError {
             return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int, any Error>) in
                 span.withUnsafeBytes {
@@ -115,6 +117,7 @@ final class AsyncIO: Sendable {
         _ array: [UInt8],
         to diskIO: borrowing IOChannel
     ) async throws(SubprocessError) -> Int {
+        // https://github.com/swiftlang/swift/issues/87810
         return try await _castError {
             return try await withCheckedThrowingContinuation { continuation in
                 array.withUnsafeBytes {

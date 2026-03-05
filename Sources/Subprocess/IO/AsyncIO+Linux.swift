@@ -305,7 +305,7 @@ final class AsyncIO: Sendable {
             )
             guard rc == 0 else {
                 throw SubprocessError.asyncIOFailed(
-                    reason: "failed to remove \(fileDescriptor.rawValue) to epoll list",
+                    reason: "failed to remove \(fileDescriptor.rawValue) from epoll list",
                     underlyingError: Errno(rawValue: errno)
                 )
             }
@@ -414,7 +414,7 @@ extension AsyncIO {
             // Reset error code to .failedToRead to match other platforms
             guard let originalError = error as? SubprocessError else {
                 throw SubprocessError.failedToReadFromProcess(
-                    withUnderlyingError: error as? SubprocessError.UnderlyingError
+                    withUnderlyingError: nil
                 )
             }
             throw SubprocessError.failedToReadFromProcess(

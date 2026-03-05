@@ -61,7 +61,6 @@ extension SubprocessIntegrationTests {
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
-        // rdar://138670128
         // https://github.com/swiftlang/swift/issues/77235
         let output = result.standardOutput?
             .trimmingNewLineAndQuotes()
@@ -71,17 +70,18 @@ extension SubprocessIntegrationTests {
 
     @Test func testExecutableNamedCannotResolve() async throws {
         #if os(Windows)
-        let expectedError = SubprocessError.WindowsError(rawValue: DWORD(ERROR_FILE_NOT_FOUND))
+        let underlying = SubprocessError.WindowsError(rawValue: DWORD(ERROR_FILE_NOT_FOUND))
         #else
-        let expectedError = Errno(rawValue: ENOENT)
+        let underlying = Errno(rawValue: ENOENT)
         #endif
 
-        let caughtError = await #expect(throws: SubprocessError.self) {
+        let expectedError: SubprocessError = .executableNotFound(
+            "do-not-exist", underlyingError: underlying
+        )
+
+        await #expect(throws: expectedError) {
             _ = try await Subprocess.run(.name("do-not-exist"), output: .discarded)
         }
-        #expect(caughtError?.code == .executableNotFound)
-        let underlying = try #require(caughtError?.underlyingError)
-        #expect(expectedError == underlying)
     }
 
     @Test func testExecutableAtPath() async throws {
@@ -106,7 +106,6 @@ extension SubprocessIntegrationTests {
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
-        // rdar://138670128
         // https://github.com/swiftlang/swift/issues/77235
         let maybePath = result.standardOutput?
             .trimmingNewLineAndQuotes()
@@ -117,20 +116,21 @@ extension SubprocessIntegrationTests {
     @Test func testExecutableAtPathCannotResolve() async throws {
         #if os(Windows)
         let fakePath = FilePath("D:\\does\\not\\exist")
-        let expectedError = SubprocessError.WindowsError(
+        let underlying = SubprocessError.WindowsError(
             rawValue: DWORD(ERROR_FILE_NOT_FOUND)
         )
         #else
         let fakePath = FilePath("/usr/bin/do-not-exist")
-        let expectedError = Errno(rawValue: ENOENT)
+        let underlying = Errno(rawValue: ENOENT)
         #endif
 
-        let caughtError = await #expect(throws: SubprocessError.self) {
+        let expectedError: SubprocessError = .executableNotFound(
+            fakePath.string, underlyingError: underlying
+        )
+
+        await #expect(throws: expectedError) {
             _ = try await Subprocess.run(.path(fakePath), output: .discarded)
         }
-        #expect(caughtError?.code == .executableNotFound)
-        let underlying = try #require(caughtError?.underlyingError)
-        #expect(expectedError.equals(to: underlying))
     }
 
     #if !os(Windows)
@@ -216,7 +216,6 @@ extension SubprocessIntegrationTests {
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
-        // rdar://138670128
         // https://github.com/swiftlang/swift/issues/77235
         let output = result.standardOutput?
             .trimmingNewLineAndQuotes()
@@ -250,7 +249,6 @@ extension SubprocessIntegrationTests {
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
-        // rdar://138670128
         // https://github.com/swiftlang/swift/issues/77235
         let output = result.standardOutput?
             .trimmingNewLineAndQuotes()
@@ -273,7 +271,6 @@ extension SubprocessIntegrationTests {
             output: .string(limit: 32)
         )
         #expect(result.terminationStatus.isSuccess)
-        // rdar://138670128
         // https://github.com/swiftlang/swift/issues/77235
         let output = result.standardOutput?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -323,7 +320,6 @@ extension SubprocessIntegrationTests {
             expected.split(separator: ":")
                 .map { String($0).trimmingNewLineAndQuotes() }
         )
-        // rdar://138670128
         // https://github.com/swiftlang/swift/issues/77235
         #expect(
             pathList == expectedList
@@ -357,7 +353,6 @@ extension SubprocessIntegrationTests {
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
-        // rdar://138670128
         // https://github.com/swiftlang/swift/issues/77235
         let output = result.standardOutput?
             .trimmingNewLineAndQuotes()
@@ -406,7 +401,6 @@ extension SubprocessIntegrationTests {
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
-        // rdar://138670128
         // https://github.com/swiftlang/swift/issues/77235
         let output = result.standardOutput?
             .trimmingNewLineAndQuotes()
@@ -484,7 +478,6 @@ extension SubprocessIntegrationTests {
         #else
         // There shouldn't be any other environment variables besides
         // `PATH` that we set
-        // rdar://138670128
         // https://github.com/swiftlang/swift/issues/77235
         #expect(
             output == "PATH=/bin:/usr/bin"
@@ -670,7 +663,6 @@ extension SubprocessIntegrationTests {
         #expect(result.terminationStatus.isSuccess)
         // There shouldn't be any other environment variables besides
         // `PATH` that we set
-        // rdar://138670128
         // https://github.com/swiftlang/swift/issues/77235
         let output = result.standardOutput?
             .trimmingNewLineAndQuotes()
@@ -731,7 +723,10 @@ extension SubprocessIntegrationTests {
             arguments: ["/c", "cd"],
             workingDirectory: invalidPath
         )
-        let expectedError = SubprocessError.WindowsError(rawValue: DWORD(ERROR_DIRECTORY))
+        let underlying = SubprocessError.WindowsError(rawValue: DWORD(ERROR_DIRECTORY))
+        let expectedError: SubprocessError = .failedToChangeWorkingDirectory(
+            #"X:\Does\Not\Exist"#, underlyingError: underlying
+        )
         #else
         let invalidPath: FilePath = FilePath("/does/not/exist")
         let setup = TestSetup(
@@ -739,15 +734,15 @@ extension SubprocessIntegrationTests {
             arguments: [],
             workingDirectory: invalidPath
         )
-        let expectedError = Errno(rawValue: ENOENT)
+        let underlying = Errno(rawValue: ENOENT)
+        let expectedError: SubprocessError = .failedToChangeWorkingDirectory(
+            "/does/not/exist", underlyingError: underlying
+        )
         #endif
 
-        let caughtError = await #expect(throws: SubprocessError.self) {
+        await #expect(throws: expectedError) {
             _ = try await _run(setup, input: .none, output: .string(limit: .max), error: .discarded)
         }
-        #expect(caughtError?.code == .failedToChangeWorkingDirectory)
-        let underlying = try #require(caughtError?.underlyingError)
-        #expect(underlying == expectedError)
     }
 }
 
@@ -1142,7 +1137,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        let caughtError = await #expect(throws: SubprocessError.self) {
+        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
             _ = try await _run(
                 setup,
                 input: .none,
@@ -1150,7 +1145,6 @@ extension SubprocessIntegrationTests {
                 error: .discarded
             )
         }
-        #expect(caughtError?.code == .outputLimitExceeded)
     }
 
     #if SubprocessFoundation
@@ -1202,7 +1196,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        let caughtError = await #expect(throws: SubprocessError.self) {
+        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
             _ = try await _run(
                 setup,
                 input: .none,
@@ -1210,7 +1204,6 @@ extension SubprocessIntegrationTests {
                 error: .discarded
             )
         }
-        #expect(caughtError?.code == .outputLimitExceeded)
     }
 
     @Test func testFileDescriptorOutput() async throws {
@@ -1348,7 +1341,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        let caughtOutput = await #expect(throws: SubprocessError.self) {
+        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
             _ = try await _run(
                 setup,
                 input: .none,
@@ -1356,7 +1349,6 @@ extension SubprocessIntegrationTests {
                 error: .discarded
             )
         }
-        #expect(caughtOutput?.code == .outputLimitExceeded)
     }
     #endif
 
@@ -1415,7 +1407,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        let caughtError = await #expect(throws: SubprocessError.self) {
+        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
             _ = try await _run(
                 setup,
                 input: .none,
@@ -1423,7 +1415,6 @@ extension SubprocessIntegrationTests {
                 error: .string(limit: 16)
             )
         }
-        #expect(caughtError?.code == .outputLimitExceeded)
     }
 
     #if SubprocessFoundation
@@ -1474,7 +1465,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        let caughtError = await #expect(throws: SubprocessError.self) {
+        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
             _ = try await _run(
                 setup,
                 input: .none,
@@ -1482,7 +1473,6 @@ extension SubprocessIntegrationTests {
                 error: .bytes(limit: 16)
             )
         }
-        #expect(caughtError?.code == .outputLimitExceeded)
     }
 
     @Test func testFileDescriptorErrorOutput() async throws {
@@ -1667,7 +1657,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        let caughtError = await #expect(throws: SubprocessError.self) {
+        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
             _ = try await _run(
                 setup,
                 input: .none,
@@ -1675,7 +1665,6 @@ extension SubprocessIntegrationTests {
                 error: .data(limit: 16)
             )
         }
-        #expect(caughtError?.code == .outputLimitExceeded)
     }
     #endif
 

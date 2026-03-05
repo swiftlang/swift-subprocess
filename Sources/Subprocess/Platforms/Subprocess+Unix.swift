@@ -96,6 +96,8 @@ extension Execution {
     ///   - signal: The signal to send.
     ///   - shouldSendToProcessGroup: Whether this signal should be sent to
     ///     the entire process group.
+    /// - Throws: `SubprocessError` with error code `.processControlFailed`.
+    ///     See `.underlyingError` for more details.
     public func send(
         signal: Signal,
         toProcessGroup shouldSendToProcessGroup: Bool = false
@@ -120,12 +122,11 @@ extension Execution {
                 processIdentifier.processDescriptor,
                 signal.rawValue
             )
-            let capturedErrno = errno
             if rc == 0 {
                 // _pidfd_send_signal succeeded
                 return
             }
-            if capturedErrno == ENOSYS {
+            if errno == ENOSYS {
                 // _pidfd_send_signal is not implemented. Fallback to kill
                 try _kill(pid, signal: signal)
                 return

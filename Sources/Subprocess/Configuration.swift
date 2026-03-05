@@ -474,7 +474,7 @@ extension Environment: CustomStringConvertible, CustomDebugStringConvertible {
     ///
     /// This type respects the compiled platform's case sensitivity requirements.
     public struct Key {
-        public var rawValue: String
+        public let rawValue: String
 
         package init(_ rawValue: String) {
             self.rawValue = rawValue
@@ -965,7 +965,7 @@ internal struct IOChannel: ~Copyable, @unchecked Sendable {
         #endif
     }
 
-    @_optimize(none) // rdar://170094646
+    @_optimize(none)
     internal consuming func consumeIOChannel() -> Channel {
         let result = self.channel
         // Transfer the ownership out and therefor

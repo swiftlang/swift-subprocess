@@ -40,7 +40,7 @@ import FoundationEssentials
 public protocol InputProtocol: Sendable, ~Copyable {
     /// Asynchronously write the input to the subprocess using the
     /// write file descriptor
-    func write(with writer: StandardInputWriter) async throws(SubprocessError)
+    func write(with writer: StandardInputWriter) async throws
 }
 
 /// A concrete input type for subprocesses that indicates the absence
@@ -64,7 +64,7 @@ public struct NoInput: InputProtocol {
 
     /// Asynchronously write the input to the subprocess that uses the
     /// write file descriptor.
-    public func write(with writer: StandardInputWriter) async throws(SubprocessError) {
+    public func write(with writer: StandardInputWriter) async throws {
         fatalError("Unexpected call to \(#function)")
     }
 
@@ -96,7 +96,7 @@ public struct FileDescriptorInput: InputProtocol {
 
     /// Asynchronously write the input to the subprocess that use the
     /// write file descriptor.
-    public func write(with writer: StandardInputWriter) async throws(SubprocessError) {
+    public func write(with writer: StandardInputWriter) async throws {
         fatalError("Unexpected call to \(#function)")
     }
 
@@ -121,7 +121,7 @@ public struct StringInput<
 
     /// Asynchronously write the input to the subprocess that use the
     /// write file descriptor.
-    public func write(with writer: StandardInputWriter) async throws(SubprocessError) {
+    public func write(with writer: StandardInputWriter) async throws {
         guard let array = self.string.byteArray(using: Encoding.self) else {
             return
         }
@@ -140,7 +140,7 @@ public struct ArrayInput: InputProtocol {
 
     /// Asynchronously write the input to the subprocess using the
     /// write file descriptor
-    public func write(with writer: StandardInputWriter) async throws(SubprocessError) {
+    public func write(with writer: StandardInputWriter) async throws {
         _ = try await writer.write(self.array)
     }
 
@@ -154,7 +154,7 @@ public struct ArrayInput: InputProtocol {
 internal struct CustomWriteInput: InputProtocol {
     /// Asynchronously write the input to the subprocess using the
     /// write file descriptor.
-    public func write(with writer: StandardInputWriter) async throws(SubprocessError) {
+    public func write(with writer: StandardInputWriter) async throws {
         fatalError("Unexpected call to \(#function)")
     }
 
@@ -246,6 +246,8 @@ public final actor StandardInputWriter: Sendable {
 
     /// Write an array of 8-bit unsigned integers to the standard input of the subprocess.
     /// - Parameter array: The sequence of bytes to write.
+    /// - Throws: `SubprocessError` with error code `.failedToWriteToSubprocess`.
+    ///     See `.underlyingError` for more details.
     /// - Returns: the number of bytes written.
     public func write(
         _ array: [UInt8]
@@ -257,6 +259,8 @@ public final actor StandardInputWriter: Sendable {
     /// Write a raw span to the standard input of the subprocess.
     ///
     /// - Parameter `span`: The span to write.
+    /// - Throws: `SubprocessError` with error code `.failedToWriteToSubprocess`.
+    ///     See `.underlyingError` for more details.
     /// - Returns: the number of bytes written.
     public func write(_ span: borrowing RawSpan) async throws(SubprocessError) -> Int {
         return try await AsyncIO.shared.write(span, to: self.diskIO)
@@ -267,6 +271,8 @@ public final actor StandardInputWriter: Sendable {
     /// - Parameters:
     ///   - string: The string to write.
     ///   - encoding: The encoding to use when converting string to bytes
+    /// - Throws: `SubprocessError` with error code `.failedToWriteToSubprocess`.
+    ///     See `.underlyingError` for more details.
     /// - Returns: number of bytes written.
     public func write<Encoding: Unicode.Encoding>(
         _ string: some StringProtocol,
@@ -279,6 +285,8 @@ public final actor StandardInputWriter: Sendable {
     }
 
     /// Signal all writes are finished
+    /// - Throws: `SubprocessError` with error code `.asyncIOFailed`.
+    ///     See `.underlyingError` for more detail.
     public func finish() async throws(SubprocessError) {
         try self.diskIO.safelyClose()
     }
