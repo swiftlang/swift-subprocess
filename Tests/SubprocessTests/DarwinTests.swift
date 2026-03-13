@@ -17,9 +17,9 @@ import _SubprocessCShims
 import Testing
 
 #if canImport(System)
-@preconcurrency import System
+import System
 #else
-@preconcurrency import SystemPackage
+import SystemPackage
 #endif
 @testable import Subprocess
 

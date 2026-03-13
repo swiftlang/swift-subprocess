@@ -40,9 +40,9 @@ private typealias ThreadType = pthread_t
 #endif
 
 #if canImport(System)
-@preconcurrency import System
+import System
 #else
-@preconcurrency import SystemPackage
+import SystemPackage
 #endif
 
 internal func runOnBackgroundThread<Result: Sendable>(

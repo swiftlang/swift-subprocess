@@ -12,9 +12,9 @@
 #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl)
 
 #if canImport(System)
-@preconcurrency import System
+import System
 #else
-@preconcurrency import SystemPackage
+import SystemPackage
 #endif
 
 import _SubprocessCShims

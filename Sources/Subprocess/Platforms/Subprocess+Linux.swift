@@ -29,9 +29,9 @@ let _subprocess_close = Musl.close
 #if os(Linux) || os(Android)
 
 #if canImport(System)
-@preconcurrency import System
+import System
 #else
-@preconcurrency import SystemPackage
+import SystemPackage
 #endif
 
 internal import Dispatch

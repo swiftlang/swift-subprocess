@@ -35,9 +35,9 @@ import TestResources
 
 import Dispatch
 #if canImport(System)
-@preconcurrency import System
+import System
 #else
-@preconcurrency import SystemPackage
+import SystemPackage
 #endif
 
 @Suite(.serialized)

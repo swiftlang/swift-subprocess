@@ -21,9 +21,9 @@ import Testing
 import Subprocess
 
 #if canImport(System)
-@preconcurrency import System
+import System
 #else
-@preconcurrency import SystemPackage
+import SystemPackage
 #endif
 
 // Workaround: https://github.com/swiftlang/swift-testing/issues/543

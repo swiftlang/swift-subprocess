@@ -15,9 +15,9 @@
 #if SUBPROCESS_ASYNCIO_DISPATCH
 
 #if canImport(System)
-@preconcurrency import System
+import System
 #else
-@preconcurrency import SystemPackage
+import SystemPackage
 #endif
 
 internal import Dispatch
