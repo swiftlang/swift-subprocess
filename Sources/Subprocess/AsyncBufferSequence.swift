@@ -275,10 +275,7 @@ extension AsyncBufferSequence {
                 while let first = try await nextCodeUnit() {
                     // Throw if we exceed max line length
                     if case .maxLineLength(let maxLength) = self.bufferingPolicy, buffer.count >= maxLength {
-                        throw SubprocessError(
-                            code: .init(.streamOutputExceedsLimit(maxLength)),
-                            underlyingError: nil
-                        )
+                        throw SubprocessError.outputLimitExceeded(limit: maxLength)
                     }
 
                     buffer.append(first)

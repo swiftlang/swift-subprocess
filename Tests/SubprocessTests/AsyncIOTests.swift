@@ -157,14 +157,14 @@ extension SubprocessAsyncIOTests {
             }
 
             #if os(Windows)
-            #expect(subprocessError.underlyingError == .init(rawValue: DWORD(ERROR_INVALID_HANDLE)))
+            #expect(subprocessError.underlyingError == SubprocessError.WindowsError(rawValue: DWORD(ERROR_INVALID_HANDLE)))
             #elseif canImport(Darwin) || os(FreeBSD) || os(OpenBSD)
-            #expect(subprocessError.underlyingError == .init(rawValue: ECANCELED))
+            #expect(subprocessError.underlyingError == Errno(rawValue: ECANCELED))
             #else
             // On Linux, depending on timing, either epoll_ctl or write
             // could throw error first
             #expect(
-                subprocessError.underlyingError == .init(rawValue: EBADF) || subprocessError.underlyingError == .init(rawValue: EINVAL) || subprocessError.underlyingError == .init(rawValue: EPERM)
+                subprocessError.underlyingError == Errno(rawValue: EBADF) || subprocessError.underlyingError == Errno(rawValue: EINVAL) || subprocessError.underlyingError == Errno(rawValue: EPERM)
             )
             #endif
             return true
@@ -194,14 +194,17 @@ extension SubprocessAsyncIOTests {
             }
 
             #if os(Windows)
-            #expect(subprocessError.underlyingError == .init(rawValue: DWORD(ERROR_INVALID_HANDLE)))
+            #expect(
+                subprocessError.underlyingError == SubprocessError.WindowsError(rawValue: DWORD(ERROR_INVALID_HANDLE)))
             #elseif canImport(Darwin) || os(FreeBSD) || os(OpenBSD)
-            #expect(subprocessError.underlyingError == .init(rawValue: ECANCELED))
+            #expect(
+                subprocessError.underlyingError == Errno(rawValue: ECANCELED)
+            )
             #else
             // On Linux, depending on timing, either epoll_ctl or read
             // could throw error first
             #expect(
-                subprocessError.underlyingError == .init(rawValue: EBADF) || subprocessError.underlyingError == .init(rawValue: EINVAL) || subprocessError.underlyingError == .init(rawValue: EPERM)
+                subprocessError.underlyingError == Errno(rawValue: EBADF) || subprocessError.underlyingError == Errno(rawValue: EINVAL) || subprocessError.underlyingError == Errno(rawValue: EPERM)
             )
             #endif
             return true

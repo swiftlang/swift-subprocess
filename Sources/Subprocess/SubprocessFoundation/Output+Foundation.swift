@@ -29,12 +29,12 @@ public struct DataOutput: OutputProtocol, ErrorOutputProtocol {
 
     #if SubprocessSpan
     /// Create data from a raw span.
-    public func output(from span: RawSpan) throws -> Data {
+    public func output(from span: RawSpan) throws(SubprocessError) -> Data {
         return Data(span)
     }
     #else
     /// Create a data from sequence of 8-bit unsigned integers.
-    public func output(from buffer: some Sequence<UInt8>) throws -> Data {
+    public func output(from buffer: some Sequence<UInt8>) throws(SubprocessError) -> Data {
         return Data(buffer)
     }
     #endif

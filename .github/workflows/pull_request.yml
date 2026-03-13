@@ -42,7 +42,7 @@ jobs:
         Invoke-Program swift test -c release
         Invoke-Program swift test --disable-default-traits
       enable_macos_checks: true
-      macos_xcode_versions: '["16.3"]'
+      macos_xcode_versions: '["26.0"]'
       macos_build_command: 'xcrun swift test && xcrun swift test -c release && xcrun swift test --disable-default-traits'
       enable_linux_static_sdk_build: true
       enable_android_sdk_build: true

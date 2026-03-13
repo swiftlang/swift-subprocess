@@ -49,7 +49,7 @@ public protocol InputProtocol: Sendable, ~Copyable {
 /// On Unix-like systems, `NoInput` redirects the standard input of the subprocess to /dev/null,
 /// while on Windows, it redirects to `NUL`.
 public struct NoInput: InputProtocol {
-    internal func createPipe() throws -> CreatedPipe {
+    internal func createPipe() throws(SubprocessError) -> CreatedPipe {
         #if os(Windows)
         let devnullFd: FileDescriptor = try .openDevNull(withAccessMode: .writeOnly)
         let devnull = HANDLE(bitPattern: _get_osfhandle(devnullFd.rawValue))!
@@ -79,7 +79,7 @@ public struct FileDescriptorInput: InputProtocol {
     private let fileDescriptor: FileDescriptor
     private let closeAfterSpawningProcess: Bool
 
-    internal func createPipe() throws -> CreatedPipe {
+    internal func createPipe() throws(SubprocessError) -> CreatedPipe {
         #if canImport(WinSDK)
         let readFd = HANDLE(bitPattern: _get_osfhandle(self.fileDescriptor.rawValue))!
         #else
@@ -222,7 +222,7 @@ extension InputProtocol {
 }
 
 extension InputProtocol {
-    internal func createPipe() throws -> CreatedPipe {
+    internal func createPipe() throws(SubprocessError) -> CreatedPipe {
         if let noInput = self as? NoInput {
             return try noInput.createPipe()
         } else if let fdInput = self as? FileDescriptorInput {
@@ -246,10 +246,12 @@ public final actor StandardInputWriter: Sendable {
 
     /// Write an array of 8-bit unsigned integers to the standard input of the subprocess.
     /// - Parameter array: The sequence of bytes to write.
+    /// - Throws: `SubprocessError` with error code `.failedToWriteToSubprocess`.
+    ///     See `.underlyingError` for more details.
     /// - Returns: the number of bytes written.
     public func write(
         _ array: [UInt8]
-    ) async throws -> Int {
+    ) async throws(SubprocessError) -> Int {
         return try await AsyncIO.shared.write(array, to: self.diskIO)
     }
 
@@ -257,8 +259,10 @@ public final actor StandardInputWriter: Sendable {
     /// Write a raw span to the standard input of the subprocess.
     ///
     /// - Parameter `span`: The span to write.
+    /// - Throws: `SubprocessError` with error code `.failedToWriteToSubprocess`.
+    ///     See `.underlyingError` for more details.
     /// - Returns: the number of bytes written.
-    public func write(_ span: borrowing RawSpan) async throws -> Int {
+    public func write(_ span: borrowing RawSpan) async throws(SubprocessError) -> Int {
         return try await AsyncIO.shared.write(span, to: self.diskIO)
     }
     #endif
@@ -267,11 +271,13 @@ public final actor StandardInputWriter: Sendable {
     /// - Parameters:
     ///   - string: The string to write.
     ///   - encoding: The encoding to use when converting string to bytes
+    /// - Throws: `SubprocessError` with error code `.failedToWriteToSubprocess`.
+    ///     See `.underlyingError` for more details.
     /// - Returns: number of bytes written.
     public func write<Encoding: Unicode.Encoding>(
         _ string: some StringProtocol,
         using encoding: Encoding.Type = UTF8.self
-    ) async throws -> Int {
+    ) async throws(SubprocessError) -> Int {
         if let array = string.byteArray(using: encoding) {
             return try await self.write(array)
         }
@@ -279,7 +285,9 @@ public final actor StandardInputWriter: Sendable {
     }
 
     /// Signal all writes are finished
-    public func finish() async throws {
+    /// - Throws: `SubprocessError` with error code `.asyncIOFailed`.
+    ///     See `.underlyingError` for more detail.
+    public func finish() async throws(SubprocessError) {
         try self.diskIO.safelyClose()
     }
 }

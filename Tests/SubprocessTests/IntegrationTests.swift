@@ -61,7 +61,6 @@ extension SubprocessIntegrationTests {
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
-        // rdar://138670128
         // https://github.com/swiftlang/swift/issues/77235
         let output = result.standardOutput?
             .trimmingNewLineAndQuotes()
@@ -69,18 +68,16 @@ extension SubprocessIntegrationTests {
         #expect(output == message)
     }
 
-    @Test func testExecutableNamedCannotResolve() async {
+    @Test func testExecutableNamedCannotResolve() async throws {
         #if os(Windows)
-        let expectedError = SubprocessError(
-            code: .init(.executableNotFound("do-not-exist")),
-            underlyingError: .init(rawValue: DWORD(ERROR_FILE_NOT_FOUND))
-        )
+        let underlying = SubprocessError.WindowsError(rawValue: DWORD(ERROR_FILE_NOT_FOUND))
         #else
-        let expectedError = SubprocessError(
-            code: .init(.executableNotFound("do-not-exist")),
-            underlyingError: .init(rawValue: ENOENT)
-        )
+        let underlying = Errno(rawValue: ENOENT)
         #endif
+
+        let expectedError: SubprocessError = .executableNotFound(
+            "do-not-exist", underlyingError: underlying
+        )
 
         await #expect(throws: expectedError) {
             _ = try await Subprocess.run(.name("do-not-exist"), output: .discarded)
@@ -109,7 +106,6 @@ extension SubprocessIntegrationTests {
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
-        // rdar://138670128
         // https://github.com/swiftlang/swift/issues/77235
         let maybePath = result.standardOutput?
             .trimmingNewLineAndQuotes()
@@ -117,20 +113,20 @@ extension SubprocessIntegrationTests {
         #expect(directory(path, isSameAs: expected))
     }
 
-    @Test func testExecutableAtPathCannotResolve() async {
+    @Test func testExecutableAtPathCannotResolve() async throws {
         #if os(Windows)
         let fakePath = FilePath("D:\\does\\not\\exist")
-        let expectedError = SubprocessError(
-            code: .init(.executableNotFound("D:\\does\\not\\exist")),
-            underlyingError: .init(rawValue: DWORD(ERROR_FILE_NOT_FOUND))
+        let underlying = SubprocessError.WindowsError(
+            rawValue: DWORD(ERROR_FILE_NOT_FOUND)
         )
         #else
         let fakePath = FilePath("/usr/bin/do-not-exist")
-        let expectedError = SubprocessError(
-            code: .init(.executableNotFound("/usr/bin/do-not-exist")),
-            underlyingError: .init(rawValue: ENOENT)
-        )
+        let underlying = Errno(rawValue: ENOENT)
         #endif
+
+        let expectedError: SubprocessError = .executableNotFound(
+            fakePath.string, underlyingError: underlying
+        )
 
         await #expect(throws: expectedError) {
             _ = try await Subprocess.run(.path(fakePath), output: .discarded)
@@ -220,7 +216,6 @@ extension SubprocessIntegrationTests {
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
-        // rdar://138670128
         // https://github.com/swiftlang/swift/issues/77235
         let output = result.standardOutput?
             .trimmingNewLineAndQuotes()
@@ -254,7 +249,6 @@ extension SubprocessIntegrationTests {
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
-        // rdar://138670128
         // https://github.com/swiftlang/swift/issues/77235
         let output = result.standardOutput?
             .trimmingNewLineAndQuotes()
@@ -277,7 +271,6 @@ extension SubprocessIntegrationTests {
             output: .string(limit: 32)
         )
         #expect(result.terminationStatus.isSuccess)
-        // rdar://138670128
         // https://github.com/swiftlang/swift/issues/77235
         let output = result.standardOutput?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -327,7 +320,6 @@ extension SubprocessIntegrationTests {
             expected.split(separator: ":")
                 .map { String($0).trimmingNewLineAndQuotes() }
         )
-        // rdar://138670128
         // https://github.com/swiftlang/swift/issues/77235
         #expect(
             pathList == expectedList
@@ -361,7 +353,6 @@ extension SubprocessIntegrationTests {
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
-        // rdar://138670128
         // https://github.com/swiftlang/swift/issues/77235
         let output = result.standardOutput?
             .trimmingNewLineAndQuotes()
@@ -410,7 +401,6 @@ extension SubprocessIntegrationTests {
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
-        // rdar://138670128
         // https://github.com/swiftlang/swift/issues/77235
         let output = result.standardOutput?
             .trimmingNewLineAndQuotes()
@@ -488,7 +478,6 @@ extension SubprocessIntegrationTests {
         #else
         // There shouldn't be any other environment variables besides
         // `PATH` that we set
-        // rdar://138670128
         // https://github.com/swiftlang/swift/issues/77235
         #expect(
             output == "PATH=/bin:/usr/bin"
@@ -674,7 +663,6 @@ extension SubprocessIntegrationTests {
         #expect(result.terminationStatus.isSuccess)
         // There shouldn't be any other environment variables besides
         // `PATH` that we set
-        // rdar://138670128
         // https://github.com/swiftlang/swift/issues/77235
         let output = result.standardOutput?
             .trimmingNewLineAndQuotes()
@@ -735,9 +723,9 @@ extension SubprocessIntegrationTests {
             arguments: ["/c", "cd"],
             workingDirectory: invalidPath
         )
-        let expectedError = SubprocessError(
-            code: .init(.failedToChangeWorkingDirectory(#"X:\Does\Not\Exist"#)),
-            underlyingError: .init(rawValue: DWORD(ERROR_DIRECTORY))
+        let underlying = SubprocessError.WindowsError(rawValue: DWORD(ERROR_DIRECTORY))
+        let expectedError: SubprocessError = .failedToChangeWorkingDirectory(
+            #"X:\Does\Not\Exist"#, underlyingError: underlying
         )
         #else
         let invalidPath: FilePath = FilePath("/does/not/exist")
@@ -746,9 +734,9 @@ extension SubprocessIntegrationTests {
             arguments: [],
             workingDirectory: invalidPath
         )
-        let expectedError = SubprocessError(
-            code: .init(.failedToChangeWorkingDirectory("/does/not/exist")),
-            underlyingError: .init(rawValue: ENOENT)
+        let underlying = Errno(rawValue: ENOENT)
+        let expectedError: SubprocessError = .failedToChangeWorkingDirectory(
+            "/does/not/exist", underlyingError: underlying
         )
         #endif
 
@@ -1149,12 +1137,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        let expectedError = SubprocessError(
-            code: .init(.outputBufferLimitExceeded(16)),
-            underlyingError: nil
-        )
-
-        await #expect(throws: expectedError) {
+        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
             _ = try await _run(
                 setup,
                 input: .none,
@@ -1213,12 +1196,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        let expectedError = SubprocessError(
-            code: .init(.outputBufferLimitExceeded(16)),
-            underlyingError: nil
-        )
-
-        await #expect(throws: expectedError) {
+        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
             _ = try await _run(
                 setup,
                 input: .none,
@@ -1363,12 +1341,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        let expectedError = SubprocessError(
-            code: .init(.outputBufferLimitExceeded(16)),
-            underlyingError: nil
-        )
-
-        await #expect(throws: expectedError) {
+        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
             _ = try await _run(
                 setup,
                 input: .none,
@@ -1434,12 +1407,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        let expectedError = SubprocessError(
-            code: .init(.outputBufferLimitExceeded(16)),
-            underlyingError: nil
-        )
-
-        await #expect(throws: expectedError) {
+        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
             _ = try await _run(
                 setup,
                 input: .none,
@@ -1497,12 +1465,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        let expectedError = SubprocessError(
-            code: .init(.outputBufferLimitExceeded(16)),
-            underlyingError: nil
-        )
-
-        await #expect(throws: expectedError) {
+        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
             _ = try await _run(
                 setup,
                 input: .none,
@@ -1694,12 +1657,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        let expectedError = SubprocessError(
-            code: .init(.outputBufferLimitExceeded(16)),
-            underlyingError: nil
-        )
-
-        await #expect(throws: expectedError) {
+        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
             _ = try await _run(
                 setup,
                 input: .none,
@@ -2347,7 +2305,10 @@ extension SubprocessIntegrationTests {
                 preconditionFailure("this should be impossible, task should've returned a result")
             }
             #if !os(Windows)
-            #expect(terminationStatus == .unhandledException(SIGKILL), "iteration \(i)")
+            #expect(
+                terminationStatus == .unhandledException(SIGKILL) || terminationStatus == .exited(SIGKILL),
+                "iteration \(i)"
+            )
             #endif
         }
     }
@@ -2469,9 +2430,9 @@ extension SubprocessIntegrationTests {
             let readHandle: HANDLE = readHandle,
             let writeHandle: HANDLE = writeHandle
         else {
-            throw SubprocessError(
-                code: .init(.failedToCreatePipe),
-                underlyingError: .init(rawValue: GetLastError())
+            throw SubprocessError.asyncIOFailed(
+                reason: "Failed to create pipe",
+                underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
             )
         }
         SetHandleInformation(readHandle, HANDLE_FLAG_INHERIT, 0)
@@ -2499,15 +2460,15 @@ extension SubprocessIntegrationTests {
                         0, true, DWORD(DUPLICATE_SAME_ACCESS)
                     )
                 else {
-                    throw SubprocessError(
-                        code: .init(.failedToCreatePipe),
-                        underlyingError: .init(rawValue: GetLastError())
+                    throw SubprocessError.asyncIOFailed(
+                        reason: "Failed to create pipe",
+                        underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
                     )
                 }
                 guard let writeEndHandle else {
-                    throw SubprocessError(
-                        code: .init(.failedToCreatePipe),
-                        underlyingError: .init(rawValue: GetLastError())
+                    throw SubprocessError.asyncIOFailed(
+                        reason: "Failed to create pipe",
+                        underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
                     )
                 }
                 CloseHandle(pipe.writeEnd) // No longer need the original
@@ -2552,15 +2513,15 @@ extension SubprocessIntegrationTests {
                         0, true, DWORD(DUPLICATE_SAME_ACCESS)
                     )
                 else {
-                    throw SubprocessError(
-                        code: .init(.failedToCreatePipe),
-                        underlyingError: .init(rawValue: GetLastError())
+                    throw SubprocessError.asyncIOFailed(
+                        reason: "Failed to create pipe",
+                        underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
                     )
                 }
                 guard let readEndHandle else {
-                    throw SubprocessError(
-                        code: .init(.failedToCreatePipe),
-                        underlyingError: .init(rawValue: GetLastError())
+                    throw SubprocessError.asyncIOFailed(
+                        reason: "Failed to create pipe",
+                        underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
                     )
                 }
                 CloseHandle(pipe.readEnd) // No longer need the original

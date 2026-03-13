@@ -60,7 +60,7 @@ public struct DiscardedOutput: OutputProtocol, ErrorOutputProtocol {
     /// The type for the output.
     public typealias OutputType = Void
 
-    internal func createPipe() throws -> CreatedPipe {
+    internal func createPipe() throws(SubprocessError) -> CreatedPipe {
 
         #if os(Windows)
         let devnullFd: FileDescriptor = try .openDevNull(withAccessMode: .writeOnly)
@@ -89,7 +89,7 @@ public struct FileDescriptorOutput: OutputProtocol, ErrorOutputProtocol {
     private let closeAfterSpawningProcess: Bool
     private let fileDescriptor: FileDescriptor
 
-    internal func createPipe() throws -> CreatedPipe {
+    internal func createPipe() throws(SubprocessError) -> CreatedPipe {
         #if canImport(WinSDK)
         let writeFd = HANDLE(bitPattern: _get_osfhandle(self.fileDescriptor.rawValue))!
         #else
@@ -155,7 +155,7 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
 
     internal func captureOutput(
         from diskIO: consuming IOChannel
-    ) async throws -> [UInt8] {
+    ) async throws(SubprocessError) -> [UInt8] {
         #if SUBPROCESS_ASYNCIO_DISPATCH
         var result: DispatchData? = nil
         #else
@@ -176,10 +176,7 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
         try diskIO.safelyClose()
 
         if let result, result.count > self.maxSize {
-            throw SubprocessError(
-                code: .init(.outputBufferLimitExceeded(self.maxSize)),
-                underlyingError: nil
-            )
+            throw .outputLimitExceeded(limit: self.maxSize)
         }
         #if SUBPROCESS_ASYNCIO_DISPATCH
         return result?.array() ?? []
@@ -311,7 +308,7 @@ public struct CombinedErrorOutput: ErrorOutputProtocol {
 }
 
 extension ErrorOutputProtocol {
-    internal func createPipe(from outputPipe: borrowing CreatedPipe) throws -> CreatedPipe {
+    internal func createPipe(from outputPipe: borrowing CreatedPipe) throws(SubprocessError) -> CreatedPipe {
         if self is CombinedErrorOutput {
             return try CreatedPipe(duplicating: outputPipe)
         }
@@ -354,7 +351,7 @@ extension OutputProtocol {
 // MARK: - Default Implementations
 extension OutputProtocol {
     @_disfavoredOverload
-    internal func createPipe() throws -> CreatedPipe {
+    internal func createPipe() throws(SubprocessError) -> CreatedPipe {
         if let discard = self as? DiscardedOutput {
             return try discard.createPipe()
         } else if let fdOutput = self as? FileDescriptorOutput {
@@ -407,10 +404,7 @@ extension OutputProtocol {
 
         try diskIO.safelyClose()
         if let result, result.count > self.maxSize {
-            throw SubprocessError(
-                code: .init(.outputBufferLimitExceeded(self.maxSize)),
-                underlyingError: nil
-            )
+            throw SubprocessError.outputLimitExceeded(limit: self.maxSize)
         }
 
         #if SUBPROCESS_ASYNCIO_DISPATCH
@@ -487,12 +481,19 @@ extension DispatchData {
 extension FileDescriptor {
     internal static func openDevNull(
         withAccessMode mode: FileDescriptor.AccessMode
-    ) throws -> FileDescriptor {
-        #if os(Windows)
-        let devnull: FileDescriptor = try .open("NUL", mode)
-        #else
-        let devnull: FileDescriptor = try .open("/dev/null", mode)
-        #endif
-        return devnull
+    ) throws(SubprocessError) -> FileDescriptor {
+        do {
+            #if os(Windows)
+            let devnull: FileDescriptor = try .open("NUL", mode)
+            #else
+            let devnull: FileDescriptor = try .open("/dev/null", mode)
+            #endif
+            return devnull
+        } catch {
+            throw .asyncIOFailed(
+                reason: "Failed to open /dev/null",
+                underlyingError: error as? SubprocessError.UnderlyingError
+            )
+        }
     }
 }
