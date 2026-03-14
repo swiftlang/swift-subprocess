@@ -296,6 +296,12 @@ int _pidfd_send_signal(int pidfd, int signal) {
     return syscall(SYS_pidfd_send_signal, pidfd, signal, NULL, 0);
 }
 
+// glibc/musl only expose the 4-parameter POSIX waitid variant.
+// The Linux kernel's waitid syscall accepts a 5th parameter: struct rusage.
+int linux_waitid(idtype_t idtype, id_t id, siginfo_t *infop, int options, struct rusage *rusage) {
+    return syscall(SYS_waitid, idtype, id, infop, options, rusage);
+}
+
 // SYS_clone3 is only defined on Linux Kernel 5.3 and above
 // Define our dummy value if it's not available (as is the case with Musl libc)
 #ifndef SYS_clone3
