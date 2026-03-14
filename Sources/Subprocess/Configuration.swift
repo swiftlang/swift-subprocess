@@ -99,7 +99,7 @@ public struct Configuration: Sendable {
                 consuming IOChannel?
             ) async throws -> Result
         )
-    ) async throws -> ExecutionResult<Result> {
+    ) async throws -> ExecutionOutcome<Result> {
         let spawnResults = try await self.spawn(
             withInput: input,
             outputPipe: output,
@@ -115,7 +115,7 @@ public struct Configuration: Sendable {
             execution.processIdentifier.close()
         }
 
-        return try await withAsyncTaskCleanupHandler { () throws -> ExecutionResult<Result> in
+        return try await withAsyncTaskCleanupHandler { () throws -> ExecutionOutcome<Result> in
             let inputIO = _spawnResult.inputWriteEnd()
             let outputIO = _spawnResult.outputReadEnd()
             let errorIO = _spawnResult.errorReadEnd()
@@ -138,7 +138,7 @@ public struct Configuration: Sendable {
                 for: execution.processIdentifier
             )
 
-            return ExecutionResult(
+            return ExecutionOutcome(
                 terminationStatus: terminationStatus,
                 value: try result.get()
             )

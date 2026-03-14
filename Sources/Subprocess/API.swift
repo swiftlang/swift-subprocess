@@ -28,7 +28,7 @@ import SystemPackage
 ///   - input: The input to send to the executable.
 ///   - output: The method to use for redirecting the standard output.
 ///   - error: The method to use for redirecting the standard error.
-/// - Returns: a `CollectedResult` containing the result of the run.
+/// - Returns: a `ExecutionRecord` containing the result of the run.
 public func run<
     Input: InputProtocol,
     Output: OutputProtocol,
@@ -42,7 +42,7 @@ public func run<
     input: Input = .none,
     output: Output,
     error: Error = .discarded
-) async throws -> CollectedResult<Output, Error> {
+) async throws -> ExecutionRecord<Output, Error> {
     let configuration = Configuration(
         executable: executable,
         arguments: arguments,
@@ -70,7 +70,7 @@ public func run<
 ///   - input: span to write to subprocess' standard input.
 ///   - output: The method to use for redirecting the standard output.
 ///   - error: The method to use for redirecting the standard error.
-/// - Returns: a CollectedResult containing the result of the run.
+/// - Returns: a ExecutionRecord containing the result of the run.
 public func run<
     InputElement: BitwiseCopyable,
     Output: OutputProtocol,
@@ -84,7 +84,7 @@ public func run<
     input: borrowing Span<InputElement>,
     output: Output,
     error: Error = .discarded
-) async throws -> CollectedResult<Output, Error> {
+) async throws -> ExecutionRecord<Output, Error> {
     let configuration = Configuration(
         executable: executable,
         arguments: arguments,
@@ -133,7 +133,7 @@ public func run<
     error: Error = .discarded,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
+) async throws -> ExecutionOutcome<Result> where Error.OutputType == Void {
     let configuration = Configuration(
         executable: executable,
         arguments: arguments,
@@ -180,7 +180,7 @@ public func run<Result, Input: InputProtocol, Error: ErrorOutputProtocol>(
     preferredBufferSize: Int? = nil,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
+) async throws -> ExecutionOutcome<Result> where Error.OutputType == Void {
     let configuration = Configuration(
         executable: executable,
         arguments: arguments,
@@ -227,7 +227,7 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
     preferredBufferSize: Int? = nil,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Output.OutputType == Void {
+) async throws -> ExecutionOutcome<Result> where Output.OutputType == Void {
     let configuration = Configuration(
         executable: executable,
         arguments: arguments,
@@ -272,7 +272,7 @@ public func run<Result, Error: ErrorOutputProtocol>(
     preferredBufferSize: Int? = nil,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
+) async throws -> ExecutionOutcome<Result> where Error.OutputType == Void {
     let configuration = Configuration(
         executable: executable,
         arguments: arguments,
@@ -316,7 +316,7 @@ public func run<Result, Output: OutputProtocol>(
     preferredBufferSize: Int? = nil,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Output.OutputType == Void {
+) async throws -> ExecutionOutcome<Result> where Output.OutputType == Void {
     let configuration = Configuration(
         executable: executable,
         arguments: arguments,
@@ -366,7 +366,7 @@ public func run<Result>(
             AsyncBufferSequence
         ) async throws -> Result
     )
-) async throws -> ExecutionResult<Result> {
+) async throws -> ExecutionOutcome<Result> {
     let configuration = Configuration(
         executable: executable,
         arguments: arguments,
@@ -386,13 +386,13 @@ public func run<Result>(
 
 #if SubprocessSpan
 /// Run an executable with given configuration asynchronously and returns
-/// a `CollectedResult` containing the output of the child process.
+/// a `ExecutionRecord` containing the output of the child process.
 /// - Parameters:
 ///   - configuration: The configuration to run.
 ///   - input: span to write to subprocess' standard input.
 ///   - output: The method to use for redirecting the standard output.
 ///   - error: The method to use for redirecting the standard error.
-/// - Returns a CollectedResult containing the result of the run.
+/// - Returns a ExecutionRecord containing the result of the run.
 public func run<
     InputElement: BitwiseCopyable,
     Output: OutputProtocol,
@@ -402,7 +402,7 @@ public func run<
     input: borrowing Span<InputElement>,
     output: Output,
     error: Error = .discarded
-) async throws -> CollectedResult<Output, Error> {
+) async throws -> ExecutionRecord<Output, Error> {
     typealias RunResult = (
         processIdentifier: ProcessIdentifier,
         standardOutput: Output.OutputType,
@@ -437,7 +437,7 @@ public func run<
         )
     }
 
-    return CollectedResult(
+    return ExecutionRecord(
         processIdentifier: result.value.processIdentifier,
         terminationStatus: result.terminationStatus,
         standardOutput: result.value.standardOutput,
@@ -447,13 +447,13 @@ public func run<
 #endif
 
 /// Run a `Configuration` asynchronously and returns
-/// a `CollectedResult` containing the output of the child process.
+/// a `ExecutionRecord` containing the output of the child process.
 /// - Parameters:
 ///   - configuration: The `Subprocess` configuration to run.
 ///   - input: The input to send to the executable.
 ///   - output: The method to use for redirecting the standard output.
 ///   - error: The method to use for redirecting the standard error.
-/// - Returns: a `CollectedResult` containing the result of the run.
+/// - Returns: a `ExecutionRecord` containing the result of the run.
 public func run<
     Input: InputProtocol,
     Output: OutputProtocol,
@@ -463,7 +463,7 @@ public func run<
     input: Input = .none,
     output: Output,
     error: Error = .discarded
-) async throws -> CollectedResult<Output, Error> {
+) async throws -> ExecutionRecord<Output, Error> {
     typealias RunResult = (
         processIdentifier: ProcessIdentifier,
         standardOutput: Output.OutputType,
@@ -541,7 +541,7 @@ public func run<
         }
     }
 
-    return CollectedResult(
+    return ExecutionRecord(
         processIdentifier: result.value.processIdentifier,
         terminationStatus: result.terminationStatus,
         standardOutput: result.value.standardOutput,
@@ -572,7 +572,7 @@ public func run<
     error: Error = .discarded,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
+) async throws -> ExecutionOutcome<Result> where Error.OutputType == Void {
     let inputPipe = try input.createPipe()
     let outputPipe = try output.createPipe()
     let errorPipe = try error.createPipe(from: outputPipe)
@@ -630,7 +630,7 @@ public func run<
     preferredBufferSize: Int? = nil,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
+) async throws -> ExecutionOutcome<Result> where Error.OutputType == Void {
     let output = SequenceOutput()
     let inputPipe = try input.createPipe()
     let outputPipe = try output.createPipe()
@@ -692,7 +692,7 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
     preferredBufferSize: Int? = nil,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Output.OutputType == Void {
+) async throws -> ExecutionOutcome<Result> where Output.OutputType == Void {
     let error = SequenceOutput()
 
     return try await configuration.run(
@@ -750,7 +750,7 @@ public func run<Result, Error: ErrorOutputProtocol>(
     preferredBufferSize: Int? = nil,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
+) async throws -> ExecutionOutcome<Result> where Error.OutputType == Void {
     let input = CustomWriteInput()
     let output = SequenceOutput()
     let inputPipe = try input.createPipe()
@@ -793,7 +793,7 @@ public func run<Result, Output: OutputProtocol>(
     preferredBufferSize: Int? = nil,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Output.OutputType == Void {
+) async throws -> ExecutionOutcome<Result> where Output.OutputType == Void {
     let input = CustomWriteInput()
     let error = SequenceOutput()
 
@@ -838,7 +838,7 @@ public func run<Result>(
             AsyncBufferSequence
         ) async throws -> Result
     )
-) async throws -> ExecutionResult<Result> {
+) async throws -> ExecutionOutcome<Result> {
     let input = CustomWriteInput()
     let output = SequenceOutput()
     let error = SequenceOutput()
