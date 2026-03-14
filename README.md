@@ -44,7 +44,7 @@ To experiment with the `SubprocessSpan` trait, Swift 6.2 is required. Currently,
 
 ### Run and Asynchronously Collect Output
 
-The easiest way to spawn a process with `Subprocess` is to simply run it and await its `CollectedResult`:
+The easiest way to spawn a process with `Subprocess` is to simply run it and await its `ExecutionRecord`:
 
 ```swift
 import Subprocess

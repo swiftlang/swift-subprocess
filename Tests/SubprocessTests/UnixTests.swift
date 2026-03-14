@@ -490,7 +490,7 @@ extension SubprocessUnixTests {
 }
 
 internal func assertNewSessionCreated<Output: OutputProtocol>(
-    with result: CollectedResult<
+    with result: ExecutionRecord<
         StringOutput<UTF8>,
         Output
     >

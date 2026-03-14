@@ -2632,7 +2632,7 @@ func _run<
     input: Input,
     output: Output,
     error: Error
-) async throws -> CollectedResult<Output, Error> {
+) async throws -> ExecutionRecord<Output, Error> {
     return try await Subprocess.run(
         testSetup.executable,
         arguments: testSetup.arguments,
@@ -2655,7 +2655,7 @@ func _run<
     input: borrowing Span<InputElement>,
     output: Output,
     error: Error
-) async throws -> CollectedResult<Output, Error> {
+) async throws -> ExecutionRecord<Output, Error> {
     return try await Subprocess.run(
         testSetup.executable,
         arguments: testSetup.arguments,
@@ -2678,7 +2678,7 @@ func _run<
     error: Error,
     preferredBufferSize: Int? = nil,
     body: ((Execution, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
+) async throws -> ExecutionOutcome<Result> where Error.OutputType == Void {
     return try await Subprocess.run(
         setup.executable,
         arguments: setup.arguments,
@@ -2698,7 +2698,7 @@ func _run<
     _ setup: TestSetup,
     error: Error,
     body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Error.OutputType == Void {
+) async throws -> ExecutionOutcome<Result> where Error.OutputType == Void {
     return try await Subprocess.run(
         setup.executable,
         arguments: setup.arguments,
@@ -2716,7 +2716,7 @@ func _run<
     _ setup: TestSetup,
     output: Output,
     body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionResult<Result> where Output.OutputType == Void {
+) async throws -> ExecutionOutcome<Result> where Output.OutputType == Void {
     return try await Subprocess.run(
         setup.executable,
         arguments: setup.arguments,
@@ -2730,7 +2730,7 @@ func _run<
 func _run<Result>(
     _ setup: TestSetup,
     body: ((Execution, StandardInputWriter, AsyncBufferSequence, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionResult<Result> {
+) async throws -> ExecutionOutcome<Result> {
     return try await Subprocess.run(
         setup.executable,
         arguments: setup.arguments,
