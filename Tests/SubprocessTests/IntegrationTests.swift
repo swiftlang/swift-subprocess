@@ -10,9 +10,9 @@
 //===----------------------------------------------------------------------===//
 
 #if canImport(System)
-@preconcurrency import System
+import System
 #else
-@preconcurrency import SystemPackage
+import SystemPackage
 #endif
 
 #if canImport(Darwin)
@@ -366,12 +366,12 @@ extension SubprocessIntegrationTests {
         // First insert our dummy environment variable
         "SubprocessTest".withCString(encodedAs: UTF16.self) { keyW in
             "value".withCString(encodedAs: UTF16.self) { valueW in
-                SetEnvironmentVariableW(keyW, valueW)
+                _ = SetEnvironmentVariableW(keyW, valueW)
             }
         }
         defer {
             "SubprocessTest".withCString(encodedAs: UTF16.self) { keyW in
-                SetEnvironmentVariableW(keyW, nil)
+                _ = SetEnvironmentVariableW(keyW, nil)
             }
         }
 

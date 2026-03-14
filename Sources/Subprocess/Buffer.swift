@@ -84,6 +84,16 @@ extension AsyncBufferSequence.Buffer {
     #if SubprocessSpan
     // swift-format-ignore
     // Access the storage backing this Buffer
+    #if compiler(>=6.2)
+    public var bytes: RawSpan {
+        @_lifetime(borrow self)
+        borrowing get {
+            let ptr = self.data.withUnsafeBytes { $0 }
+            let bytes = RawSpan(_unsafeBytes: ptr)
+            return _overrideLifetime(of: bytes, to: self)
+        }
+    }
+    #else
     public var bytes: RawSpan {
         @lifetime(borrow self)
         borrowing get {
@@ -92,6 +102,7 @@ extension AsyncBufferSequence.Buffer {
             return _overrideLifetime(of: bytes, to: self)
         }
     }
+    #endif
     #endif // SubprocessSpan
 }
 

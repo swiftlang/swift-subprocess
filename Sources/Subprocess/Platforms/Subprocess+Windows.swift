@@ -14,9 +14,9 @@
 @preconcurrency import WinSDK
 internal import Dispatch
 #if canImport(System)
-@preconcurrency import System
+import System
 #else
-@preconcurrency import SystemPackage
+import SystemPackage
 #endif
 
 import _SubprocessCShims
@@ -844,7 +844,7 @@ extension Executable {
             // 2. Current directory
             let directorySize = GetCurrentDirectoryW(0, nil)
             let currentDirectory = try? fillNullTerminatedWideStringBuffer(
-                initialSize: directorySize >= 0 ? directorySize : DWORD(MAX_PATH),
+                initialSize: directorySize,
                 maxSize: DWORD(Int16.max)
             ) {
                 return GetCurrentDirectoryW(DWORD($0.count), $0.baseAddress)
@@ -860,7 +860,7 @@ extension Executable {
             // 3. System directory (System32)
             let systemDirectorySize = GetSystemDirectoryW(nil, 0)
             let systemDirectory = try? fillNullTerminatedWideStringBuffer(
-                initialSize: systemDirectorySize >= 0 ? systemDirectorySize : DWORD(MAX_PATH),
+                initialSize: systemDirectorySize,
                 maxSize: DWORD(Int16.max)
             ) {
                 return GetSystemDirectoryW($0.baseAddress, DWORD($0.count))
@@ -876,7 +876,7 @@ extension Executable {
             // 4. The Windows directory
             let windowsDirectorySize = GetWindowsDirectoryW(nil, 0)
             let windowsDirectory = try? fillNullTerminatedWideStringBuffer(
-                initialSize: windowsDirectorySize >= 0 ? windowsDirectorySize : DWORD(MAX_PATH),
+                initialSize: windowsDirectorySize,
                 maxSize: DWORD(Int16.max)
             ) {
                 return GetWindowsDirectoryW($0.baseAddress, DWORD($0.count))

@@ -21,9 +21,9 @@ import Musl
 #endif
 
 #if canImport(System)
-@preconcurrency import System
+import System
 #else
-@preconcurrency import SystemPackage
+import SystemPackage
 #endif
 
 import FoundationEssentials

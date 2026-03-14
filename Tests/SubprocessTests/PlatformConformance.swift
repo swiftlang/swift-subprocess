@@ -40,8 +40,8 @@ protocol ProcessIdentifierProtocol: Sendable, Hashable, CustomStringConvertible,
     #endif
 
     #if os(Windows)
-    nonisolated(unsafe) var processDescriptor: PlatformFileDescriptor { get }
-    nonisolated(unsafe) var threadHandle: PlatformFileDescriptor { get }
+    nonisolated var processDescriptor: PlatformFileDescriptor { get }
+    nonisolated var threadHandle: PlatformFileDescriptor { get }
     #endif
 }
 

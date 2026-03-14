@@ -14,9 +14,9 @@
 #if os(Windows)
 
 #if canImport(System)
-@preconcurrency import System
+import System
 #else
-@preconcurrency import SystemPackage
+import SystemPackage
 #endif
 
 import _SubprocessCShims
@@ -58,7 +58,6 @@ final class AsyncIO: @unchecked Sendable {
     private let shutdownFlag: Atomic<UInt8> = Atomic(0)
 
     internal init() {
-        var maybeSetupError: SubprocessError? = nil
         // Create the completion port
         guard
             let ioCompletionPort = CreateIoCompletionPort(
@@ -239,7 +238,7 @@ final class AsyncIO: @unchecked Sendable {
     internal func removeRegistration(for handle: HANDLE) {
         let completionKey = UInt64(UInt(bitPattern: handle))
         _registration.withLock { storage in
-            storage.removeValue(forKey: completionKey)
+            _ = storage.removeValue(forKey: completionKey)
         }
     }
 
@@ -271,7 +270,7 @@ final class AsyncIO: @unchecked Sendable {
             // We use an empty `_OVERLAPPED()` here because `ReadFile` below
             // only reads non-seekable files, aka pipes.
             var overlapped = _OVERLAPPED()
-            let succeed = try resultBuffer.withUnsafeMutableBufferPointer { bufferPointer in
+            let succeed = resultBuffer.withUnsafeMutableBufferPointer { bufferPointer in
                 // Get a pointer to the memory at the specified offset
                 // Windows ReadFile uses DWORD for target count, which means we can only
                 // read up to DWORD (aka UInt32) max.
@@ -372,7 +371,7 @@ final class AsyncIO: @unchecked Sendable {
             // We use an empty `_OVERLAPPED()` here because `WriteFile` below
             // only writes to non-seekable files, aka pipes.
             var overlapped = _OVERLAPPED()
-            let succeed = try span.withUnsafeBytes { ptr in
+            let succeed = span.withUnsafeBytes { ptr in
                 // Windows WriteFile uses DWORD for target count
                 // which means we can only write up to DWORD max
                 let remainingLength: DWORD = self.calculateRemainingCount(
@@ -437,7 +436,7 @@ final class AsyncIO: @unchecked Sendable {
             // We use an empty `_OVERLAPPED()` here because `WriteFile` below
             // only writes to non-seekable files, aka pipes.
             var overlapped = _OVERLAPPED()
-            let succeed = try bytes.withUnsafeBytes { ptr in
+            let succeed = bytes.withUnsafeBytes { ptr in
                 // Windows WriteFile uses DWORD for target count
                 // which means we can only write up to DWORD max
                 let remainingLength: DWORD = self.calculateRemainingCount(
