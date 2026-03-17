@@ -83,6 +83,10 @@ int _was_process_suspended(int status) {
     return WIFSTOPPED(status);
 }
 
+pid_t _subprocess_wait4(pid_t pid, int *status, int options, struct rusage *usage) {
+    return wait4(pid, status, options, usage);
+}
+
 uint64_t _subprocess_nofile_soft_limit(void) {
     struct rlimit rl;
     if (getrlimit(RLIMIT_NOFILE, &rl) != 0) {

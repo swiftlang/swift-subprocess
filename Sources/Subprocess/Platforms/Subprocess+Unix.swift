@@ -924,14 +924,13 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
 @Sendable
 internal func reapProcess(
     with processIdentifier: ProcessIdentifier
-) throws(SubprocessError) -> TerminationStatus {
+) throws(SubprocessError) -> (TerminationStatus, ResourceUsage) {
     do throws(Errno) {
         // On some platforms, the process exit notification (in particular NOTE_EXIT from kqueue)
         // may be delivered slightly before the process becomes reapable,
-        // so we must call waitid without WNOHANG to avoid a narrow possibility of a race condition.
-        // If waitid does block, it won't do so for very long at all.
-        let status = try processIdentifier.blockingReap()
-        return status
+        // so we must reap without WNOHANG to avoid a narrow possibility of a race condition.
+        // If the reap does block, it won't do so for very long at all.
+        return try processIdentifier.blockingReap()
     } catch {
         let subprocessError: SubprocessError = .failedToMonitor(withUnderlyingError: error)
         throw subprocessError
@@ -943,15 +942,8 @@ extension ProcessIdentifier {
     ///
     /// This function may block.
     @available(*, noasync)
-    internal func blockingReap() throws(Errno) -> TerminationStatus {
+    internal func blockingReap() throws(Errno) -> (TerminationStatus, ResourceUsage) {
         try _blockingReap(pid: value)
-    }
-
-    /// Reaps the zombie for the exited process, or returns `nil` if the process is still running.
-    ///
-    /// This function does not block.
-    internal func reap() throws(Errno) -> TerminationStatus? {
-        try _reap(pid: value)
     }
 
     /// Checks whether the process has already exited without consuming the
@@ -965,24 +957,62 @@ extension ProcessIdentifier {
     }
 }
 
+/// Reaps the zombie for `pid`, returning its termination status along with the
+/// resource usage the kernel accounted to it.
+///
+/// `wait4` is used on every platform rather than `waitid`: it is the only
+/// interface exposed by every supported libc that reports `rusage` alongside
+/// the wait status. It's reached through the `_subprocess_wait4` shim; see that
+/// declaration for why the libc entry point is wrapped rather than called
+/// directly or replaced by a raw `waitid` syscall.
 @available(*, noasync)
-internal func _blockingReap(pid: pid_t) throws(Errno) -> TerminationStatus {
-    let siginfo = try _waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED)
-    return TerminationStatus(siginfo)
+internal func _blockingReap(pid: pid_t) throws(Errno) -> (TerminationStatus, ResourceUsage) {
+    while true {
+        var usage = rusage()
+        var status: CInt = 0
+        if _subprocess_wait4(pid, &status, 0, &usage) >= 0 {
+            return (TerminationStatus(waitStatus: status), ResourceUsage(usage))
+        } else if errno != EINTR {
+            throw Errno(rawValue: errno)
+        }
+    }
 }
 
-internal func _reap(pid: pid_t) throws(Errno) -> TerminationStatus? {
-    let siginfo = try _waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED | WNOHANG)
-    // If si_pid and si_signo are both 0, the child is still running since we used WNOHANG
-    if siginfo.si_pid == 0 && siginfo.si_signo == 0 {
-        return nil
+internal extension ResourceUsage {
+    /// Interprets the `rusage` the kernel accounted to a reaped child.
+    ///
+    /// This lives here rather than beside `ResourceUsage` because reading
+    /// `timeval`'s members needs `_SubprocessCShims` in scope, which the file
+    /// declaring that type deliberately avoids importing.
+    init(_ usage: rusage) {
+        #if canImport(Darwin)
+        let maxRSS = Int(usage.ru_maxrss) // bytes on Darwin
+        #elseif os(Linux) || os(Android) || os(FreeBSD) || os(OpenBSD)
+        // KiB to bytes (Linux, FreeBSD, OpenBSD, NetBSD). The multiplication is
+        // performed in `Int64` and clamped so that a peak above 2 GiB reported
+        // on a 32-bit platform saturates instead of trapping on overflow.
+        let maxRSS = Int(clamping: Int64(usage.ru_maxrss) * 1024)
+        #else
+        #error("ru_maxrss unit scaling not defined for this platform")
+        #endif
+        self.init(
+            userTime: Duration(
+                secondsComponent: Int64(usage.ru_utime.tv_sec),
+                attosecondsComponent: Int64(usage.ru_utime.tv_usec) * 1_000_000_000_000
+            ),
+            systemTime: Duration(
+                secondsComponent: Int64(usage.ru_stime.tv_sec),
+                attosecondsComponent: Int64(usage.ru_stime.tv_usec) * 1_000_000_000_000
+            ),
+            maxRSS: maxRSS,
+            rusage: usage
+        )
     }
-    return TerminationStatus(siginfo)
 }
 
 internal func _peekIfExited(pid: pid_t) throws(Errno) -> Bool {
     // WNOWAIT leaves the zombie in the process table so a subsequent
-    // `_blockingReap` (or `_reap`) can still consume it.
+    // `_blockingReap` can still consume it.
     let siginfo = try _waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED | WNOHANG | WNOWAIT)
     return !(siginfo.si_pid == 0 && siginfo.si_signo == 0)
 }
@@ -999,14 +1029,14 @@ internal func _waitid(idtype: idtype_t, id: id_t, flags: Int32) throws(Errno) ->
 }
 
 internal extension TerminationStatus {
-    init(_ siginfo: siginfo_t) {
-        switch siginfo.si_code {
-        case .init(CLD_EXITED):
-            self = .exited(siginfo.si_status)
-        case .init(CLD_KILLED), .init(CLD_DUMPED):
-            self = .signaled(siginfo.si_status)
-        default:
-            fatalError("Unexpected exit status: \(siginfo.si_code)")
+    init(waitStatus: CInt) {
+        switch (_was_process_exited(waitStatus) != 0, _was_process_signaled(waitStatus) != 0) {
+        case (true, false):
+            self = .exited(CInt(_get_exit_code(waitStatus)))
+        case (false, true):
+            self = .signaled(CInt(_get_signal_code(waitStatus)))
+        case (true, true), (false, false):
+            fatalError("Unexpected wait status: \(waitStatus)")
         }
     }
 }
