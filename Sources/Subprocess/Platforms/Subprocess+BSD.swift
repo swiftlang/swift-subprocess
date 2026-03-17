@@ -29,10 +29,10 @@ internal import Dispatch
 @Sendable
 internal func monitorProcessTermination(
     for processIdentifier: ProcessIdentifier
-) async throws(SubprocessError) -> TerminationStatus {
-    switch Result(catching: { () throws(Errno) -> TerminationStatus? in try processIdentifier.reap() }) {
-    case let .success(status?):
-        return status
+) async throws(SubprocessError) -> (TerminationStatus, ResourceUsage) {
+    switch Result(catching: { () throws(Errno) -> (TerminationStatus, ResourceUsage)? in try processIdentifier.reap() }) {
+    case let .success(result?):
+        return result
     case .success(nil):
         break
     case let .failure(error):
@@ -50,10 +50,9 @@ internal func monitorProcessTermination(
 
                 do throws(Errno) {
                     // NOTE_EXIT may be delivered slightly before the process becomes reapable,
-                    // so we must call waitid without WNOHANG to avoid a narrow possibility of a race condition.
-                    // If waitid does block, it won't do so for very long at all.
-                    let status = try processIdentifier.blockingReap()
-                    continuation.resume(returning: status)
+                    // so we must call wait4 without WNOHANG to avoid a narrow possibility of a race condition.
+                    // If wait4 does block, it won't do so for very long at all.
+                    continuation.resume(returning: try processIdentifier.blockingReap())
                 } catch {
                     let subprocessError: SubprocessError = .failedToMonitor(withUnderlyingError: error)
                     continuation.resume(throwing: subprocessError)
