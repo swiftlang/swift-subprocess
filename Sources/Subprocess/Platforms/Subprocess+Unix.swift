@@ -704,14 +704,13 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
 @Sendable
 internal func reapProcess(
     with processIdentifier: ProcessIdentifier
-) throws(SubprocessError) -> TerminationStatus {
+) throws(SubprocessError) -> (TerminationStatus, ResourceUsage) {
     do throws(Errno) {
         // On some platforms, the process exit notification (in particular NOTE_EXIT from kqueue)
         // may be delivered slightly before the process becomes reapable,
         // so we must call waitid without WNOHANG to avoid a narrow possibility of a race condition.
         // If waitid does block, it won't do so for very long at all.
-        let status = try processIdentifier.blockingReap()
-        return status
+        return try processIdentifier.blockingReap()
     } catch {
         let subprocessError: SubprocessError = .failedToMonitor(withUnderlyingError: error)
         throw subprocessError
@@ -721,12 +720,12 @@ internal func reapProcess(
 extension ProcessIdentifier {
     /// Reaps the zombie for the exited process. This function may block.
     @available(*, noasync)
-    internal func blockingReap() throws(Errno) -> TerminationStatus {
+    internal func blockingReap() throws(Errno) -> (TerminationStatus, ResourceUsage) {
         try _blockingReap(pid: value)
     }
 
     /// Reaps the zombie for the exited process, or returns `nil` if the process is still running. This function will not block.
-    internal func reap() throws(Errno) -> TerminationStatus? {
+    internal func reap() throws(Errno) -> (TerminationStatus, ResourceUsage)? {
         try _reap(pid: value)
     }
 
@@ -740,18 +739,55 @@ extension ProcessIdentifier {
 }
 
 @available(*, noasync)
-internal func _blockingReap(pid: pid_t) throws(Errno) -> TerminationStatus {
-    let siginfo = try _waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED)
-    return TerminationStatus(siginfo)
+internal func _blockingReap(pid: pid_t) throws(Errno) -> (TerminationStatus, ResourceUsage) {
+    while true {
+        var usage = rusage()
+        #if os(macOS) || os(FreeBSD) || os(OpenBSD)
+        var status: CInt = 0
+        let rc = wait4(pid, &status, 0, &usage)
+        #elseif os(Linux) || os(Android)
+        var siginfo = siginfo_t()
+        let rc = linux_waitid(P_PID, id_t(pid), &siginfo, WEXITED, &usage)
+        #endif
+        if rc >= 0 {
+            #if os(macOS) || os(FreeBSD) || os(OpenBSD)
+            return (TerminationStatus(waitStatus: status), ResourceUsage(usage))
+            #elseif os(Linux) || os(Android)
+            return (TerminationStatus(siginfo), ResourceUsage(usage))
+            #endif
+        } else if errno != EINTR {
+            throw Errno(rawValue: errno)
+        }
+    }
 }
 
-internal func _reap(pid: pid_t) throws(Errno) -> TerminationStatus? {
-    let siginfo = try _waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED | WNOHANG)
-    // If si_pid and si_signo are both 0, the child is still running since we used WNOHANG
-    if siginfo.si_pid == 0 && siginfo.si_signo == 0 {
-        return nil
+internal func _reap(pid: pid_t) throws(Errno) -> (TerminationStatus, ResourceUsage)? {
+    while true {
+        var usage = rusage()
+        #if os(macOS) || os(FreeBSD) || os(OpenBSD)
+        var status: CInt = 0
+        let rc = wait4(pid, &status, WNOHANG, &usage)
+        if rc > 0 {
+            return (TerminationStatus(waitStatus: status), ResourceUsage(usage))
+        } else if rc == 0 {
+            return nil // Child still running
+        }
+        #elseif os(Linux) || os(Android)
+        var siginfo = siginfo_t()
+        let rc = linux_waitid(P_PID, id_t(pid), &siginfo, WEXITED | WNOHANG, &usage)
+        if rc != -1 {
+            // If si_pid and si_signo are both 0, the child is still running since we used WNOHANG
+            if siginfo.si_pid == 0 && siginfo.si_signo == 0 {
+                return nil
+            }
+            return (TerminationStatus(siginfo), ResourceUsage(usage))
+        }
+        #endif
+        // rc == -1: either EINTR (retry) or a real error
+        if errno != EINTR {
+            throw Errno(rawValue: errno)
+        }
     }
-    return TerminationStatus(siginfo)
 }
 
 internal func _peekIfExited(pid: pid_t) throws(Errno) -> Bool {
@@ -784,6 +820,21 @@ internal extension TerminationStatus {
         }
     }
 }
+
+#if os(macOS) || os(FreeBSD) || os(OpenBSD)
+internal extension TerminationStatus {
+    init(waitStatus: CInt) {
+        switch (_was_process_exited(waitStatus) != 0, _was_process_signaled(waitStatus) != 0) {
+        case (true, false):
+            self = .exited(CInt(_get_exit_code(waitStatus)))
+        case (false, true):
+            self = .signaled(CInt(_get_signal_code(waitStatus)))
+        case (true, true), (false, false):
+            fatalError("Unexpected wait status: \(waitStatus)")
+        }
+    }
+}
+#endif
 
 #if os(OpenBSD) || os(Linux) || os(Android)
 internal extension siginfo_t {
