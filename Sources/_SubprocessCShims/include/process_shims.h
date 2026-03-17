@@ -16,6 +16,7 @@
 
 #if !TARGET_OS_WINDOWS
 #include <pthread.h>
+#include <sys/resource.h>
 #include <unistd.h>
 
 #if _POSIX_SPAWN
@@ -113,6 +114,8 @@ int _shims_snprintf(
 
 #if TARGET_OS_LINUX
 int _pidfd_open(pid_t pid);
+
+int linux_waitid(idtype_t idtype, id_t id, siginfo_t * _Nonnull infop, int options, struct rusage * _Nonnull rusage);
 
 // P_PIDFD is only defined on Linux Kernel 5.4 and above
 // Define our value if it's not available

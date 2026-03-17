@@ -473,6 +473,7 @@ public func run<
     return ExecutionRecord(
         processIdentifier: result.value.processIdentifier,
         terminationStatus: result.terminationStatus,
+        resourceUsage: result.resourceUsage,
         standardOutput: result.value.standardOutput,
         standardError: result.value.standardError
     )
@@ -576,6 +577,7 @@ public func run<
     return ExecutionRecord(
         processIdentifier: result.value.processIdentifier,
         terminationStatus: result.terminationStatus,
+        resourceUsage: result.resourceUsage,
         standardOutput: result.value.standardOutput,
         standardError: result.value.standardError
     )

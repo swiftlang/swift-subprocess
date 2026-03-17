@@ -610,7 +610,7 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
 @Sendable
 internal func monitorProcessTermination(
     for processIdentifier: ProcessIdentifier
-) async throws(SubprocessError) -> TerminationStatus {
+) async throws(SubprocessError) -> (TerminationStatus, ResourceUsage) {
     // Once the continuation resumes, it will need to unregister the wait, so
     // yield the wait handle back to the calling scope.
     var waitHandle: HANDLE?
@@ -655,6 +655,9 @@ internal func monitorProcessTermination(
         }
     }
 
+    // Collect resource usage while the process handle is still valid
+    let resourceUsage = ResourceUsage(processHandle: processIdentifier.processDescriptor)
+
     var status: DWORD = 0
     guard GetExitCodeProcess(processIdentifier.processDescriptor, &status) else {
         throw SubprocessError.failedToMonitor(
@@ -662,7 +665,7 @@ internal func monitorProcessTermination(
         )
     }
 
-    return .exited(status)
+    return (.exited(status), resourceUsage)
 }
 
 // MARK: - Subprocess Control
