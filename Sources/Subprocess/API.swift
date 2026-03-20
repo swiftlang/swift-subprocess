@@ -166,6 +166,8 @@ public func run<
 ///     as the default buffer size. Larger buffer sizes may improve performance for
 ///     subprocesses that produce large amounts of output, while smaller buffer sizes
 ///     may reduce memory usage and improve responsiveness for interactive applications.
+///   - streamingBehavior: Controls the trade-off between throughput and latency when
+///     streaming output from the subprocess. Defaults to `.throughput`.
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom execution body to manually control the running process.
 /// - Returns: an `ExecutableResult` type containing the return value of the closure.
@@ -178,6 +180,7 @@ public func run<Result, Input: InputProtocol, Error: ErrorOutputProtocol>(
     input: Input = .none,
     error: Error = .discarded,
     preferredBufferSize: Int? = nil,
+    streamingBehavior: AsyncBufferSequence.StreamingBehavior = .throughput,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, AsyncBufferSequence) async throws -> Result)
 ) async throws -> ExecutionOutcome<Result> where Error.OutputType == Void {
@@ -193,6 +196,7 @@ public func run<Result, Input: InputProtocol, Error: ErrorOutputProtocol>(
         input: input,
         error: error,
         preferredBufferSize: preferredBufferSize,
+        streamingBehavior: streamingBehavior,
         isolation: isolation,
         body: body
     )
@@ -213,6 +217,8 @@ public func run<Result, Input: InputProtocol, Error: ErrorOutputProtocol>(
 ///     as the default buffer size. Larger buffer sizes may improve performance for
 ///     subprocesses that produce large amounts of output, while smaller buffer sizes
 ///     may reduce memory usage and improve responsiveness for interactive applications.
+///   - streamingBehavior: Controls the trade-off between throughput and latency when
+///     streaming output from the subprocess. Defaults to `.throughput`.
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom execution body to manually control the running process
 /// - Returns: an `ExecutableResult` type containing the return value of the closure.
@@ -225,6 +231,7 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
     input: Input = .none,
     output: Output,
     preferredBufferSize: Int? = nil,
+    streamingBehavior: AsyncBufferSequence.StreamingBehavior = .throughput,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, AsyncBufferSequence) async throws -> Result)
 ) async throws -> ExecutionOutcome<Result> where Output.OutputType == Void {
@@ -240,6 +247,7 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
         input: input,
         output: output,
         preferredBufferSize: preferredBufferSize,
+        streamingBehavior: streamingBehavior,
         isolation: isolation,
         body: body
     )
@@ -259,6 +267,8 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
 ///     as the default buffer size. Larger buffer sizes may improve performance for
 ///     subprocesses that produce large amounts of output, while smaller buffer sizes
 ///     may reduce memory usage and improve responsiveness for interactive applications.
+///   - streamingBehavior: Controls the trade-off between throughput and latency when
+///     streaming output from the subprocess. Defaults to `.throughput`.
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom execution body to manually control the running process
 /// - Returns: An `ExecutableResult` type containing the return value of the closure.
@@ -270,6 +280,7 @@ public func run<Result, Error: ErrorOutputProtocol>(
     platformOptions: PlatformOptions = PlatformOptions(),
     error: Error = .discarded,
     preferredBufferSize: Int? = nil,
+    streamingBehavior: AsyncBufferSequence.StreamingBehavior = .throughput,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
 ) async throws -> ExecutionOutcome<Result> where Error.OutputType == Void {
@@ -284,6 +295,7 @@ public func run<Result, Error: ErrorOutputProtocol>(
         configuration,
         error: error,
         preferredBufferSize: preferredBufferSize,
+        streamingBehavior: streamingBehavior,
         isolation: isolation,
         body: body
     )
@@ -303,6 +315,8 @@ public func run<Result, Error: ErrorOutputProtocol>(
 ///     as the default buffer size. Larger buffer sizes may improve performance for
 ///     subprocesses that produce large amounts of output, while smaller buffer sizes
 ///     may reduce memory usage and improve responsiveness for interactive applications.
+///   - streamingBehavior: Controls the trade-off between throughput and latency when
+///     streaming output from the subprocess. Defaults to `.throughput`.
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom execution body to manually control the running process
 /// - Returns: An `ExecutableResult` type containing the return value of the closure.
@@ -314,6 +328,7 @@ public func run<Result, Output: OutputProtocol>(
     platformOptions: PlatformOptions = PlatformOptions(),
     output: Output,
     preferredBufferSize: Int? = nil,
+    streamingBehavior: AsyncBufferSequence.StreamingBehavior = .throughput,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
 ) async throws -> ExecutionOutcome<Result> where Output.OutputType == Void {
@@ -328,6 +343,7 @@ public func run<Result, Output: OutputProtocol>(
         configuration,
         output: output,
         preferredBufferSize: preferredBufferSize,
+        streamingBehavior: streamingBehavior,
         isolation: isolation,
         body: body
     )
@@ -347,6 +363,8 @@ public func run<Result, Output: OutputProtocol>(
 ///     as the default buffer size. Larger buffer sizes may improve performance for
 ///     subprocesses that produce large amounts of output, while smaller buffer sizes
 ///     may reduce memory usage and improve responsiveness for interactive applications.
+///   - streamingBehavior: Controls the trade-off between throughput and latency when
+///     streaming output from the subprocess. Defaults to `.throughput`.
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom execution body to manually control the running process
 /// - Returns: an `ExecutableResult` type containing the return value of the closure.
@@ -357,6 +375,7 @@ public func run<Result>(
     workingDirectory: FilePath? = nil,
     platformOptions: PlatformOptions = PlatformOptions(),
     preferredBufferSize: Int? = nil,
+    streamingBehavior: AsyncBufferSequence.StreamingBehavior = .throughput,
     isolation: isolated (any Actor)? = #isolation,
     body: (
         (
@@ -377,6 +396,7 @@ public func run<Result>(
     return try await run(
         configuration,
         preferredBufferSize: preferredBufferSize,
+        streamingBehavior: streamingBehavior,
         isolation: isolation,
         body: body
     )
@@ -615,6 +635,8 @@ public func run<
 ///     as the default buffer size. Larger buffer sizes may improve performance for
 ///     subprocesses that produce large amounts of output, while smaller buffer sizes
 ///     may reduce memory usage and improve responsiveness for interactive applications.
+///   - streamingBehavior: Controls the trade-off between throughput and latency when
+///     streaming output from the subprocess. Defaults to `.throughput`.
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom execution body to manually control the running process
 /// - Returns an executableResult type containing the return value
@@ -628,6 +650,7 @@ public func run<
     input: Input = .none,
     error: Error = .discarded,
     preferredBufferSize: Int? = nil,
+    streamingBehavior: AsyncBufferSequence.StreamingBehavior = .throughput,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, AsyncBufferSequence) async throws -> Result)
 ) async throws -> ExecutionOutcome<Result> where Error.OutputType == Void {
@@ -660,7 +683,8 @@ public func run<
             // Body runs in the same isolation
             let outputSequence = AsyncBufferSequence(
                 diskIO: outputIOBox.take()!.consumeIOChannel(),
-                preferredBufferSize: preferredBufferSize
+                preferredBufferSize: preferredBufferSize,
+                streamingBehavior: streamingBehavior
             )
 
             let result = try await body(execution, outputSequence)
@@ -681,6 +705,8 @@ public func run<
 ///     as the default buffer size. Larger buffer sizes may improve performance for
 ///     subprocesses that produce large amounts of output, while smaller buffer sizes
 ///     may reduce memory usage and improve responsiveness for interactive applications.
+///   - streamingBehavior: Controls the trade-off between throughput and latency when
+///     streaming output from the subprocess. Defaults to `.throughput`.
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom execution body to manually control the running process
 /// - Returns an executableResult type containing the return value
@@ -690,6 +716,7 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
     input: Input = .none,
     output: Output,
     preferredBufferSize: Int? = nil,
+    streamingBehavior: AsyncBufferSequence.StreamingBehavior = .throughput,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, AsyncBufferSequence) async throws -> Result)
 ) async throws -> ExecutionOutcome<Result> where Output.OutputType == Void {
@@ -719,7 +746,8 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
             // Body runs in the same isolation
             let errorSequence = AsyncBufferSequence(
                 diskIO: errorIOBox.take()!.consumeIOChannel(),
-                preferredBufferSize: preferredBufferSize
+                preferredBufferSize: preferredBufferSize,
+                streamingBehavior: streamingBehavior
             )
 
             let result = try await body(execution, errorSequence)
@@ -740,6 +768,8 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
 ///     as the default buffer size. Larger buffer sizes may improve performance for
 ///     subprocesses that produce large amounts of output, while smaller buffer sizes
 ///     may reduce memory usage and improve responsiveness for interactive applications.
+///   - streamingBehavior: Controls the trade-off between throughput and latency when
+///     streaming output from the subprocess. Defaults to `.throughput`.
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom execution body to manually control the running process
 /// - Returns an executableResult type containing the return value
@@ -748,6 +778,7 @@ public func run<Result, Error: ErrorOutputProtocol>(
     _ configuration: Configuration,
     error: Error = .discarded,
     preferredBufferSize: Int? = nil,
+    streamingBehavior: AsyncBufferSequence.StreamingBehavior = .throughput,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
 ) async throws -> ExecutionOutcome<Result> where Error.OutputType == Void {
@@ -765,7 +796,8 @@ public func run<Result, Error: ErrorOutputProtocol>(
         let writer = StandardInputWriter(diskIO: inputIO!)
         let outputSequence = AsyncBufferSequence(
             diskIO: outputIO!.consumeIOChannel(),
-            preferredBufferSize: preferredBufferSize
+            preferredBufferSize: preferredBufferSize,
+            streamingBehavior: streamingBehavior
         )
 
         return try await body(execution, writer, outputSequence)
@@ -783,6 +815,8 @@ public func run<Result, Error: ErrorOutputProtocol>(
 ///     as the default buffer size. Larger buffer sizes may improve performance for
 ///     subprocesses that produce large amounts of output, while smaller buffer sizes
 ///     may reduce memory usage and improve responsiveness for interactive applications.
+///   - streamingBehavior: Controls the trade-off between throughput and latency when
+///     streaming output from the subprocess. Defaults to `.throughput`.
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom execution body to manually control the running process
 /// - Returns an executableResult type containing the return value
@@ -791,6 +825,7 @@ public func run<Result, Output: OutputProtocol>(
     _ configuration: Configuration,
     output: Output,
     preferredBufferSize: Int? = nil,
+    streamingBehavior: AsyncBufferSequence.StreamingBehavior = .throughput,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
 ) async throws -> ExecutionOutcome<Result> where Output.OutputType == Void {
@@ -805,7 +840,8 @@ public func run<Result, Output: OutputProtocol>(
         let writer = StandardInputWriter(diskIO: inputIO!)
         let errorSequence = AsyncBufferSequence(
             diskIO: errorIO!.consumeIOChannel(),
-            preferredBufferSize: preferredBufferSize
+            preferredBufferSize: preferredBufferSize,
+            streamingBehavior: streamingBehavior
         )
         return try await body(execution, writer, errorSequence)
     }
@@ -821,6 +857,8 @@ public func run<Result, Output: OutputProtocol>(
 ///     as the default buffer size. Larger buffer sizes may improve performance for
 ///     subprocesses that produce large amounts of output, while smaller buffer sizes
 ///     may reduce memory usage and improve responsiveness for interactive applications.
+///   - streamingBehavior: Controls the trade-off between throughput and latency when
+///     streaming output from the subprocess. Defaults to `.throughput`.
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom configuration body to manually control
 ///       the running process, write to its standard input, stream
@@ -829,6 +867,7 @@ public func run<Result, Output: OutputProtocol>(
 public func run<Result>(
     _ configuration: Configuration,
     preferredBufferSize: Int? = nil,
+    streamingBehavior: AsyncBufferSequence.StreamingBehavior = .throughput,
     isolation: isolated (any Actor)? = #isolation,
     body: (
         (
@@ -851,11 +890,13 @@ public func run<Result>(
         let writer = StandardInputWriter(diskIO: inputIO!)
         let outputSequence = AsyncBufferSequence(
             diskIO: outputIO!.consumeIOChannel(),
-            preferredBufferSize: preferredBufferSize
+            preferredBufferSize: preferredBufferSize,
+            streamingBehavior: streamingBehavior
         )
         let errorSequence = AsyncBufferSequence(
             diskIO: errorIO!.consumeIOChannel(),
-            preferredBufferSize: preferredBufferSize
+            preferredBufferSize: preferredBufferSize,
+            streamingBehavior: streamingBehavior
         )
         return try await body(execution, writer, outputSequence, errorSequence)
     }
