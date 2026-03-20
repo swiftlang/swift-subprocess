@@ -345,6 +345,53 @@ extension StreamingBehaviorTests {
     }
 
     #if !os(Windows)
+    /// Test that latency mode delivers the first line before a long sleep completes.
+    /// This simulates a script that outputs a line, sleeps, then outputs a final line.
+    /// With latency mode, the first line must arrive well before the sleep ends —
+    /// not buffered until process exit.
+    @Test func testLatencyModeFirstLineArrivesBeforeLongDelay() async throws {
+        let start = Date()
+        var firstLineTimestamp: Date? = nil
+
+        let result = try await Subprocess.run(
+            .path("/bin/sh"),
+            arguments: [
+                "-c",
+                """
+                echo "first"
+                sleep 1
+                echo "last"
+                """,
+            ],
+            error: .discarded,
+            streamingBehavior: .latency
+        ) { execution, standardOutput in
+            var lines: [String] = []
+            for try await line in standardOutput.lines() {
+                if firstLineTimestamp == nil {
+                    firstLineTimestamp = Date()
+                }
+                lines.append(line.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+            return lines
+        }
+
+        #expect(result.terminationStatus.isSuccess)
+        #expect(result.value == ["first", "last"])
+
+        // The first line must arrive well before the 1-second sleep completes.
+        // If output were buffered until process exit, it would arrive after ~1s.
+        if let firstLineTimestamp {
+            let elapsed = firstLineTimestamp.timeIntervalSince(start)
+            #expect(
+                elapsed < 0.5,
+                "First line should arrive within 0.5s, but took \(elapsed)s. Output may be buffered until process exit."
+            )
+        } else {
+            Issue.record("No lines were received")
+        }
+    }
+
     /// Test that latency mode delivers data quickly for interactive use cases.
     /// This test verifies that when a subprocess outputs data incrementally,
     /// latency mode receives it without waiting for a full buffer.
