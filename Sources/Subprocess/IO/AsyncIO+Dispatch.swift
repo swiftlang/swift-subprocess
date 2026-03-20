@@ -22,113 +22,54 @@ import SystemPackage
 
 internal import Dispatch
 
-/// Accumulates data that arrives from DispatchIO handler calls after the
-/// continuation has already been resumed (in latency/returnOnFirstData mode).
-/// Shared between successive `read()` calls on the same iterator.
-///
-/// When `returnOnFirstData` is true, the DispatchIO handler may be called
-/// multiple times for a single `read()` operation. After the first chunk
-/// resumes the continuation, subsequent chunks are stashed here. A follow-up
-/// `read()` call will wait (via `asyncTakeData()`) for either new data to
-/// arrive or for the DispatchIO operation to complete.
-/// Tracks the state of a DispatchIO read operation that was resumed early
-/// due to `returnOnFirstData`. After the continuation returns the first
-/// chunk, the DispatchIO handler may still deliver more data for the same
-/// `read()` call. This class accumulates that data so subsequent iterator
-/// `next()` calls can retrieve it without starting an overlapping read.
-final class PendingReadState: @unchecked Sendable {
-    private let lock = DispatchQueue(label: "PendingReadState")
-    private var _data: DispatchData = .empty
-    /// True once DispatchIO calls the handler with `done=true` for the
-    /// current read operation (meaning this particular read is finished,
-    /// NOT necessarily EOF).
-    private var _operationDone: Bool = false
-    /// True after `returnOnFirstData` resumes the continuation early,
-    /// until the DispatchIO operation completes and pending data is drained.
-    private var _draining: Bool = false
-    /// Non-nil when a consumer is waiting for data or the done signal.
-    private var _waiter: CheckedContinuation<(DispatchData, Bool)?, Never>?
+/// Tracks an in-flight DispatchIO read that was resumed early due to
+/// `returnOnFirstData`. After the continuation returns the first chunk,
+/// the DispatchIO handler may still deliver more data for the same
+/// `read()` call. This actor funnels that data through an AsyncStream so
+/// the next iterator `next()` call can retrieve it without starting an
+/// overlapping read.
+actor PendingReadState {
+    /// True while a DispatchIO operation is still delivering data after
+    /// the continuation was resumed early. Accessed nonisolated because
+    /// it is set from the DispatchIO handler and read from the async caller.
+    nonisolated(unsafe) private var _hasPendingOperation: Bool = false
 
-    var isDraining: Bool {
-        lock.sync { _draining }
+    private let asyncStream: AsyncStream<DispatchData?>
+    nonisolated private let continuation: AsyncStream<DispatchData?>.Continuation
+
+    init() {
+        let (stream, continuation) = AsyncStream.makeStream(of: DispatchData?.self)
+        self.asyncStream = stream
+        self.continuation = continuation
     }
 
-    func beginDraining() {
-        lock.sync { _draining = true }
+    var hasPendingOperation: Bool {
+        _hasPendingOperation
     }
 
-    func append(_ newData: DispatchData) {
-        lock.sync {
-            if let waiter = _waiter {
-                _waiter = nil
-                waiter.resume(returning: (newData, false))
-            } else {
-                if _data.isEmpty {
-                    _data = newData
-                } else {
-                    _data.append(newData)
-                }
-            }
-        }
+    nonisolated func beginPendingOperation() {
+        _hasPendingOperation = true
     }
 
-    /// Signal that the DispatchIO read operation is complete.
-    func markOperationDone() {
-        lock.sync {
-            _operationDone = true
-            if let waiter = _waiter {
-                _waiter = nil
-                if _data.isEmpty {
-                    // No more data from this operation; signal the consumer
-                    // to start a new read.
-                    waiter.resume(returning: nil)
-                } else {
-                    let result = _data
-                    _data = .empty
-                    waiter.resume(returning: (result, true))
-                }
-            }
-        }
+    nonisolated func append(_ newData: DispatchData) {
+        continuation.yield(newData)
     }
 
-    func reset() {
-        lock.sync {
-            _data = .empty
-            _operationDone = false
-            _draining = false
-            _waiter = nil
-        }
+    nonisolated func markOperationDone() {
+        continuation.yield(nil)
     }
 
-    /// Waits for either new data from the DispatchIO handler, or for the
-    /// operation to complete. Returns `nil` when the operation is done and
-    /// no more data is available (caller should issue a new read).
+    /// Returns the next chunk of pending data, or `nil` when the in-flight
+    /// operation is complete (caller should issue a new DispatchIO read).
     func asyncTakeData() async -> DispatchData? {
-        let result: (DispatchData, Bool)? = await withCheckedContinuation { continuation in
-            lock.sync {
-                if !_data.isEmpty {
-                    let d = _data
-                    _data = .empty
-                    continuation.resume(returning: (d, _operationDone))
-                } else if _operationDone {
-                    continuation.resume(returning: nil)
-                } else {
-                    _waiter = continuation
-                }
+        for await data in asyncStream {
+            if let data {
+                return data
             }
-        }
-
-        guard let (data, operationDone) = result else {
-            // Operation done, no more pending data. Stop draining so the
-            // next read() starts a fresh DispatchIO read.
-            lock.sync { _draining = false }
+            _hasPendingOperation = false
             return nil
         }
-
-        if operationDone {
-            lock.sync { _draining = false }
-        }
-        return data
+        return nil
     }
 }
 
@@ -158,15 +99,13 @@ final class AsyncIO: Sendable {
         // If a prior DispatchIO read is still delivering data (because we
         // returned early on the first chunk), drain from the pending state
         // instead of starting a new overlapping read.
-        if let pendingState, pendingState.isDraining {
+        if let pendingState, await pendingState.hasPendingOperation {
             if let data = await pendingState.asyncTakeData() {
                 return data
             }
             // The previous operation completed with no more pending data.
             // Fall through to start a fresh read.
         }
-
-        pendingState?.reset()
 
         // https://github.com/swiftlang/swift/issues/87810
         return try await _castError {
@@ -213,7 +152,7 @@ final class AsyncIO: Sendable {
 
                     if returnOnFirstData && !buffer.isEmpty {
                         hasResumed = true
-                        pendingState?.beginDraining()
+                        pendingState?.beginPendingOperation()
                         if done {
                             pendingState?.markOperationDone()
                         }
