@@ -27,12 +27,13 @@ import System
 import SystemPackage
 #endif
 
-/// Error thrown from Subprocess. `SubprocessError` may wrap an
-/// `underlyingError` to represent what caused this error
+/// An error thrown by a subprocess operation.
+///
+/// `SubprocessError` can wrap an ``underlyingError`` to indicate the root cause.
 public struct SubprocessError: Swift.Error, Sendable, Hashable {
-    /// The error code of this error
+    /// The error code for this error.
     public let code: SubprocessError.Code
-    /// The underlying error that caused this error
+    /// The underlying error that caused this error.
     public let underlyingError: UnderlyingError?
 
     /// Context associated with this error for better error message
@@ -41,7 +42,7 @@ public struct SubprocessError: Swift.Error, Sendable, Hashable {
 
 // MARK: - Error Codes
 extension SubprocessError {
-    /// A SubprocessError Code
+    /// An error code that identifies the type of failure.
     public struct Code: Hashable, Sendable {
         internal enum Storage: Int, Hashable, Sendable {
             // Spawn
@@ -69,27 +70,25 @@ extension SubprocessError {
 }
 
 extension SubprocessError.Code {
-    /// Error code indicating process spawning failed
+    /// The subprocess failed to spawn.
     public static var spawnFailed: Self { .init(.spawnFailed) }
-    /// Error code indicating target executable is not found
+    /// The target executable isn't found.
     public static var executableNotFound: Self { .init(.executableNotFound) }
-    /// Error code indicating working directory is not valid or subprocess
-    /// failed to change working directory when spawning child process
+    /// The working directory isn't valid, or the subprocess failed to change the working directory.
     public static var failedToChangeWorkingDirectory: Self { .init(.failedToChangeWorkingDirectory) }
-    /// Error code indicating subprocess has failed to monitor the exit status of child process.
+    /// The subprocess failed to monitor the child process's exit status.
     public static var failedToMonitorProcess: Self { .init(.failedToMonitorProcess) }
 
-    /// Error code indicating subprocess failed to read data from the child process
+    /// The subprocess failed to read data from the child process.
     public static var failedToReadFromSubprocess: Self { .init(.failedToReadFromSubprocess) }
-    /// Error code indicating subprocess failed to write data to the child process
+    /// The subprocess failed to write data to the child process.
     public static var failedToWriteToSubprocess: Self { .init(.failedToWriteToSubprocess) }
-    /// Error code indicating child process output has exceeded the set limit
+    /// The child process output exceeded the configured limit.
     public static var outputLimitExceeded: Self { .init(.outputLimitExceeded) }
-    /// Error code indicating platform specific AsyncIO failed
+    /// A platform-specific asynchronous I/O operation failed.
     public static var asyncIOFailed: Self { .init(.asyncIOFailed) }
 
-    /// Error code indicating subprocess failed to control the child process such as
-    /// sending signal and terminating process
+    /// The subprocess failed to control the child process, such as sending a signal or terminating.
     public static var processControlFailed: Self { .init(.processControlFailed) }
 }
 
@@ -217,7 +216,7 @@ extension SubprocessError: CustomStringConvertible, CustomDebugStringConvertible
 #if os(Windows)
 
 extension SubprocessError {
-    /// An error that represents a Windows error code returned by `GetLastError`
+    /// An error that represents a Windows error code from `GetLastError`.
     public struct WindowsError: Error, RawRepresentable, Hashable {
         public let rawValue: DWORD
 

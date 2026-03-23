@@ -263,7 +263,7 @@ extension SubprocessUnixTests {
                 arguments: ["-c", "kill -\(signal) $$"],
                 output: .discarded
             )
-            #expect(result.terminationStatus == .unhandledException(signal))
+            #expect(result.terminationStatus == .signaled(signal))
         }
     }
 
@@ -291,7 +291,7 @@ extension SubprocessUnixTests {
             }
             preconditionFailure("Task should have returned a result")
         }
-        #expect(result == .unhandledException(SIGKILL))
+        #expect(result == .signaled(SIGKILL))
     }
 
     @Test(.requiresBash)

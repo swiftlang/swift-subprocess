@@ -45,17 +45,17 @@ public struct Configuration: Sendable {
     /// If this property is `nil`, the subprocess will inherit
     /// the working directory from the parent process.
     public var workingDirectory: FilePath?
-    /// The platform specific options to use when
+    /// The platform-specific options to use when
     /// running the subprocess.
     public var platformOptions: PlatformOptions
 
     /// Creates a Configuration with the parameters you provide.
     /// - Parameters:
-    ///   - executable: the executable to run
-    ///   - arguments: the arguments to pass to the executable.
-    ///   - environment: the environment to use when running the executable.
-    ///   - workingDirectory: the working directory to use when running the executable.
-    ///   - platformOptions: The platform specific options to use when running subprocess.
+    ///   - executable: The executable to run.
+    ///   - arguments: The arguments to pass to the executable.
+    ///   - environment: The environment to use when running the executable.
+    ///   - workingDirectory: The working directory to use when running the executable.
+    ///   - platformOptions: The platform-specific options to use when running the subprocess.
     public init(
         executable: Executable,
         arguments: Arguments = [],
@@ -273,7 +273,7 @@ extension Configuration {
 
 // MARK: - Executable
 
-/// Executable defines how subprocess looks up the executable for execution.
+/// A description of how to locate the executable to run.
 public struct Executable: Sendable, Hashable {
     internal enum Storage: Sendable, Hashable {
         case executable(String)
@@ -286,18 +286,17 @@ public struct Executable: Sendable, Hashable {
         self.storage = _config
     }
 
-    /// Locate the executable by its name.
-    /// `Subprocess` will use `PATH` value to
-    /// determine the full path to the executable.
+    /// Locates the executable by name.
+    /// The subprocess uses the `PATH` value to determine the full path.
     public static func name(_ executableName: String) -> Self {
         return .init(_config: .executable(executableName))
     }
-    /// Locate the executable by its full path.
-    /// `Subprocess` will use this path directly.
+    /// Locates the executable by its full file path.
+    /// The subprocess uses this path directly.
     public static func path(_ filePath: FilePath) -> Self {
         return .init(_config: .path(filePath))
     }
-    /// Returns the full executable path given the environment value.
+    /// Resolves the full executable path using the given environment.
     public func resolveExecutablePath(in environment: Environment) throws(SubprocessError) -> FilePath {
         let path = try self.resolveExecutablePath(withPathValue: environment.pathValue())
         return FilePath(path)
@@ -336,25 +335,25 @@ public struct Arguments: Sendable, ExpressibleByArrayLiteral, Hashable {
     internal let storage: [StringOrRawBytes]
     internal let executablePathOverride: StringOrRawBytes?
 
-    /// Create an Arguments object using the given literal values
+    /// Creates an arguments value from the given literal values.
     public init(arrayLiteral elements: String...) {
         self.storage = elements.map { .string($0) }
         self.executablePathOverride = nil
     }
-    /// Create an Arguments object using the given array
+    /// Creates an arguments value from the given array.
     public init(_ array: [String]) {
         self.storage = array.map { .string($0) }
         self.executablePathOverride = nil
     }
 
-    /// Create an `Argument` object using the given values, but
-    /// override the first Argument value to `executablePathOverride`.
-    /// If `executablePathOverride` is nil,
-    /// `Arguments` will automatically use the executable path
+    /// Creates an ``Arguments`` value using the given values, but
+    /// override the first argument value with `executablePathOverride`.
+    /// If `executablePathOverride` is `nil`,
+    /// ``Arguments`` automatically uses the executable path
     /// as the first argument.
     /// - Parameters:
-    ///   - executablePathOverride: the value to override the first argument.
-    ///   - remainingValues: the rest of the argument value
+    ///   - executablePathOverride: The value to override the first argument.
+    ///   - remainingValues: The remaining argument values.
     public init(executablePathOverride: String?, remainingValues: [String]) {
         self.storage = remainingValues.map { .string($0) }
         if let executablePathOverride = executablePathOverride {
@@ -364,14 +363,14 @@ public struct Arguments: Sendable, ExpressibleByArrayLiteral, Hashable {
         }
     }
     #if !os(Windows) // Windows does not support non-unicode arguments
-    /// Create an `Argument` object using the given values, but
-    /// override the first Argument value to `executablePathOverride`.
-    /// If `executablePathOverride` is nil,
-    /// `Arguments` will automatically use the executable path
+    /// Creates an ``Arguments`` value using the given values, but
+    /// override the first argument value with `executablePathOverride`.
+    /// If `executablePathOverride` is `nil`,
+    /// ``Arguments`` automatically uses the executable path
     /// as the first argument.
     /// - Parameters:
-    ///   - executablePathOverride: the value to override the first argument.
-    ///   - remainingValues: the rest of the argument value
+    ///   - executablePathOverride: The value to override the first argument.
+    ///   - remainingValues: The remaining argument values.
     public init(executablePathOverride: [UInt8]?, remainingValues: [[UInt8]]) {
         self.storage = remainingValues.map { .rawBytes($0) }
         if let override = executablePathOverride {
@@ -380,7 +379,7 @@ public struct Arguments: Sendable, ExpressibleByArrayLiteral, Hashable {
             self.executablePathOverride = nil
         }
     }
-    /// Create an arguments object using the array you provide.
+    /// Creates an arguments value from the array you provide.
     public init(_ array: [[UInt8]]) {
         self.storage = array.map { .rawBytes($0) }
         self.executablePathOverride = nil
@@ -405,7 +404,7 @@ extension Arguments: CustomStringConvertible, CustomDebugStringConvertible {
 
 // MARK: - Environment
 
-/// A set of environment variables to use when executing the subprocess.
+/// A set of environment variables to use when running the subprocess.
 public struct Environment: Sendable, Hashable {
     internal enum Configuration: Sendable, Hashable {
         case inherit([Key: String?])
@@ -420,14 +419,14 @@ public struct Environment: Sendable, Hashable {
     init(config: Configuration) {
         self.config = config
     }
-    /// Child process should inherit the same environment
-    /// values from its parent process.
+    /// Inherits the environment from the current process.
     public static var inherit: Self {
         return .init(config: .inherit([:]))
     }
-    /// Override the provided `newValue` in the existing `Environment`.
-    /// Keys with `nil` values in `newValue` will be removed from existing
-    /// `Environment` before passing to child process.
+    /// Returns an updated environment that applies `newValue` to the current configuration.
+    ///
+    /// Keys with `nil` values in `newValue` remove the corresponding entry
+    /// from the environment before passing it to the child process.
     public func updating(_ newValue: [Key: String?]) -> Self {
         switch config {
         case .inherit(var overrides):
@@ -456,13 +455,13 @@ public struct Environment: Sendable, Hashable {
         #endif
         }
     }
-    /// Use custom environment variables
+    /// Creates an environment with custom variables.
     public static func custom(_ newValue: [Key: String]) -> Self {
         return .init(config: .custom(newValue))
     }
 
     #if !os(Windows)
-    /// Use custom environment variables of raw bytes
+    /// Creates an environment with custom variables as raw bytes.
     public static func custom(_ newValue: [[UInt8]]) -> Self {
         return .init(config: .rawBytes(newValue))
     }
@@ -605,10 +604,9 @@ extension Environment.Key: Sendable {}
 
 // MARK: - TerminationStatus
 
-/// An exit status of a subprocess.
-@frozen
+/// The exit status of a subprocess.
 public enum TerminationStatus: Sendable, Hashable {
-    #if canImport(WinSDK)
+    #if os(Windows)
     /// The type of the status code.
     public typealias Code = DWORD
     #else
@@ -616,17 +614,21 @@ public enum TerminationStatus: Sendable, Hashable {
     public typealias Code = CInt
     #endif
 
-    /// The subprocess was existed with the given code
+    /// The subprocess exited with the given code.
     case exited(Code)
-    /// The subprocess was signaled with given exception value
-    case unhandledException(Code)
-    /// Whether the current TerminationStatus is successful.
+    #if !os(Windows)
+    /// The subprocess terminated due to the given signal.
+    case signaled(Code)
+    #endif
+    /// A Boolean value that indicates whether the termination was successful.
     public var isSuccess: Bool {
         switch self {
         case .exited(let exitCode):
             return exitCode == 0
-        case .unhandledException(_):
+        #if !os(Windows)
+        case .signaled(_):
             return false
+        #endif
         }
     }
 }
@@ -637,8 +639,10 @@ extension TerminationStatus: CustomStringConvertible, CustomDebugStringConvertib
         switch self {
         case .exited(let code):
             return "exited(\(code))"
-        case .unhandledException(let code):
-            return "unhandledException(\(code))"
+        #if !os(Windows)
+        case .signaled(let code):
+            return "signaled(\(code))"
+        #endif
         }
     }
 

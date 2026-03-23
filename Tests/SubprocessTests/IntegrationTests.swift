@@ -1895,7 +1895,7 @@ extension SubprocessIntegrationTests {
             setup,
             input: .none,
             output: .string(limit: 64),
-            error: .combineWithOutput
+            error: .combinedWithOutput
         )
         #expect(result.terminationStatus.isSuccess)
         let output = try #require(result.standardOutput)
@@ -1919,7 +1919,7 @@ extension SubprocessIntegrationTests {
             setup,
             input: .none,
             output: .bytes(limit: 64),
-            error: .combineWithOutput
+            error: .combinedWithOutput
         )
         #expect(result.terminationStatus.isSuccess)
         #expect(
@@ -1969,7 +1969,7 @@ extension SubprocessIntegrationTests {
                     outputFile,
                     closeAfterSpawningProcess: false
                 ),
-                error: .combineWithOutput
+                error: .combinedWithOutput
             )
             #expect(echoResult.terminationStatus.isSuccess)
             return echoResult
@@ -2002,7 +2002,7 @@ extension SubprocessIntegrationTests {
             setup,
             input: .none,
             output: .data(limit: 64),
-            error: .combineWithOutput
+            error: .combinedWithOutput
         )
         #expect(catResult.terminationStatus.isSuccess)
         #expect(
@@ -2030,7 +2030,7 @@ extension SubprocessIntegrationTests {
         _ = try await _run(
             setup,
             input: .none,
-            error: .combineWithOutput
+            error: .combinedWithOutput
         ) { execution, standardOutput in
             var output: String = ""
             for try await line in standardOutput.lines() {
@@ -2078,7 +2078,7 @@ extension SubprocessIntegrationTests {
         }
         #expect(exitCode == 99)
         #else
-        guard case .unhandledException(let exception) = stuckResult.terminationStatus else {
+        guard case .signaled(let exception) = stuckResult.terminationStatus else {
             Issue.record("Wrong termination status reported: \(stuckResult.terminationStatus)")
             return
         }
@@ -2306,7 +2306,7 @@ extension SubprocessIntegrationTests {
             }
             #if !os(Windows)
             #expect(
-                terminationStatus == .unhandledException(SIGKILL) || terminationStatus == .exited(SIGKILL),
+                terminationStatus == .signaled(SIGKILL) || terminationStatus == .exited(SIGKILL),
                 "iteration \(i)"
             )
             #endif

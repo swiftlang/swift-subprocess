@@ -19,21 +19,20 @@ import Foundation
 import FoundationEssentials
 #endif
 
-/// A concrete `Output` type for subprocesses that collects output
-/// from the subprocess as data.
+/// An output type that collects the subprocess's output as `Data`.
 public struct DataOutput: OutputProtocol, ErrorOutputProtocol {
-    /// The output type for this output option
+    /// The output type for this output option.
     public typealias OutputType = Data
     /// The maximum number of bytes to collect.
     public let maxSize: Int
 
     #if SubprocessSpan
-    /// Create data from a raw span.
+    /// Creates data from a raw span.
     public func output(from span: RawSpan) throws(SubprocessError) -> Data {
         return Data(span)
     }
     #else
-    /// Create a data from sequence of 8-bit unsigned integers.
+    /// Creates data from a sequence of bytes.
     public func output(from buffer: some Sequence<UInt8>) throws(SubprocessError) -> Data {
         return Data(buffer)
     }
@@ -45,17 +44,19 @@ public struct DataOutput: OutputProtocol, ErrorOutputProtocol {
 }
 
 extension OutputProtocol where Self == DataOutput {
-    /// Create a `Subprocess` output that collects output as `Data`
-    /// with given buffer limit in bytes. Subprocess throws an error
-    /// if the child process emits more bytes than the limit.
+    /// Creates a subprocess output that collects output as `Data`,
+    /// up to `limit` bytes.
+    ///
+    /// The subprocess throws an error if the child process
+    /// produces more bytes than `limit`.
     public static func data(limit: Int) -> Self {
         return .init(limit: limit)
     }
 }
 
 extension Data {
-    /// Create a `Data` from `Buffer`
-    /// - Parameter buffer: buffer to copy from
+    /// Creates a `Data` value from a buffer.
+    /// - Parameter buffer: The buffer to copy from.
     public init(buffer: AsyncBufferSequence.Buffer) {
         self = Data(buffer.data)
     }

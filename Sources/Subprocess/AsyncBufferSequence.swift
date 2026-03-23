@@ -19,7 +19,7 @@ import SystemPackage
 internal import Dispatch
 #endif
 
-/// A synchronous sequence of buffers used to stream output from subprocess.
+/// An asynchronous sequence of buffers that streams output from a subprocess.
 public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
     /// The failure type for the asynchronous sequence.
     public typealias Failure = any Swift.Error
@@ -34,8 +34,7 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
     internal typealias DiskIO = FileDescriptor
     #endif
 
-    /// Iterator for `AsyncBufferSequence`.
-    @_nonSendable
+    /// An iterator for ``AsyncBufferSequence``.
     public struct Iterator: AsyncIteratorProtocol {
         /// The element type for the iterator.
         public typealias Element = Buffer
@@ -50,8 +49,7 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
             self.preferredBufferSize = preferredBufferSize ?? readBufferSize
         }
 
-        /// Retrieve the next buffer in the sequence, or `nil` if
-        /// the sequence has ended.
+        /// Retrieves the next buffer in the sequence, or `nil` if the sequence ended.
         public mutating func next() async throws -> Buffer? {
             // If we have more left in buffer, use that
             guard self.buffer.isEmpty else {
@@ -93,7 +91,7 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
         self.preferredBufferSize = preferredBufferSize
     }
 
-    /// Creates a iterator for this asynchronous sequence.
+    /// Creates an iterator for this asynchronous sequence.
     public func makeAsyncIterator() -> Iterator {
         return Iterator(
             diskIO: self.diskIO,
@@ -101,7 +99,7 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
         )
     }
 
-    /// Creates a line sequence to iterate through this `AsyncBufferSequence` line by line.
+    /// Creates a line sequence that iterates through this buffer sequence line by line.
     public func lines() -> LineSequence<UTF8> {
         return LineSequence(
             underlying: self,
@@ -110,11 +108,11 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
         )
     }
 
-    /// Creates a line sequence to iterate through a `AsyncBufferSequence` line by line.
+    /// Creates a line sequence that iterates through this buffer sequence line by line.
     /// - Parameters:
-    ///   - encoding: The taget encoding to encoding Strings to
-    ///   - bufferingPolicy: How should back-pressure be handled
-    /// - Returns: A `LineSequence` to iterate though this `AsyncBufferSequence` line by line
+    ///   - encoding: The target encoding for strings.
+    ///   - bufferingPolicy: The strategy for handling back-pressure.
+    /// - Returns: A ``LineSequence`` that iterates through this buffer sequence line by line.
     public func lines<Encoding: _UnicodeEncoding>(
         encoding: Encoding.Type,
         bufferingPolicy: LineSequence<Encoding>.BufferingPolicy = .maxLineLength(128 * 1024)
@@ -123,11 +121,27 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
     }
 }
 
+@available(*, unavailable)
+extension AsyncBufferSequence.Iterator: Sendable {}
+
 // MARK: - LineSequence
 extension AsyncBufferSequence {
     /// Line sequence parses and splits an asynchronous sequence of buffers into lines.
+    /// The following list of Unicode characters are considered as paragraph separators (new lines):
+    /// ```
+    /// LF:    Line Feed, U+000A
+    /// VT:    Vertical Tab, U+000B
+    /// FF:    Form Feed, U+000C
+    /// CR:    Carriage Return, U+000D
+    /// CR+LF: CR (U+000D) followed by LF (U+000A)
+    /// NEL:   Next Line, U+0085
+    /// LS:    Line Separator, U+2028
+    /// PS:    Paragraph Separator, U+2029
+    /// ```
+    /// These newline characters are not included in the lines returned,
+    /// similar to how `.split(separator:)` works.
     ///
-    /// It is the preferred method to convert `Buffer` to `String`
+    /// `LineSequence` is the preferred method to convert `Buffer` to `String`
     public struct LineSequence<Encoding: _UnicodeEncoding>: AsyncSequence, Sendable {
         /// The element type for the asynchronous sequence.
         public typealias Element = String
@@ -161,7 +175,7 @@ extension AsyncBufferSequence {
                 self.bufferingPolicy = bufferingPolicy
             }
 
-            /// Retrieves the next line, or returns nil if the sequence ends.
+            /// Retrieves the next line, or `nil` if the sequence ended.
             public mutating func next() async throws -> String? {
 
                 func loadBuffer() async throws -> [Encoding.CodeUnit]? {
@@ -336,7 +350,7 @@ extension AsyncBufferSequence {
             }
         }
 
-        /// Creates a iterator for this line sequence.
+        /// Creates an iterator for this line sequence.
         public func makeAsyncIterator() -> AsyncIterator {
             return AsyncIterator(
                 underlyingIterator: self.base.makeAsyncIterator(),
@@ -355,15 +369,17 @@ extension AsyncBufferSequence {
     }
 }
 
+@available(*, unavailable)
+extension AsyncBufferSequence.LineSequence.AsyncIterator: Sendable {}
+
 extension AsyncBufferSequence.LineSequence {
-    /// A strategy that handles the exhaustion of a buffer’s capacity.
+    /// A strategy for handling buffer capacity.
     public enum BufferingPolicy: Sendable {
-        /// Continue to add to the buffer, without imposing a limit
-        /// on the number of buffered elements (line length).
+        /// Adds to the buffer without imposing a limit on line length.
         case unbounded
-        /// Impose a max buffer size (line length) limit.
-        /// Subprocess **will throw an error** if the number of buffered
-        /// elements (line length) exceeds the limit
+        /// Imposes a maximum line length limit.
+        ///
+        /// The subprocess throws an error if a line exceeds this limit.
         case maxLineLength(Int)
     }
 }

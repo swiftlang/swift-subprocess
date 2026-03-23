@@ -36,7 +36,7 @@ import Musl
 /// Signals are standardized messages sent to a running program to
 /// trigger specific behavior, such as quitting or error handling.
 public struct Signal: Hashable, Sendable {
-    /// The underlying platform specific value for the signal
+    /// The underlying platform-specific value for the signal.
     public let rawValue: Int32
 
     private init(rawValue: Int32) {
@@ -57,7 +57,7 @@ public struct Signal: Hashable, Sendable {
     /// The `.suspend` signal instructs the operating system
     /// to stop a process for later resumption.
     public static var suspend: Self { .init(rawValue: SIGSTOP) }
-    /// The `resume` signal instructs the operating system to
+    /// The `.resume` signal instructs the operating system to
     /// continue (restart) a process previously paused by the
     /// `.suspend` signal.
     public static var resume: Self { .init(rawValue: SIGCONT) }
@@ -91,7 +91,7 @@ public struct Signal: Hashable, Sendable {
 }
 
 extension Execution {
-    /// Send the given signal to the child process.
+    /// Sends the given signal to the child process.
     /// - Parameters:
     ///   - signal: The signal to send.
     ///   - shouldSendToProcessGroup: Whether this signal should be sent to
@@ -583,7 +583,7 @@ extension Configuration {
 
 /// A platform-independent identifier for a subprocess.
 public struct ProcessIdentifier: Sendable, Hashable {
-    /// The platform specific process identifier value
+    /// The platform-specific process identifier value.
     public let value: pid_t
 
     #if os(Linux) || os(Android) || os(FreeBSD)
@@ -615,32 +615,35 @@ extension ProcessIdentifier: CustomStringConvertible, CustomDebugStringConvertib
 // MARK: - Platform Specific Options
 
 /// The collection of platform-specific settings
-/// to configure the subprocess when running
+/// to configure the subprocess when running.
 public struct PlatformOptions: Sendable {
-    /// Set user ID for the subprocess
+    /// The user ID for the subprocess.
     public var userID: uid_t? = nil
-    /// Set the real and effective group ID and the saved
+    /// The real and effective group ID and the saved
     /// set-group-ID of the subprocess, equivalent to calling
     /// `setgid()` on the child process.
-    /// Group ID is used to control permissions, particularly
+    ///
+    /// The group ID controls permissions, particularly
     /// for file access.
     public var groupID: gid_t? = nil
-    /// Set list of supplementary group IDs for the subprocess
+    /// The list of supplementary group IDs for the subprocess.
     public var supplementaryGroups: [gid_t]? = nil
-    /// Set the process group for the subprocess, equivalent to
+    /// The process group for the subprocess, equivalent to
     /// calling `setpgid()` on the child process.
-    /// Process group ID is used to group related processes for
+    ///
+    /// The process group ID groups related processes for
     /// controlling signals.
     public var processGroupID: pid_t? = nil
-    /// Creates a session and sets the process group ID
-    /// i.e. Detach from the terminal.
+    /// A Boolean value that indicates whether to create a session
+    /// and detach from the terminal.
     public var createSession: Bool = false
-    /// An ordered list of steps in order to tear down the child
-    /// process in case the parent task is cancelled before
+    /// An ordered list of steps to tear down the child
+    /// process if the parent task is canceled before
     /// the child process terminates.
-    /// Always ends in sending a `.kill` signal at the end.
+    ///
+    /// The sequence always ends by sending a `.kill` signal.
     public var teardownSequence: [TeardownStep] = []
-    /// Create platform options with the default values.
+    /// Creates platform options with default values.
     public init() {}
 }
 
@@ -715,7 +718,7 @@ internal extension TerminationStatus {
         case .init(CLD_EXITED):
             self = .exited(siginfo.si_status)
         case .init(CLD_KILLED), .init(CLD_DUMPED):
-            self = .unhandledException(siginfo.si_status)
+            self = .signaled(siginfo.si_status)
         default:
             fatalError("Unexpected exit status: \(siginfo.si_code)")
         }

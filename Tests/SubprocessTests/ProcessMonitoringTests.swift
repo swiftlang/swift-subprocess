@@ -152,7 +152,7 @@ extension SubprocessProcessMonitoringTests {
             let result = try await monitorProcessTermination(
                 for: execution.processIdentifier
             )
-            #expect(result == .unhandledException(SIGTERM))
+            #expect(result == .signaled(SIGTERM))
         }
     }
     #endif

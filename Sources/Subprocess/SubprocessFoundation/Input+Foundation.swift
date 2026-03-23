@@ -27,7 +27,7 @@ import SystemPackage
 
 internal import Dispatch
 
-/// A concrete input type for subprocesses that reads input from data.
+/// An input type that reads from a `Data` value.
 public struct DataInput: InputProtocol {
     private let data: Data
 
@@ -42,8 +42,7 @@ public struct DataInput: InputProtocol {
     }
 }
 
-/// A concrete input type for subprocesses that accepts input from
-/// a specified sequence of data.
+/// An input type that reads from a sequence of `Data` values.
 public struct DataSequenceInput<
     InputSequence: Sequence & Sendable
 >: InputProtocol where InputSequence.Element == Data {
@@ -64,8 +63,7 @@ public struct DataSequenceInput<
     }
 }
 
-/// A concrete `Input` type for subprocesses that reads input
-/// from a given async sequence of `Data`.
+/// An input type that reads from an asynchronous sequence of `Data` values.
 public struct DataAsyncSequenceInput<
     InputSequence: AsyncSequence & Sendable
 >: InputProtocol where InputSequence.Element == Data {
@@ -98,19 +96,19 @@ public struct DataAsyncSequenceInput<
 }
 
 extension InputProtocol {
-    /// Create a Subprocess input from a `Data`
+    /// Creates a subprocess input from a `Data` value.
     public static func data(_ data: Data) -> Self where Self == DataInput {
         return DataInput(data: data)
     }
 
-    /// Create a Subprocess input from a `Sequence` of `Data`.
+    /// Creates a subprocess input from a sequence of `Data` values.
     public static func sequence<InputSequence: Sequence & Sendable>(
         _ sequence: InputSequence
     ) -> Self where Self == DataSequenceInput<InputSequence> {
         return .init(underlying: sequence)
     }
 
-    /// Create a Subprocess input from a `AsyncSequence` of `Data`.
+    /// Creates a subprocess input from an asynchronous sequence of `Data` values.
     public static func sequence<InputSequence: AsyncSequence & Sendable>(
         _ asyncSequence: InputSequence
     ) -> Self where Self == DataAsyncSequenceInput<InputSequence> {
@@ -119,18 +117,18 @@ extension InputProtocol {
 }
 
 extension StandardInputWriter {
-    /// Write a `Data` to the standard input of the subprocess.
-    /// - Parameter data: The sequence of bytes to write.
-    /// - Returns number of bytes written.
+    /// Writes a `Data` value to the subprocess's standard input.
+    /// - Parameter data: The data to write.
+    /// - Returns: The number of bytes written.
     public func write(
         _ data: Data
     ) async throws(SubprocessError) -> Int {
         return try await AsyncIO.shared.write(data, to: self.diskIO)
     }
 
-    /// Write a AsyncSequence of Data to the standard input of the subprocess.
-    /// - Parameter asyncSequence: The sequence of bytes to write.
-    /// - Returns number of bytes written.
+    /// Writes an asynchronous sequence of `Data` to the subprocess's standard input.
+    /// - Parameter asyncSequence: The sequence of data to write.
+    /// - Returns: The number of bytes written.
     public func write<AsyncSendableSequence: AsyncSequence & Sendable>(
         _ asyncSequence: AsyncSendableSequence
     ) async throws(SubprocessError) -> Int where AsyncSendableSequence.Element == Data {
