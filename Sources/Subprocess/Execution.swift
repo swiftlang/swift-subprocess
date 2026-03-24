@@ -27,11 +27,12 @@ import Musl
 @preconcurrency import WinSDK
 #endif
 
-/// An object that represents a subprocess that has been
-/// executed. You can use this object to send signals to the
-/// child process as well as stream its output and error.
+/// A running subprocess.
+///
+/// Use this type to send signals to the child process
+/// and to stream its output and error.
 public struct Execution: Sendable {
-    /// The process identifier of the current execution
+    /// The process identifier of this subprocess.
     public let processIdentifier: ProcessIdentifier
 
     init(

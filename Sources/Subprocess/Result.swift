@@ -17,13 +17,11 @@ import SystemPackage
 
 // MARK: - Result
 
-/// A simple wrapper around the generic result returned by the
-/// `run` closure with the corresponding termination status of
-/// the child process.
+/// The outcome of a subprocess execution, containing the closure's return value and the termination status of the child process.
 public struct ExecutionOutcome<Result: Sendable>: Sendable {
-    /// The termination status of the child process
+    /// The termination status of the child process.
     public let terminationStatus: TerminationStatus
-    /// The result returned by the closure passed to `.run` methods
+    /// The value returned by the closure passed to the `run` method.
     public let value: Result
 
     internal init(terminationStatus: TerminationStatus, value: Result) {
@@ -32,19 +30,18 @@ public struct ExecutionOutcome<Result: Sendable>: Sendable {
     }
 }
 
-/// The result of a subprocess execution with its collected
-/// standard output and standard error.
+/// The result of running a subprocess, including collected standard output and standard error.
 public struct ExecutionRecord<
     Output: OutputProtocol,
     Error: OutputProtocol
 >: Sendable {
-    /// The process identifier for the executed subprocess
+    /// The process identifier of the subprocess.
     public let processIdentifier: ProcessIdentifier
-    /// The termination status of the executed subprocess
+    /// The termination status of the subprocess.
     public let terminationStatus: TerminationStatus
-    /// The captured standard output of the executed subprocess.
+    /// The collected standard output of the subprocess.
     public let standardOutput: Output.OutputType
-    /// The captured standard error of the executed subprocess.
+    /// The collected standard error of the subprocess.
     public let standardError: Error.OutputType
 
     internal init(
@@ -124,3 +121,18 @@ extension ExecutionOutcome: CustomDebugStringConvertible where Result: CustomDeb
             """
     }
 }
+
+// MARK: - Deprecated
+@available(
+    *, deprecated,
+    renamed: "ExecutionOutcome",
+    message: "ExecutionResult has been renamed to ExecutionOutcome. ExecutionResult will be removed in 1.0"
+)
+public typealias ExecutionResult = ExecutionOutcome
+
+@available(
+    *, deprecated,
+    renamed: "ExecutionRecord",
+    message: "CollectedResult has been renamed to ExecutionRecord. CollectedResult will be removed in 1.0"
+)
+public typealias CollectedResult = ExecutionRecord

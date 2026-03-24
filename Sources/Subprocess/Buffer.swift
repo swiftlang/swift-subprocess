@@ -16,7 +16,7 @@
 #endif
 
 extension AsyncBufferSequence {
-    /// A immutable collection of bytes
+    /// An immutable collection of bytes.
     public struct Buffer: Sendable {
         #if SUBPROCESS_ASYNCIO_DISPATCH
         // We need to keep the backingData alive while Slice is alive
@@ -52,7 +52,7 @@ extension AsyncBufferSequence {
 
 // MARK: - Properties
 extension AsyncBufferSequence.Buffer {
-    /// Number of bytes stored in the buffer
+    /// The number of bytes in the buffer.
     public var count: Int {
         return self.data.count
     }
@@ -65,7 +65,7 @@ extension AsyncBufferSequence.Buffer {
 
 // MARK: - Accessors
 extension AsyncBufferSequence.Buffer {
-    /// Access the raw bytes stored in this buffer
+    /// Accesses the raw bytes stored in this buffer.
     /// - Parameter body: A closure with an `UnsafeRawBufferPointer` parameter that
     ///   points to the contiguous storage for the buffer. If no such storage exists,
     ///   the method creates it. The argument is valid only for the duration of the

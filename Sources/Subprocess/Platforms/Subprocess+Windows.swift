@@ -456,10 +456,10 @@ extension Configuration {
 // MARK: - Platform Specific Options
 
 /// The collection of platform-specific settings
-/// to configure the subprocess when running
+/// to configure the subprocess when running.
 public struct PlatformOptions: Sendable {
-    /// A `UserCredentials` to use spawning the subprocess
-    /// as a different user
+    /// The credentials to use when spawning the subprocess
+    /// as a different user.
     public struct UserCredentials: Sendable, Hashable {
         /// The name of the user.
         ///
@@ -472,8 +472,8 @@ public struct PlatformOptions: Sendable {
         public var domain: String?
     }
 
-    /// `ConsoleBehavior` defines how should the console appear
-    /// when spawning a new process
+    /// `ConsoleBehavior` describes how the console appears
+    /// when spawning a new process.
     public struct ConsoleBehavior: Sendable, Hashable {
         internal enum Storage: Sendable, Hashable {
             case createNew
@@ -499,8 +499,8 @@ public struct PlatformOptions: Sendable {
         public static let inherit: Self = .init(.inherit)
     }
 
-    /// `WindowStyle` defines how should the window appear
-    /// when spawning a new process
+    /// `WindowStyle` describes how the window appears
+    /// when spawning a new process.
     public struct WindowStyle: Sendable, Hashable {
         internal enum Storage: Sendable, Hashable {
             case normal
@@ -524,9 +524,9 @@ public struct PlatformOptions: Sendable {
             self.storage = storage
         }
 
-        /// Activates and displays a window of normal size
+        /// Activates and displays a window of normal size.
         public static let normal: Self = .init(.normal)
-        /// Does not activate a new window
+        /// Doesn't activate a new window.
         public static let hidden: Self = .init(.hidden)
         /// Activates the window and displays it as a maximized window.
         public static let maximized: Self = .init(.maximized)
@@ -534,30 +534,35 @@ public struct PlatformOptions: Sendable {
         public static let minimized: Self = .init(.minimized)
     }
 
-    /// Sets user credentials when starting the process as another user
+    /// The user credentials for starting the process as another user.
     public var userCredentials: UserCredentials? = nil
-    /// The console behavior of the new process,
-    /// default to inheriting the console from parent process
+    /// The console behavior of the new process.
+    ///
+    /// Defaults to inheriting the console from the parent process.
     public var consoleBehavior: ConsoleBehavior = .inherit
-    /// Window style to use when the process is started
+    /// The window style to use when the process starts.
     public var windowStyle: WindowStyle = .normal
-    /// Whether to create a new process group for the new
-    /// process. The process group includes all processes
+    /// A Boolean value that indicates whether to create a new process
+    /// group for the new process.
+    ///
+    /// The process group includes all processes
     /// that are descendants of this root process.
     /// The process identifier of the new process group
     /// is the same as the process identifier.
     public var createProcessGroup: Bool = false
-    /// An ordered list of steps in order to tear down the child
-    /// process in case the parent task is cancelled before
+    /// An ordered list of steps to tear down the child
+    /// process if the parent task is canceled before
     /// the child process terminates.
-    /// Always ends in forcefully terminate at the end.
+    ///
+    /// The sequence always ends by forcefully terminating the process.
     public var teardownSequence: [TeardownStep] = []
-    /// A closure to configure platform-specific
-    /// spawning constructs. This closure enables direct
-    /// configuration or override of underlying platform-specific
-    /// spawn settings that `Subprocess` utilizes internally,
-    /// in cases where Subprocess does not provide higher-level
-    /// APIs for such modifications.
+    /// A closure that configures platform-specific
+    /// spawning constructs.
+    ///
+    /// Use this closure to directly configure or override
+    /// the underlying platform-specific spawn settings that the
+    /// library uses internally, when higher-level APIs aren't
+    /// available for such modifications.
     ///
     /// On Windows, Subprocess uses `CreateProcessW()` as the
     /// underlying spawning mechanism. This closure allows
@@ -572,7 +577,7 @@ public struct PlatformOptions: Sendable {
             ) throws(SubprocessError) -> Void
         )? = nil
 
-    /// Create platform options with the default values.
+    /// Creates platform options with default values.
     public init() {}
 }
 
@@ -652,14 +657,11 @@ internal func monitorProcessTermination(
 
     var status: DWORD = 0
     guard GetExitCodeProcess(processIdentifier.processDescriptor, &status) else {
-        // The child process terminated but we couldn't get its status back.
-        // Assume generic failure.
-        return .exited(1)
+        throw SubprocessError.failedToMonitor(
+            withUnderlyingError: .init(rawValue: GetLastError())
+        )
     }
-    let exitCodeValue = CInt(bitPattern: .init(status))
-    guard exitCodeValue >= 0 else {
-        return .unhandledException(status)
-    }
+
     return .exited(status)
 }
 
@@ -962,11 +964,11 @@ extension Environment {
 
 /// A platform-independent identifier for a subprocess.
 public struct ProcessIdentifier: Sendable, Hashable {
-    /// Windows specific process identifier value
+    /// The Windows-specific process identifier value.
     public let value: DWORD
-    /// Process handle for current execution.
+    /// The process handle for this execution.
     public nonisolated(unsafe) let processDescriptor: HANDLE
-    /// Main thread handle for current execution.
+    /// The main thread handle for this execution.
     public nonisolated(unsafe) let threadHandle: HANDLE
 
     internal init(value: DWORD, processDescriptor: HANDLE, threadHandle: HANDLE) {

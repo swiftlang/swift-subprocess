@@ -23,9 +23,10 @@ import Musl
 @preconcurrency import WinSDK
 #endif
 
-/// A step in the graceful shutdown teardown sequence.
-/// It consists of an action to perform on the child process and the
-/// duration allowed for the child process to exit before proceeding
+/// A step in a graceful shutdown sequence.
+///
+/// Each step specifies an action to perform on the child process and
+/// the duration to wait for the process to exit before proceeding
 /// to the next step.
 public struct TeardownStep: Sendable, Hashable {
     internal enum Storage: Sendable, Hashable {
@@ -38,9 +39,10 @@ public struct TeardownStep: Sendable, Hashable {
     var storage: Storage
 
     #if !os(Windows)
-    /// Sends `signal` to the process and allows `allowedDurationToExit`
-    /// for the process to exit before proceeding to the next step.
-    /// The final step in the sequence will always send a `.kill` signal.
+    /// Sends a signal to the process and waits for the specified duration
+    /// before proceeding to the next step.
+    ///
+    /// The final step in the sequence always sends a `.kill` signal.
     public static func send(
         signal: Signal,
         allowedDurationToNextStep: Duration
@@ -54,14 +56,14 @@ public struct TeardownStep: Sendable, Hashable {
     }
     #endif // !os(Windows)
 
-    /// Attempt to perform a graceful shutdown and allows
-    /// `allowedDurationToNextStep` for the process to exit
-    /// before proceeding to the next step:
-    /// - On Unix: send `SIGTERM`
+    /// Attempts a graceful shutdown, waiting for the specified duration
+    /// before proceeding to the next step.
+    ///
+    /// - On Unix: Sends `SIGTERM`.
     /// - On Windows:
-    ///   1. Attempt to send `VM_CLOSE` if the child process is a GUI process;
-    ///   2. Attempt to send `CTRL_C_EVENT` to console;
-    ///   3. Attempt to send `CTRL_BREAK_EVENT` to process group.
+    ///   1. Sends `WM_CLOSE` if the child process is a GUI process.
+    ///   2. Sends `CTRL_C_EVENT` to the console.
+    ///   3. Sends `CTRL_BREAK_EVENT` to the process group.
     public static func gracefulShutDown(
         allowedDurationToNextStep: Duration
     ) -> Self {
@@ -74,9 +76,10 @@ public struct TeardownStep: Sendable, Hashable {
 }
 
 extension Execution {
-    /// Performs a sequence of teardown steps on the Subprocess.
-    /// Teardown sequence always ends with a `.kill` signal
-    /// - Parameter sequence: The  steps to perform.
+    /// Performs a sequence of teardown steps on the subprocess.
+    ///
+    /// The teardown sequence always ends with a `.kill` signal.
+    /// - Parameter sequence: The steps to perform.
     public func teardown(using sequence: some Sequence<TeardownStep> & Sendable) async {
         await withUncancelledTask {
             await runTeardownSequence(sequence)

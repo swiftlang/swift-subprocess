@@ -36,39 +36,43 @@ import FoundationEssentials
 // MARK: - PlatformOptions
 
 /// The collection of platform-specific settings
-/// to configure the subprocess when running
+/// to configure the subprocess when running.
 public struct PlatformOptions: Sendable {
-    /// Constants that indicate the nature and importance of work to the system.
+    /// The quality of service for the subprocess.
     public var qualityOfService: QualityOfService = .default
-    /// Set user ID for the subprocess
+    /// The user ID for the subprocess.
     public var userID: uid_t? = nil
-    /// Set the real and effective group ID and the saved
+    /// The real and effective group ID and the saved
     /// set-group-ID of the subprocess, equivalent to calling
     /// `setgid()` on the child process.
-    /// Group ID is used to control permissions, particularly
+    ///
+    /// The group ID controls permissions, particularly
     /// for file access.
     public var groupID: gid_t? = nil
-    /// Set list of supplementary group IDs for the subprocess
+    /// The list of supplementary group IDs for the subprocess.
     public var supplementaryGroups: [gid_t]? = nil
-    /// Set the process group for the subprocess, equivalent to
+    /// The process group for the subprocess, equivalent to
     /// calling `setpgid()` on the child process.
-    /// Process group ID is used to group related processes for
+    ///
+    /// The process group ID groups related processes for
     /// controlling signals.
     public var processGroupID: pid_t? = nil
-    /// Creates a session and sets the process group ID
-    /// i.e. Detach from the terminal.
+    /// A Boolean value that indicates whether to create a session
+    /// and detach from the terminal.
     public var createSession: Bool = false
-    /// An ordered list of steps in order to tear down the child
-    /// process in case the parent task is cancelled before
+    /// An ordered list of steps to tear down the child
+    /// process if the parent task is canceled before
     /// the child process terminates.
-    /// Always ends in sending a `.kill` signal at the end.
+    ///
+    /// The sequence always ends by sending a `.kill` signal.
     public var teardownSequence: [TeardownStep] = []
-    /// A closure to configure platform-specific
-    /// spawning constructs. This closure enables direct
-    /// configuration or override of underlying platform-specific
-    /// spawn settings that `Subprocess` utilizes internally,
-    /// in cases where Subprocess does not provide higher-level
-    /// APIs for such modifications.
+    /// A closure that configures platform-specific
+    /// spawning constructs.
+    ///
+    /// Use this closure to directly configure or override
+    /// the underlying platform-specific spawn settings that the
+    /// library uses internally, when higher-level APIs aren't
+    /// available for such modifications.
     ///
     /// On Darwin, Subprocess uses `posix_spawn()` as the
     /// underlying spawning mechanism. This closure allows
@@ -83,7 +87,7 @@ public struct PlatformOptions: Sendable {
             ) throws -> Void
         )? = nil
 
-    /// Create platform options with the default values.
+    /// Creates platform options with default values.
     public init() {}
 }
 
@@ -94,36 +98,36 @@ extension PlatformOptions {
     #else
     /// Constants that indicate the nature and importance of work to the system.
     ///
-    /// Work with higher quality of service classes receive more resources
-    /// than work with lower quality of service classes whenever
+    /// Work with higher quality-of-service classes receives more resources
+    /// than work with lower quality-of-service classes whenever
     /// there’s resource contention.
     public enum QualityOfService: Int, Sendable {
-        /// Used for work directly involved in providing an
+        /// Work directly involved in providing an
         /// interactive UI. For example, processing control
         /// events or drawing to the screen.
         case userInteractive = 0x21
-        /// Used for performing work that has been explicitly requested
-        /// by the user, and for which results must be immediately
-        /// presented in order to allow for further user interaction.
-        /// For example, loading an email after a user has selected
+        /// Work that the user explicitly requested and for which results
+        /// must be immediately presented to allow for further user interaction.
+        /// For example, loading an email after a user selects
         /// it in a message list.
         case userInitiated = 0x19
-        /// Used for performing work which the user is unlikely to be
-        /// immediately waiting for the results. This work may have been
+        /// Work whose results the user is unlikely to be
+        /// immediately waiting for. This work may have been
         /// requested by the user or initiated automatically, and often
         /// operates at user-visible timescales using a non-modal
         /// progress indicator. For example, periodic content updates
         /// or bulk file operations, such as media import.
         case utility = 0x11
-        /// Used for work that is not user initiated or visible.
-        /// In general, a user is unaware that this work is even happening.
+        /// Work that isn’t user-initiated or visible.
+        /// In general, the user is unaware that this work is even happening.
         /// For example, pre-fetching content, search indexing, backups,
         /// or syncing of data with external systems.
         case background = 0x09
-        /// Indicates no explicit quality of service information.
+        /// No explicit quality-of-service information.
+        ///
         /// Whenever possible, an appropriate quality of service is determined
-        /// from available sources. Otherwise, some quality of service level
-        /// between `.userInteractive` and `.utility` is used.
+        /// from available sources. Otherwise, some quality-of-service level
+        /// between ``userInteractive`` and ``utility`` is used.
         case `default` = -1
     }
     #endif
@@ -164,7 +168,7 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
         return self.description(withIndent: 0)
     }
 
-    /// A debug oriented textual representation of the platform options.
+    /// A debug-oriented textual representation of the platform options.
     public var debugDescription: String {
         return self.description(withIndent: 0)
     }
@@ -511,12 +515,12 @@ extension Configuration {
 
 // MARK: - ProcessIdentifier
 
-/// A platform-independent identifier for a Subprocess.
+/// A platform-independent identifier for a subprocess.
 public struct ProcessIdentifier: Sendable, Hashable {
-    /// The platform specific process identifier value
+    /// The platform-specific process identifier value.
     public let value: pid_t
 
-    /// Initialize a process identifier with the value you provide.
+    /// Creates a process identifier with the given value.
     public init(value: pid_t) {
         self.value = value
     }

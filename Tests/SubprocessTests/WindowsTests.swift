@@ -87,7 +87,7 @@ extension SubprocessWindowsTests {
                     return true
                 }
                 // CreateProcessWithLogonW doesn't appear to work when running in a container
-                return whoamiResult.terminationStatus == .unhandledException(STATUS_DLL_INIT_FAILED) && userName() == "ContainerAdministrator"
+                return whoamiResult.terminationStatus == .exited(STATUS_DLL_INIT_FAILED) && userName() == "ContainerAdministrator"
             }
         }
     }
