@@ -22,6 +22,57 @@ import SystemPackage
 
 internal import Dispatch
 
+/// Tracks an in-flight DispatchIO read that was resumed early due to
+/// `returnOnFirstData`. After the continuation returns the first chunk,
+/// the DispatchIO handler may still deliver more data for the same
+/// `read()` call. This actor funnels that data through an AsyncStream so
+/// the next iterator `next()` call can retrieve it without starting an
+/// overlapping read.
+actor PendingReadState {
+    /// True while a DispatchIO operation is still delivering data after
+    /// the continuation was resumed early. Accessed nonisolated because
+    /// it is set from the DispatchIO handler and read from the async caller.
+    nonisolated(unsafe) private var _hasPendingOperation: Bool = false
+
+    private let asyncStream: AsyncStream<DispatchData?>
+    nonisolated private let continuation: AsyncStream<DispatchData?>.Continuation
+
+    init() {
+        let (stream, continuation) = AsyncStream.makeStream(of: DispatchData?.self)
+        self.asyncStream = stream
+        self.continuation = continuation
+    }
+
+    var hasPendingOperation: Bool {
+        _hasPendingOperation
+    }
+
+    nonisolated func beginPendingOperation() {
+        _hasPendingOperation = true
+    }
+
+    nonisolated func append(_ newData: DispatchData) {
+        continuation.yield(newData)
+    }
+
+    nonisolated func markOperationDone() {
+        continuation.yield(nil)
+    }
+
+    /// Returns the next chunk of pending data, or `nil` when the in-flight
+    /// operation is complete (caller should issue a new DispatchIO read).
+    func asyncTakeData() async -> DispatchData? {
+        for await data in asyncStream {
+            if let data {
+                return data
+            }
+            _hasPendingOperation = false
+            return nil
+        }
+        return nil
+    }
+}
+
 final class AsyncIO: Sendable {
     static let shared: AsyncIO = AsyncIO()
 
@@ -41,35 +92,76 @@ final class AsyncIO: Sendable {
 
     internal func read(
         from dispatchIO: DispatchIO,
-        upTo maxLength: Int
+        upTo maxLength: Int,
+        returnOnFirstData: Bool = false,
+        pendingState: PendingReadState? = nil
     ) async throws(SubprocessError) -> DispatchData? {
+        // If a prior DispatchIO read is still delivering data (because we
+        // returned early on the first chunk), drain from the pending state
+        // instead of starting a new overlapping read.
+        if let pendingState, await pendingState.hasPendingOperation {
+            if let data = await pendingState.asyncTakeData() {
+                return data
+            }
+            // The previous operation completed with no more pending data.
+            // Fall through to start a fresh read.
+        }
+
         // https://github.com/swiftlang/swift/issues/87810
         return try await _castError {
             return try await withCheckedThrowingContinuation { continuation in
                 var buffer: DispatchData = .empty
+                var hasResumed = false
+
                 dispatchIO.read(
                     offset: 0,
                     length: maxLength,
                     queue: DispatchQueue(label: "SubprocessReadQueue")
                 ) { done, data, error in
+                    if let data, !data.isEmpty {
+                        if hasResumed, let pendingState {
+                            pendingState.append(data)
+                        } else {
+                            if buffer.isEmpty {
+                                buffer = data
+                            } else {
+                                buffer.append(data)
+                            }
+                        }
+                    }
+
+                    if done, hasResumed {
+                        pendingState?.markOperationDone()
+                        return
+                    }
+
+                    guard !hasResumed else {
+                        return
+                    }
+
                     if error != 0 {
+                        hasResumed = true
                         continuation.resume(
-                            throwing:
-                                SubprocessError
+                            throwing: SubprocessError
                                 .failedToReadFromProcess(
                                     withUnderlyingError: Errno(rawValue: error)
                                 )
                         )
                         return
                     }
-                    if let data {
-                        if buffer.isEmpty {
-                            buffer = data
-                        } else {
-                            buffer.append(data)
+
+                    if returnOnFirstData && !buffer.isEmpty {
+                        hasResumed = true
+                        pendingState?.beginPendingOperation()
+                        if done {
+                            pendingState?.markOperationDone()
                         }
+                        continuation.resume(returning: buffer)
+                        return
                     }
+
                     if done {
+                        hasResumed = true
                         if !buffer.isEmpty {
                             continuation.resume(returning: buffer)
                         } else {

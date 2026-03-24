@@ -34,6 +34,24 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
     internal typealias DiskIO = FileDescriptor
     #endif
 
+    /// Controls the trade-off between throughput and latency when streaming
+    /// output from a subprocess.
+    public enum StreamingBehavior: Sendable, Hashable {
+        /// Optimize for throughput by batching data before delivery.
+        /// Data is delivered when the buffer fills or the stream ends.
+        /// This provides the best performance for high-volume output.
+        case throughput
+        /// Balance throughput and latency by batching data but guaranteeing
+        /// delivery within a maximum interval (250ms).
+        /// This is suitable for most interactive use cases.
+        case balanced
+        /// Optimize for latency by delivering data as soon as it's available,
+        /// with guaranteed delivery within 250ms.
+        /// This provides the most responsive output but may have higher overhead
+        /// for high-volume streams.
+        case latency
+    }
+
     /// Iterator for `AsyncBufferSequence`.
     @_nonSendable
     public struct Iterator: AsyncIteratorProtocol {
@@ -42,12 +60,20 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
 
         private let diskIO: DiskIO
         private let preferredBufferSize: Int
+        private let returnOnFirstData: Bool
         private var buffer: [Buffer]
+        #if SUBPROCESS_ASYNCIO_DISPATCH
+        private let pendingState: PendingReadState?
+        #endif
 
-        internal init(diskIO: DiskIO, preferredBufferSize: Int?) {
+        internal init(diskIO: DiskIO, preferredBufferSize: Int?, returnOnFirstData: Bool = false) {
             self.diskIO = diskIO
             self.buffer = []
             self.preferredBufferSize = preferredBufferSize ?? readBufferSize
+            self.returnOnFirstData = returnOnFirstData
+            #if SUBPROCESS_ASYNCIO_DISPATCH
+            self.pendingState = returnOnFirstData ? PendingReadState() : nil
+            #endif
         }
 
         /// Retrieve the next buffer in the sequence, or `nil` if
@@ -58,10 +84,19 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
                 return self.buffer.removeFirst()
             }
             // Read more data
+            #if SUBPROCESS_ASYNCIO_DISPATCH
+            let data = try await AsyncIO.shared.read(
+                from: self.diskIO,
+                upTo: self.preferredBufferSize,
+                returnOnFirstData: self.returnOnFirstData,
+                pendingState: self.pendingState
+            )
+            #else
             let data = try await AsyncIO.shared.read(
                 from: self.diskIO,
                 upTo: self.preferredBufferSize
             )
+            #endif
             guard let data else {
                 // We finished reading. Close the file descriptor now
                 #if SUBPROCESS_ASYNCIO_DISPATCH
@@ -87,17 +122,52 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
 
     private let diskIO: DiskIO
     private let preferredBufferSize: Int?
+    private let returnOnFirstData: Bool
 
-    internal init(diskIO: DiskIO, preferredBufferSize: Int?) {
+    internal init(
+        diskIO: DiskIO,
+        preferredBufferSize: Int?,
+        streamingBehavior: StreamingBehavior = .throughput
+    ) {
         self.diskIO = diskIO
         self.preferredBufferSize = preferredBufferSize
+
+        #if SUBPROCESS_ASYNCIO_DISPATCH
+        // Configure DispatchIO based on streaming behavior
+        switch streamingBehavior {
+        case .throughput:
+            // Default behavior - no changes needed
+            self.returnOnFirstData = false
+        case .balanced:
+            // Use default buffer size but guarantee delivery within 250ms
+            diskIO.setInterval(
+                interval: .milliseconds(250),
+                flags: .strictInterval
+            )
+            self.returnOnFirstData = false
+        case .latency:
+            // Deliver data as soon as any bytes are available
+            // Setting lowWater to 0 combined with strictInterval allows
+            // the handler to be called even with partial data
+            diskIO.setLimit(lowWater: 0)
+            // Use a short interval to get data quickly
+            diskIO.setInterval(
+                interval: .milliseconds(250),
+                flags: .strictInterval
+            )
+            self.returnOnFirstData = true
+        }
+        #else
+        self.returnOnFirstData = false
+        #endif
     }
 
     /// Creates a iterator for this asynchronous sequence.
     public func makeAsyncIterator() -> Iterator {
         return Iterator(
             diskIO: self.diskIO,
-            preferredBufferSize: self.preferredBufferSize
+            preferredBufferSize: self.preferredBufferSize,
+            returnOnFirstData: self.returnOnFirstData
         )
     }
 
