@@ -1043,7 +1043,7 @@ internal struct CreatedPipe: ~Copyable {
             /// Windows named pipes are system wide. To avoid creating two pipes with the same
             /// name, create the pipe with `FILE_FLAG_FIRST_PIPE_INSTANCE` such that it will
             /// return error `ERROR_ACCESS_DENIED` if we try to create another pipe with the same name.
-            let pipeName = "\\\\.\\pipe\\LOCAL\\subprocess-\(purpose)-\(PipeNameCounter.nextValue())"
+            let pipeName = "\\\\.\\pipe\\LOCAL\\subprocess-\(GetCurrentProcessId())-\(purpose)-\(PipeNameCounter.nextValue())"
             var saAttributes: SECURITY_ATTRIBUTES = SECURITY_ATTRIBUTES()
             saAttributes.nLength = DWORD(MemoryLayout<SECURITY_ATTRIBUTES>.size)
             saAttributes.bInheritHandle = true
