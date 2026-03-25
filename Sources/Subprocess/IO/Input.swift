@@ -248,7 +248,6 @@ public final actor StandardInputWriter: Sendable {
         return try await AsyncIO.shared.write(array, to: self.diskIO)
     }
 
-    #if SubprocessSpan
     /// Writes a raw span to the subprocess's standard input.
     ///
     /// - Parameter span: The span to write.
@@ -258,7 +257,6 @@ public final actor StandardInputWriter: Sendable {
     public func write(_ span: borrowing RawSpan) async throws(SubprocessError) -> Int {
         return try await AsyncIO.shared.write(span, to: self.diskIO)
     }
-    #endif
 
     /// Writes a string to the subprocess's standard input.
     /// - Parameters:
