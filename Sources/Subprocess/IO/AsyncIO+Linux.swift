@@ -388,8 +388,12 @@ extension AsyncIO {
                             try self.removeRegistration(for: fileDescriptor)
                             return resultBuffer
                         }
-                    } else if bytesRead == 0 {
+                    } else if bytesRead == 0 || capturedErrno == EIO {
                         // We reached EOF. Return whatever's left
+
+                        // On Linux, reading from a PTY parent returns EIO
+                        // when the child side is closed (i.e., child exited).
+                        // Treat this as EOF as well
                         try self.removeRegistration(for: fileDescriptor)
                         guard readLength > 0 else {
                             return nil
