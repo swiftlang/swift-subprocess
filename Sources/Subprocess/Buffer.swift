@@ -81,7 +81,6 @@ extension AsyncBufferSequence.Buffer {
         }
     }
 
-    #if SubprocessSpan
     // swift-format-ignore
     // Access the storage backing this Buffer
     #if compiler(>=6.2)
@@ -103,7 +102,6 @@ extension AsyncBufferSequence.Buffer {
         }
     }
     #endif
-    #endif // SubprocessSpan
 }
 
 // MARK: - Hashable, Equatable

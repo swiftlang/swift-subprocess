@@ -492,7 +492,6 @@ extension AsyncIO {
         return 0
     }
 
-    #if SubprocessSpan
     func write(
         _ span: borrowing RawSpan,
         to diskIO: borrowing IOChannel
@@ -552,7 +551,6 @@ extension AsyncIO {
         }
         return 0
     }
-    #endif
 
     @inline(__always)
     private func shouldWaitForNextSignal(with error: CInt) -> Bool {

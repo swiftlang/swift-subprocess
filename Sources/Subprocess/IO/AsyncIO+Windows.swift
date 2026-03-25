@@ -356,7 +356,6 @@ final class AsyncIO: @unchecked Sendable {
         return try await self._write(array, to: diskIO)
     }
 
-    #if SubprocessSpan
     func write(
         _ span: borrowing RawSpan,
         to diskIO: borrowing IOChannel
@@ -420,7 +419,6 @@ final class AsyncIO: @unchecked Sendable {
             }
         }
     }
-    #endif // SubprocessSpan
 
     func _write<Bytes: _ContiguousBytes>(
         _ bytes: Bytes,
