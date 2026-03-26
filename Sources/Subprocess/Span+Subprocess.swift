@@ -11,8 +11,6 @@
 
 // swift-format-ignore-file
 
-#if SubprocessSpan
-
 @_unsafeNonescapableResult
 @inlinable @inline(__always)
 #if compiler(>=6.2)
@@ -93,4 +91,3 @@ extension DispatchData {
 }
 #endif  // canImport(Glibc) || canImport(Bionic) || canImport(Musl)
 
-#endif  // SubprocessSpan

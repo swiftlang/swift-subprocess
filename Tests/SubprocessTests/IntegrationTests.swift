@@ -894,7 +894,6 @@ extension SubprocessIntegrationTests {
     }
     #endif
 
-    #if SubprocessSpan
     @Test func testSpanInput() async throws {
         #if os(Windows)
         let setup = TestSetup(
@@ -918,14 +917,13 @@ extension SubprocessIntegrationTests {
         let catResult = try await _run(
             setup,
             input: span,
-            output: .data(limit: 2048 * 1024),
+            output: .bytes(limit: 2048 * 1024),
             error: .discarded
         )
         #expect(catResult.terminationStatus.isSuccess)
         #expect(catResult.standardOutput.count == expected.count)
-        #expect(Array(catResult.standardOutput) == Array(expected))
+        #expect(catResult.standardOutput == Array(expected))
     }
-    #endif
 
     #if SubprocessFoundation
     @Test func testAsyncSequenceInput() async throws {
@@ -2645,7 +2643,6 @@ func _run<
     )
 }
 
-#if SubprocessSpan
 func _run<
     InputElement: BitwiseCopyable,
     Output: OutputProtocol,
@@ -2666,7 +2663,6 @@ func _run<
         error: error
     )
 }
-#endif
 
 func _run<
     Result,

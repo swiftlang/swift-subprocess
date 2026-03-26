@@ -13,7 +13,7 @@ jobs:
     uses: swiftlang/github-workflows/.github/workflows/swift_package_test.yml@0.0.6
     with:
       linux_os_versions: '["amazonlinux2", "bookworm", "noble", "jammy", "rhel-ubi9"]'
-      linux_swift_versions: '["6.1", "nightly-main"]'
+      linux_swift_versions: '["6.2", "nightly-main"]'
       linux_pre_build_command: |
         if command -v apt-get >/dev/null 2>&1 ; then # bookworm, noble, jammy
           # Test dependencies
@@ -36,7 +36,7 @@ jobs:
           yum install -y procps
         fi
       linux_build_command: 'swift test && swift test -c release && swift test --disable-default-traits'
-      windows_swift_versions: '["6.1", "nightly-main"]'
+      windows_swift_versions: '["6.2", "nightly-main"]'
       windows_build_command: |
         Invoke-Program swift test
         Invoke-Program swift test -c release
@@ -47,7 +47,7 @@ jobs:
       enable_linux_static_sdk_build: true
       enable_android_sdk_build: true
       android_ndk_versions: '["r27d", "r29"]'
-      linux_static_sdk_versions: '["6.1", "nightly-6.2"]'
+      linux_static_sdk_versions: '["6.2", "nightly-main"]'
       linux_static_sdk_build_command: |
         for triple in aarch64-swift-linux-musl x86_64-swift-linux-musl ; do
           swift build --swift-sdk "\$triple"
