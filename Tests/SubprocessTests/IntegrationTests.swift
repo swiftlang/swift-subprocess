@@ -1862,7 +1862,7 @@ extension SubprocessIntegrationTests {
             error: .discarded,
             preferredBufferSize: 1
         ) { execution, standardOutput in
-            for try await line in standardOutput.lines() {
+            for try await line in standardOutput.strings() {
                 // If we use default buffer size this test will hang
                 // because Subprocess is stuck on waiting 16k worth of
                 // output when there are only 3.
@@ -2031,7 +2031,7 @@ extension SubprocessIntegrationTests {
             error: .combinedWithOutput
         ) { execution, standardOutput in
             var output: String = ""
-            for try await line in standardOutput.lines() {
+            for try await line in standardOutput.strings() {
                 output += line
             }
             #expect(output.contains("Hello Stdout"))
@@ -2084,7 +2084,7 @@ extension SubprocessIntegrationTests {
         #endif
     }
 
-    @Test func testLineSequence() async throws {
+    @Test func testStringSequence() async throws {
         typealias TestCase = (value: String, count: Int, newLine: String)
         enum TestCaseSize: CaseIterable {
             case large // (1.0 ~ 2.0) * buffer size
@@ -2203,11 +2203,11 @@ extension SubprocessIntegrationTests {
             error: .discarded
         ) { execution, standardOutput in
             var index = 0
-            for try await line in standardOutput.lines(encoding: UTF8.self) {
+            for try await line in standardOutput.strings(as: UTF8.self) {
                 defer { index += 1 }
                 try #require(index < testCases.count, "Received more lines than expected")
                 #expect(
-                    line == testCases[index].value,
+                    line == testCases[index].value.trimmingCharacters(in: .newlines),
                     """
                     Found mismatching line at index \(index)
                     Expected: [\(testCases[index].value)]
@@ -2363,14 +2363,14 @@ extension SubprocessIntegrationTests {
                 }
                 group.addTask {
                     var result = ""
-                    for try await line in standardOutput.lines() {
+                    for try await line in standardOutput.strings() {
                         result += line
                     }
                     return .standardOutputCaptured(result.trimmingNewLineAndQuotes())
                 }
                 group.addTask {
                     var result = ""
-                    for try await line in standardError.lines() {
+                    for try await line in standardError.strings() {
                         result += line
                     }
                     return .standardErrorCaptured(result.trimmingNewLineAndQuotes())
@@ -2552,7 +2552,77 @@ extension SubprocessIntegrationTests {
         }
     }
 
-    @Test func testLineSequenceNoNewLines() async throws {
+    @Test func testStringSequencePreserveEmptyLine() async throws {
+        #if os(Windows)
+        enum Separator: String, CaseIterable {
+            case lineFeed = "[char]0x000A"
+            case verticalTab = "[char]0x000B"
+            case formFeed = "[char]0x000C"
+            case carriageReturn = "[char]0x000D"
+            case carriageReturnAndLineFeed = "[char]0x000D+[char]0x000A"
+            case nextLine = "[char]0x0085"
+            case lineSeparator = "[char]0x2028"
+            case paragraphSeparator = "[char]0x2029"
+        }
+        #else
+        enum Separator: String, CaseIterable {
+            case lineFeed = "\n"
+            case verticalTab = "\u{000B}"
+            case formFeed = "\u{000C}"
+            case carriageReturn = "\r"
+            case carriageReturnAndLineFeed = "\r\n"
+            case nextLine = "\u{0085}"
+            case lineSeparator = "\u{2028}"
+            case paragraphSeparator = "\u{2029}"
+        }
+        #endif
+
+        for delimiter in Separator.allCases {
+            var string = ""
+            #if os(Windows)
+            var segments: [String] = []
+            for index in 1..<5 {
+                var characters = ["\"\(index)\""]
+                for _ in 0..<index {
+                    characters.append(delimiter.rawValue)
+                }
+                segments.append(characters.joined(separator: "+"))
+            }
+            string = segments.joined(separator: "+")
+
+            let setup = TestSetup(
+                executable: .name("powershell.exe"),
+                arguments: ["/c", "[Console]::Write(\(string))"]
+            )
+            #else
+            for index in 1..<5 {
+                string += "\(index)"
+                string += String(
+                    repeating: Character(delimiter.rawValue),
+                    count: index
+                )
+            }
+
+            let setup = TestSetup(
+                executable: .path("/bin/sh"),
+                arguments: [
+                    "-c", "printf %s '\(string)'",
+                ]
+            )
+            #endif
+
+            _ = try await _run(setup) { execution, inputWriter, standardOutput, standardError in
+                var output: [String] = []
+                for try await line in standardOutput.strings(separator: .lineBreaks) {
+                    output.append(line)
+                }
+
+                #expect(output == ["1", "2", "", "3", "", "", "4", "", "", ""])
+            }
+        }
+    }
+
+    @Test func testStringSequenceNoNewLines() async throws {
         #if os(Windows)
         let setup = TestSetup(
             executable: .name("cmd.exe"),
@@ -2572,21 +2642,177 @@ extension SubprocessIntegrationTests {
 
                 group.addTask {
                     var result = ""
-                    for try await line in standardOutput.lines() {
+                    for try await line in standardOutput.strings() {
                         result += line
                     }
-                    #expect(result.trimmingNewLineAndQuotes() == "x")
+                    #expect(result.trimmingCharacters(in: .whitespaces) == "x")
                 }
 
                 group.addTask {
                     var result = ""
-                    for try await line in standardError.lines() {
+                    for try await line in standardError.strings() {
                         result += line
                     }
-                    #expect(result.trimmingNewLineAndQuotes() == "y")
+                    #expect(result.trimmingCharacters(in: .whitespaces) == "y")
                 }
                 try await group.waitForAll()
             }
+        }
+    }
+
+    @Test func testStringSequenceSingleScalarSeparator() async throws {
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("powershell.exe"),
+            arguments: [
+                "-Command",
+                """
+                [Console]::Write(`
+                    "1" + [char]0 +`
+                    "2" + [char]0 + [char]0 +`
+                    "3" + [char]0 + [char]0 + [char]0 +`
+                    "4" + [char]0 + [char]0 + [char]0 + [char]0)
+                """,
+            ]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: [
+                "-c", "printf '1\\0002\\000\\0003\\000\\000\\0004\\000\\000\\000\\000'",
+            ]
+        )
+        #endif
+        _ = try await _run(setup) { execution, inputWriter, standardOutput, standardError in
+            var output: [String] = []
+            for try await line in standardOutput.strings(separator: .unicodeScalars(["\0"])) {
+                output.append(line)
+            }
+
+            #expect(output == ["1", "2", "", "3", "", "", "4", "", "", ""])
+        }
+    }
+
+    @Test func testStringSequenceMultipleScalarsSeparator() async throws {
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("powershell.exe"),
+            arguments: [
+                "-Command",
+                """
+                [Console]::Write("1?:2?:?:3?:?:?:4?:?:?:?:")
+                """,
+            ]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: [
+                "-c", "printf '1?:2?:?:3?:?:?:4?:?:?:?:'",
+            ]
+        )
+        #endif
+        _ = try await _run(setup) { execution, inputWriter, standardOutput, standardError in
+            var output: [String] = []
+            for try await line in standardOutput.strings(separator: .unicodeScalars(["?", ":"])) {
+                output.append(line)
+            }
+
+            #expect(output == ["1", "2", "", "3", "", "", "4", "", "", ""])
+        }
+    }
+
+    @Test func testStringSequenceUnicodeScalarsSeparatorMultiByte() async throws {
+        // U+2022 BULLET = E2 80 A2 in UTF-8
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("powershell.exe"),
+            arguments: [
+                "-NoProfile",
+                "-Command",
+                """
+                [Console]::OutputEncoding = [System.Text.Encoding]::UTF8;
+                [Console]::OpenStandardOutput().Write([byte[]](0x61, 0xe2, 0x80, 0xa2, 0x62, 0xe2, 0x80, 0xa2, 0x63), 0, 9)
+                """,
+            ]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: [
+                "-c", "printf 'a\\342\\200\\242b\\342\\200\\242c'",
+            ]
+        )
+        #endif
+        _ = try await _run(setup) { execution, inputWriter, standardOutput, standardError in
+            var output: [String] = []
+            for try await line in standardOutput.strings(separator: .unicodeScalars(["\u{2022}"])) {
+                output.append(line)
+            }
+
+            #expect(output == ["a", "b", "c"])
+        }
+    }
+
+    @Test func testStringSequenceUnicodeScalarsSeparatorPreservesMultiByteContent() async throws {
+        // Split on pipe, but content contains multi-byte Unicode characters
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("powershell.exe"),
+            arguments: [
+                "-NoProfile",
+                "-Command",
+                """
+                [Console]::OutputEncoding = [System.Text.Encoding]::UTF8;
+                $b=[byte[]](0x63,0x61,0x66,0xc3,0xa9,0x7c,0x6e,0x61,0xc3,0xaf,0x76,0x65,0x7c,0x72,0xc3,0xa9,0x73,0x75,0x6d,0xc3,0xa9);
+                [Console]::OpenStandardOutput().Write($b, 0, $b.Length)
+                """,
+            ]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: [
+                "-c", "printf 'caf\\303\\251|na\\303\\257ve|r\\303\\251sum\\303\\251'",
+            ]
+        )
+        #endif
+        _ = try await _run(setup) { execution, inputWriter, standardOutput, standardError in
+            var output: [String] = []
+            for try await line in standardOutput.strings(separator: .unicodeScalars(["|"])) {
+                output.append(line)
+            }
+
+            #expect(output == ["caf\u{00E9}", "na\u{00EF}ve", "r\u{00E9}sum\u{00E9}"])
+        }
+    }
+
+    @Test func testStringSequenceUnicodeScalarsSeparatorLeadingAndTrailing() async throws {
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("powershell.exe"),
+            arguments: [
+                "-Command",
+                """
+                [Console]::Write("|1|2|3|")
+                """,
+            ]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: [
+                "-c", "printf '|1|2|3|'",
+            ]
+        )
+        #endif
+        _ = try await _run(setup) { execution, inputWriter, standardOutput, standardError in
+            var output: [String] = []
+            for try await line in standardOutput.strings(separator: .unicodeScalars(["|"])) {
+                output.append(line)
+            }
+
+            #expect(output == ["", "1", "2", "3"])
         }
     }
 }
