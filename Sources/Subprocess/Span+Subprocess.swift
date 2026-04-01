@@ -11,15 +11,9 @@
 
 // swift-format-ignore-file
 
-#if SubprocessSpan
-
 @_unsafeNonescapableResult
 @inlinable @inline(__always)
-#if compiler(>=6.2)
 @_lifetime(borrow source)
-#else
-@lifetime(borrow source)
-#endif
 public func _overrideLifetime<
     T: ~Copyable & ~Escapable,
     U: ~Copyable & ~Escapable
@@ -32,11 +26,7 @@ public func _overrideLifetime<
 
 @_unsafeNonescapableResult
 @inlinable @inline(__always)
-#if compiler(>=6.2)
 @_lifetime(copy source)
-#else
-@lifetime(copy source)
-#endif
 public func _overrideLifetime<
     T: ~Copyable & ~Escapable,
     U: ~Copyable & ~Escapable
@@ -48,8 +38,6 @@ public func _overrideLifetime<
 }
 
 extension Span where Element: BitwiseCopyable {
-
-    #if compiler(>=6.2)
     internal var _bytes: RawSpan {
         @_lifetime(copy self)
         @_alwaysEmitIntoClient
@@ -58,16 +46,6 @@ extension Span where Element: BitwiseCopyable {
             return _overrideLifetime(of: rawSpan, copyingFrom: self)
         }
     }
-    #else
-    internal var _bytes: RawSpan {
-        @lifetime(copy self)
-        @_alwaysEmitIntoClient
-        get {
-            let rawSpan = RawSpan(_elements: self)
-            return _overrideLifetime(of: rawSpan, copyingFrom: self)
-        }
-    }
-    #endif
 }
 
 #if canImport(Glibc) || canImport(Bionic) || canImport(Musl)
@@ -93,4 +71,3 @@ extension DispatchData {
 }
 #endif  // canImport(Glibc) || canImport(Bionic) || canImport(Musl)
 
-#endif  // SubprocessSpan

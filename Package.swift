@@ -1,4 +1,4 @@
-// swift-tools-version: 6.1
+// swift-tools-version: 6.2
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
@@ -19,12 +19,7 @@ dep.append(
 #endif
 
 // Enable SubprocessFoundation by default
-var defaultTraits: Set<String> = ["SubprocessFoundation"]
-
-#if compiler(>=6.2)
-// Enable SubprocessSpan when Span is available.
-defaultTraits.insert("SubprocessSpan")
-#endif
+let defaultTraits: Set<String> = ["SubprocessFoundation"]
 
 let packageSwiftSettings: [SwiftSetting] = [
     .define("SUBPROCESS_ASYNCIO_DISPATCH", .when(platforms: [.macOS, .custom("freebsd"), .openbsd]))
@@ -41,7 +36,6 @@ let package = Package(
     ],
     traits: [
         "SubprocessFoundation",
-        "SubprocessSpan",
         .default(
             enabledTraits: defaultTraits
         ),
@@ -58,10 +52,7 @@ let package = Package(
             exclude: ["CMakeLists.txt"],
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
-                .enableExperimentalFeature("NonescapableTypes"),
-                .enableExperimentalFeature("LifetimeDependence"),
                 .enableExperimentalFeature("Lifetimes"),
-                .enableExperimentalFeature("Span"),
             ] + packageSwiftSettings
         ),
         .testTarget(

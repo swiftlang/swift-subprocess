@@ -81,7 +81,6 @@ final class AsyncIO: Sendable {
         }
     }
 
-    #if SubprocessSpan
     internal func write(
         _ span: borrowing RawSpan,
         to diskIO: borrowing IOChannel
@@ -111,7 +110,6 @@ final class AsyncIO: Sendable {
             }
         }
     }
-    #endif // SubprocessSpan
 
     internal func write(
         _ array: [UInt8],

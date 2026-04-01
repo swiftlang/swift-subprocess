@@ -9,7 +9,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#if SubprocessFoundation && SubprocessSpan
+#if SubprocessFoundation
 
 #if canImport(Darwin)
 // On Darwin always prefer system Foundation

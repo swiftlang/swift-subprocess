@@ -30,13 +30,8 @@ internal import Dispatch
 public protocol OutputProtocol: Sendable, ~Copyable {
     associatedtype OutputType: Sendable
 
-    #if SubprocessSpan
     /// Converts the output from a span to the expected output type.
     func output(from span: RawSpan) throws -> OutputType
-    #endif
-
-    /// Converts the output from a buffer to the expected output type.
-    func output(from buffer: some Sequence<UInt8>) throws -> OutputType
 
     /// The maximum number of bytes to collect.
     var maxSize: Int { get }
@@ -114,7 +109,6 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol, ErrorOut
     /// The maximum number of bytes to collect.
     public let maxSize: Int
 
-    #if SubprocessSpan
     /// Creates a string from a raw span.
     public func output(from span: RawSpan) throws -> String? {
         // FIXME: Span to String
@@ -122,14 +116,6 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol, ErrorOut
         for index in 0..<span.byteCount {
             array.append(span.unsafeLoad(fromByteOffset: index, as: UInt8.self))
         }
-        return String(decodingBytes: array, as: Encoding.self)
-    }
-    #endif
-
-    /// Creates a string from a sequence of bytes.
-    public func output(from buffer: some Sequence<UInt8>) throws -> String? {
-        // FIXME: Span to String
-        let array = Array(buffer)
         return String(decodingBytes: array, as: Encoding.self)
     }
 
@@ -177,14 +163,8 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
         #endif
     }
 
-    #if SubprocessSpan
     /// Creates an array from a ``RawSpan``.
     public func output(from span: RawSpan) throws -> [UInt8] {
-        fatalError("Not implemented")
-    }
-    #endif
-    /// Creates an array from a sequence of bytes.
-    public func output(from buffer: some Sequence<UInt8>) throws -> [UInt8] {
         fatalError("Not implemented")
     }
 
@@ -326,20 +306,6 @@ extension ErrorOutputProtocol where Self == CombinedErrorOutput {
     }
 }
 
-// MARK: - Span Default Implementations
-#if SubprocessSpan
-extension OutputProtocol {
-    /// Converts the output from a sequence of bytes to the expected output type.
-    public func output(from buffer: some Sequence<UInt8>) throws -> OutputType {
-        guard let rawBytes: UnsafeRawBufferPointer = buffer as? UnsafeRawBufferPointer else {
-            fatalError("Unexpected input type passed: \(type(of: buffer))")
-        }
-        let span = RawSpan(_unsafeBytes: rawBytes)
-        return try self.output(from: span)
-    }
-}
-#endif
-
 // MARK: - Default Implementations
 extension OutputProtocol {
     @_disfavoredOverload
@@ -410,19 +376,12 @@ extension OutputProtocol {
 extension OutputProtocol where OutputType == Void {
     internal func captureOutput(from fileDescriptor: consuming IOChannel?) async throws {}
 
-    #if SubprocessSpan
     /// Converts the output from a raw span to the expected output type.
     public func output(from span: RawSpan) throws {
         fatalError("Unexpected call to \(#function)")
     }
-    #endif
-    /// Converts the output from a sequence of bytes to the expected output type.
-    public func output(from buffer: some Sequence<UInt8>) throws {
-        fatalError("Unexpected call to \(#function)")
-    }
 }
 
-#if SubprocessSpan
 extension OutputProtocol {
     #if SUBPROCESS_ASYNCIO_DISPATCH
     internal func output(from data: DispatchData) throws -> OutputType {
@@ -453,7 +412,6 @@ extension OutputProtocol {
     }
     #endif // SUBPROCESS_ASYNCIO_DISPATCH
 }
-#endif
 
 extension DispatchData {
     internal func array() -> [UInt8] {

@@ -58,7 +58,6 @@ public func run<
     )
 }
 
-#if SubprocessSpan
 /// Runs an executable asynchronously and returns the collected output
 /// of the child process.
 /// - Parameters:
@@ -99,7 +98,6 @@ public func run<
         error: error
     )
 }
-#endif // SubprocessSpan
 
 // MARK: - Custom Execution Body
 
@@ -116,6 +114,8 @@ public func run<
 ///   - error: How to manage executable standard error.
 ///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
+///     All arguments passed to this closure are valid only for
+///     the duration of the closure's execution and must not be escaped.
 ///     - execution: The running subprocess.
 /// - Returns: An ``ExecutionOutcome`` that contains the closure's return value.
 public func run<
@@ -169,6 +169,8 @@ public func run<
 ///     may reduce memory usage and improve responsiveness for interactive applications.
 ///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
+///     All arguments passed to this closure are valid only for
+///     the duration of the closure's execution and must not be escaped.
 ///     - execution: The running subprocess.
 ///     - outputSequence: The standard output as an asynchronous sequence of buffers.
 /// - Returns: An ``ExecutionOutcome`` that contains the closure's return value.
@@ -221,6 +223,8 @@ public func run<Result, Input: InputProtocol, Error: ErrorOutputProtocol>(
 ///     may reduce memory usage and improve responsiveness for interactive applications.
 ///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
+///     All arguments passed to this closure are valid only for
+///     the duration of the closure's execution and must not be escaped.
 ///     - execution: The running subprocess.
 ///     - errorSequence: The standard error as an asynchronous sequence of buffers.
 /// - Returns: An ``ExecutionOutcome`` that contains the closure's return value.
@@ -272,6 +276,8 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
 ///     may reduce memory usage and improve responsiveness for interactive applications.
 ///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
+///     All arguments passed to this closure are valid only for
+///     the duration of the closure's execution and must not be escaped.
 ///     - execution: The running subprocess.
 ///     - inputWriter: A writer for the subprocess's standard input.
 ///     - outputSequence: The standard output as an asynchronous sequence of buffers.
@@ -323,6 +329,8 @@ public func run<Result, Error: ErrorOutputProtocol>(
 ///     may reduce memory usage and improve responsiveness for interactive applications.
 ///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
+///     All arguments passed to this closure are valid only for
+///     the duration of the closure's execution and must not be escaped.
 ///     - execution: The running subprocess.
 ///     - inputWriter: A writer for the subprocess's standard input.
 ///     - errorSequence: The standard error as an asynchronous sequence of buffers.
@@ -374,6 +382,8 @@ public func run<Result, Output: OutputProtocol>(
 ///     may reduce memory usage and improve responsiveness for interactive applications.
 ///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
+///     All arguments passed to this closure are valid only for
+///     the duration of the closure's execution and must not be escaped.
 ///     - execution: The running subprocess.
 ///     - inputWriter: A writer for the subprocess's standard input.
 ///     - outputSequence: The standard output as an asynchronous sequence of buffers.
@@ -411,7 +421,6 @@ public func run<Result>(
 
 // MARK: - Configuration Based
 
-#if SubprocessSpan
 /// Runs a configuration asynchronously and returns
 /// an ``ExecutionRecord`` that contains the output of the child process.
 /// - Parameters:
@@ -471,7 +480,6 @@ public func run<
         standardError: result.value.standardError
     )
 }
-#endif
 
 /// Runs a ``Configuration`` asynchronously and returns
 /// an ``ExecutionRecord`` that contains the output of the child process.
@@ -585,6 +593,8 @@ public func run<
 ///   - error: How to manage executable standard error.
 ///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
+///     All arguments passed to this closure are valid only for
+///     the duration of the closure's execution and must not be escaped.
 ///     - execution: The running subprocess.
 /// - Returns: An ``ExecutionOutcome`` that contains the closure's return value.
 public func run<
@@ -644,6 +654,8 @@ public func run<
 ///     may reduce memory usage and improve responsiveness for interactive applications.
 ///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
+///     All arguments passed to this closure are valid only for
+///     the duration of the closure's execution and must not be escaped.
 ///     - execution: The running subprocess.
 ///     - outputSequence: The standard output as an asynchronous sequence of buffers.
 /// - Returns: An ``ExecutionOutcome`` that contains the closure's return value.
@@ -714,6 +726,8 @@ public func run<
 ///     may reduce memory usage and improve responsiveness for interactive applications.
 ///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
+///     All arguments passed to this closure are valid only for
+///     the duration of the closure's execution and must not be escaped.
 ///     - execution: The running subprocess.
 ///     - errorSequence: The standard error as an asynchronous sequence of buffers.
 /// - Returns: An ``ExecutionOutcome`` that contains the closure's return value.
@@ -777,6 +791,8 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
 ///     may reduce memory usage and improve responsiveness for interactive applications.
 ///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
+///     All arguments passed to this closure are valid only for
+///     the duration of the closure's execution and must not be escaped.
 ///     - execution: The running subprocess.
 ///     - inputWriter: A writer for the subprocess's standard input.
 ///     - outputSequence: The standard output as an asynchronous sequence of buffers.
@@ -826,6 +842,8 @@ public func run<Result, Error: ErrorOutputProtocol>(
 ///     may reduce memory usage and improve responsiveness for interactive applications.
 ///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
+///     All arguments passed to this closure are valid only for
+///     the duration of the closure's execution and must not be escaped.
 ///     - execution: The running subprocess.
 ///     - inputWriter: A writer for the subprocess's standard input.
 ///     - errorSequence: The standard error as an asynchronous sequence of buffers.
@@ -870,6 +888,8 @@ public func run<Result, Output: OutputProtocol>(
 ///     may reduce memory usage and improve responsiveness for interactive applications.
 ///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
+///     All arguments passed to this closure are valid only for
+///     the duration of the closure's execution and must not be escaped.
 ///     - execution: The running subprocess.
 ///     - inputWriter: A writer for the subprocess's standard input.
 ///     - outputSequence: The standard output as an asynchronous sequence of buffers.
