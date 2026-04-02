@@ -108,8 +108,7 @@ static int _subprocess_spawn_prefork(
     char * _Nullable const env[_Nullable],
     uid_t * _Nullable uid,
     gid_t * _Nullable gid,
-    int number_of_sgroups, const gid_t * _Nullable sgroups,
-    int create_session
+    int number_of_sgroups, const gid_t * _Nullable sgroups
 ) {
 #define write_error_and_exit int error = errno; \
     write(pipefd[1], &error, sizeof(error));\
@@ -198,10 +197,6 @@ static int _subprocess_spawn_prefork(
             }
         }
 
-        if (create_session != 0) {
-            (void)setsid();
-        }
-
         // Use posix_spawnas exec
         int error = posix_spawn(pid, exec_path, file_actions, spawn_attrs, args, env);
         // If we reached this point, something went wrong
@@ -249,13 +244,11 @@ int _subprocess_spawn(
     char * _Nullable const env[_Nullable],
     uid_t * _Nullable uid,
     gid_t * _Nullable gid,
-    int number_of_sgroups, const gid_t * _Nullable sgroups,
-    int create_session
+    int number_of_sgroups, const gid_t * _Nullable sgroups
 ) {
     int require_pre_fork = uid != NULL ||
         gid != NULL ||
-        number_of_sgroups > 0 ||
-        create_session > 0;
+        number_of_sgroups > 0;
 
     if (require_pre_fork != 0) {
         int rc = _subprocess_spawn_prefork(
@@ -263,7 +256,7 @@ int _subprocess_spawn(
             exec_path,
             file_actions, spawn_attrs,
             args, env,
-            uid, gid, number_of_sgroups, sgroups, create_session
+            uid, gid, number_of_sgroups, sgroups
         );
         return rc;
     }

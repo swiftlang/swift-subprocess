@@ -2040,6 +2040,109 @@ extension SubprocessIntegrationTests {
     }
 }
 
+// MARK: - Pseudoterminal Tests
+#if !os(Windows)
+extension SubprocessIntegrationTests {
+    @Test func testPTYChildProcessSeesTerminal() async throws {
+        let setup = TestSetup(
+            executable: .path("/usr/bin/tty"),
+            arguments: []
+        )
+
+        _ = try await _run(
+            setup,
+            pseudoterminalOptions: PseudoterminalOptions(
+                initialWindowSize: .init(rows: 40, columns: 120),
+                terminalType: "xterm-256color"
+            ),
+            preferredBufferSize: 1
+        ) { execution, terminal, standardInput, outputStream in
+            for try await line in outputStream.lines() {
+                // Normal spawn causes tty to return `not a tty`
+                #if canImport(Darwin)
+                #expect(line.contains("/dev/ttys"))
+                #else
+                #expect(line.contains("/dev/pts"))
+                #endif
+            }
+        }
+    }
+
+    @Test func testPTYLsPrintsColor() async throws {
+        // Make sure ls -G now can print color
+        #if canImport(Darwin)
+        let setup = TestSetup(
+            executable: .path("/bin/ls"),
+            arguments: ["-G"]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/ls"),
+            arguments: ["--color=always"]
+        )
+        #endif
+
+        _ = try await _run(
+            setup,
+            pseudoterminalOptions: PseudoterminalOptions(
+                initialWindowSize: .init(rows: 128, columns: 128),
+                terminalType: "xterm-256color"
+            ),
+            preferredBufferSize: 1
+        ) { execution, terminal, standardInput, outputStream in
+            var combinedOutput = ""
+            for try await line in outputStream.lines() {
+                combinedOutput += line
+            }
+            // ANSI escape sequences start with ESC[
+            #expect(combinedOutput.contains("\u{1B}["))
+        }
+    }
+
+    @Test func testPTYWindowSize() async throws {
+        // Make sure initialWindowSize is correctly set
+        let setup = TestSetup(
+            executable: .path("/bin/stty"),
+            arguments: ["size"]
+        )
+
+        _ = try await _run(
+            setup,
+            pseudoterminalOptions: PseudoterminalOptions(
+                initialWindowSize: .init(rows: 64, columns: 128),
+                terminalType: "xterm-256color"
+            ),
+            preferredBufferSize: 1
+        ) { execution, terminal, standardInput, outputStream in
+            for try await line in outputStream.lines() {
+                #expect(line.trimmingNewLineAndQuotes() == "64 128")
+            }
+        }
+    }
+
+    @Test func testPTYTerminalType() async throws {
+        // Make sure terminalType is correct set
+        let setup = TestSetup(
+            executable: .path("/usr/bin/printenv"),
+            arguments: ["TERM"]
+        )
+
+        _ = try await _run(
+            setup,
+            pseudoterminalOptions: PseudoterminalOptions(
+                initialWindowSize: .init(rows: 64, columns: 128),
+                terminalType: "xterm-256color"
+            ),
+            preferredBufferSize: 1
+        ) { execution, terminal, standardInput, outputStream in
+            for try await line in outputStream.lines() {
+                #expect(line.trimmingNewLineAndQuotes() == "xterm-256color")
+            }
+        }
+    }
+}
+#endif
+
 // MARK: - Other Tests
 extension SubprocessIntegrationTests {
     @Test func testTerminateProcess() async throws {
@@ -2735,6 +2838,25 @@ func _run<Result>(
         body: body
     )
 }
+
+#if !os(Windows)
+func _run<Result>(
+    _ setup: TestSetup,
+    pseudoterminalOptions: PseudoterminalOptions,
+    preferredBufferSize: Int? = nil,
+    body: (Execution, Pseudoterminal, StandardInputWriter, AsyncBufferSequence) async throws -> Result
+) async throws -> ExecutionOutcome<Result> {
+    return try await Subprocess.run(
+        setup.executable,
+        arguments: setup.arguments,
+        environment: setup.environment,
+        workingDirectory: setup.workingDirectory,
+        pseudoterminalOptions: pseudoterminalOptions,
+        preferredBufferSize: preferredBufferSize,
+        body: body
+    )
+}
+#endif
 
 extension FileDescriptor {
     /// Runs a closure and then closes the FileDescriptor, even if an error occurs.
