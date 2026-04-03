@@ -189,7 +189,7 @@ extension SubprocessUnixTests {
                 }
                 group.addTask {
                     var outputs: [String] = []
-                    for try await line in standardOutput.lines() {
+                    for try await line in standardOutput.strings() {
                         outputs.append(line.trimmingCharacters(in: .newlines))
                     }
                     #expect(outputs == ["saw SIGQUIT", "saw SIGTERM", "saw SIGINT"])
