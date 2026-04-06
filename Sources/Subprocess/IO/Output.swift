@@ -174,7 +174,7 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
 }
 
 /// A concrete `Output` type for subprocesses that redirects the child output to
-/// the `.standardOutput` (a sequence) or `.standardError` property of
+/// the `.currentStandardOutput` (a sequence) or `.currentStandardError` property of
 /// `Execution`. This output type is only applicable to the `run()` family that
 /// takes a custom closure.
 internal struct SequenceOutput: OutputProtocol {
@@ -204,7 +204,7 @@ extension OutputProtocol where Self == FileDescriptorOutput {
     /// Creates a subprocess output that writes to the current process's standard output.
     ///
     /// The file descriptor isn't closed afterwards.
-    public static var standardOutput: Self {
+    public static var currentStandardOutput: Self {
         return Self.fileDescriptor(
             .standardOutput,
             closeAfterSpawningProcess: false
@@ -214,7 +214,7 @@ extension OutputProtocol where Self == FileDescriptorOutput {
     /// Creates a subprocess output that writes to the current process's standard error.
     ///
     /// The file descriptor isn't closed afterwards.
-    public static var standardError: Self {
+    public static var currentStandardError: Self {
         return Self.fileDescriptor(
             .standardError,
             closeAfterSpawningProcess: false

@@ -90,7 +90,6 @@ public struct Configuration: Sendable {
         input: consuming CreatedPipe,
         output: consuming CreatedPipe,
         error: consuming CreatedPipe,
-        isolation: isolated (any Actor)? = #isolation,
         _ body: (
             (
                 Execution,
@@ -1196,7 +1195,6 @@ extension Optional where Wrapped == String {
 internal func withAsyncTaskCleanupHandler<Result: Sendable>(
     _ body: () async throws -> Result,
     onCleanup handler: @Sendable @escaping () async -> Void,
-    isolation: isolated (any Actor)? = #isolation
 ) async throws -> Result {
     let (runCancellationHandlerStream, runCancellationHandlerContinuation) = AsyncThrowingStream.makeStream(of: Void.self)
     return try await withThrowingTaskGroup(
@@ -1327,9 +1325,8 @@ extension HANDLE {
 /// Many standard library functions such as `withCheckedThrowingContinuation`
 /// does not support typed throw yet. This method casts `any Error` thrown by
 /// those methods back to `SubprocessError`
-@Sendable internal func _castError<Success: Sendable>(
+internal func _castError<Success: Sendable>(
     _ body: () async throws -> Success,
-    isolation: isolated (any Actor)? = #isolation
 ) async throws(SubprocessError) -> Success {
     do {
         return try await body()
@@ -1338,7 +1335,7 @@ extension HANDLE {
     }
 }
 
-@Sendable internal func _castError<Success: Sendable>(
+internal func _castError<Success: Sendable>(
     _ body: () throws -> Success
 ) throws(SubprocessError) -> Success {
     do {

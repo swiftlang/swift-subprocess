@@ -132,7 +132,6 @@ public func run<
     input: Input = .none,
     output: Output = .discarded,
     error: Error = .discarded,
-    isolation: isolated (any Actor)? = #isolation,
     body: (_ execution: Execution) async throws -> Result
 ) async throws -> ExecutionOutcome<Result> where Error.OutputType == Void {
     let configuration = Configuration(
@@ -147,7 +146,6 @@ public func run<
         input: input,
         output: output,
         error: error,
-        isolation: isolation,
         body: body
     )
 }
@@ -183,7 +181,6 @@ public func run<Result, Input: InputProtocol, Error: ErrorOutputProtocol>(
     input: Input = .none,
     error: Error = .discarded,
     preferredBufferSize: Int? = nil,
-    isolation: isolated (any Actor)? = #isolation,
     body: (
         _ execution: Execution,
         _ outputSequence: AsyncBufferSequence
@@ -201,7 +198,6 @@ public func run<Result, Input: InputProtocol, Error: ErrorOutputProtocol>(
         input: input,
         error: error,
         preferredBufferSize: preferredBufferSize,
-        isolation: isolation,
         body: body
     )
 }
@@ -237,7 +233,6 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
     input: Input = .none,
     output: Output,
     preferredBufferSize: Int? = nil,
-    isolation: isolated (any Actor)? = #isolation,
     body: (
         _ execution: Execution,
         _ errorSequence: AsyncBufferSequence
@@ -255,7 +250,6 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
         input: input,
         output: output,
         preferredBufferSize: preferredBufferSize,
-        isolation: isolation,
         body: body
     )
 }
@@ -290,7 +284,6 @@ public func run<Result, Error: ErrorOutputProtocol>(
     platformOptions: PlatformOptions = PlatformOptions(),
     error: Error = .discarded,
     preferredBufferSize: Int? = nil,
-    isolation: isolated (any Actor)? = #isolation,
     body: (
         _ execution: Execution,
         _ inputWriter: StandardInputWriter,
@@ -308,7 +301,6 @@ public func run<Result, Error: ErrorOutputProtocol>(
         configuration,
         error: error,
         preferredBufferSize: preferredBufferSize,
-        isolation: isolation,
         body: body
     )
 }
@@ -343,7 +335,6 @@ public func run<Result, Output: OutputProtocol>(
     platformOptions: PlatformOptions = PlatformOptions(),
     output: Output,
     preferredBufferSize: Int? = nil,
-    isolation: isolated (any Actor)? = #isolation,
     body: (
         _ execution: Execution,
         _ inputWriter: StandardInputWriter,
@@ -361,7 +352,6 @@ public func run<Result, Output: OutputProtocol>(
         configuration,
         output: output,
         preferredBufferSize: preferredBufferSize,
-        isolation: isolation,
         body: body
     )
 }
@@ -396,7 +386,6 @@ public func run<Result>(
     workingDirectory: FilePath? = nil,
     platformOptions: PlatformOptions = PlatformOptions(),
     preferredBufferSize: Int? = nil,
-    isolation: isolated (any Actor)? = #isolation,
     body: (
         _ execution: Execution,
         _ inputWriter: StandardInputWriter,
@@ -414,7 +403,6 @@ public func run<Result>(
     return try await run(
         configuration,
         preferredBufferSize: preferredBufferSize,
-        isolation: isolation,
         body: body
     )
 }
@@ -607,7 +595,6 @@ public func run<
     input: Input = .none,
     output: Output = .discarded,
     error: Error = .discarded,
-    isolation: isolated (any Actor)? = #isolation,
     body: (_ execution: Execution) async throws -> Result
 ) async throws -> ExecutionOutcome<Result> where Error.OutputType == Void {
     let inputPipe = try input.createPipe()
@@ -668,7 +655,6 @@ public func run<
     input: Input = .none,
     error: Error = .discarded,
     preferredBufferSize: Int? = nil,
-    isolation: isolated (any Actor)? = #isolation,
     body: (
         _ execution: Execution,
         _ outputSequence: AsyncBufferSequence
@@ -736,7 +722,6 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
     input: Input = .none,
     output: Output,
     preferredBufferSize: Int? = nil,
-    isolation: isolated (any Actor)? = #isolation,
     body: (
         _ execution: Execution,
         _ errorSequence: AsyncBufferSequence
@@ -801,7 +786,6 @@ public func run<Result, Error: ErrorOutputProtocol>(
     _ configuration: Configuration,
     error: Error = .discarded,
     preferredBufferSize: Int? = nil,
-    isolation: isolated (any Actor)? = #isolation,
     body: (
         _ execution: Execution,
         _ inputWriter: StandardInputWriter,
@@ -852,7 +836,6 @@ public func run<Result, Output: OutputProtocol>(
     _ configuration: Configuration,
     output: Output,
     preferredBufferSize: Int? = nil,
-    isolation: isolated (any Actor)? = #isolation,
     body: (
         _ execution: Execution,
         _ inputWriter: StandardInputWriter,
@@ -898,7 +881,6 @@ public func run<Result, Output: OutputProtocol>(
 public func run<Result>(
     _ configuration: Configuration,
     preferredBufferSize: Int? = nil,
-    isolation: isolated (any Actor)? = #isolation,
     body: (
         _ execution: Execution,
         _ inputWriter: StandardInputWriter,

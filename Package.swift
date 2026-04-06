@@ -53,6 +53,7 @@ let package = Package(
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
                 .enableExperimentalFeature("Lifetimes"),
+                .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
             ] + packageSwiftSettings
         ),
         .testTarget(

@@ -242,7 +242,7 @@ For the collected-result API, you must specify how to capture standard output.
 | --- | --- |
 | `.discarded` | Discard output |
 | `.fileDescriptor(_:closeAfterSpawningProcess:)` | Write to a file descriptor |
-| `.standardOutput` or `.standardError` | Write to the parent process's standard output or standard error |
+| `.currentStandardOutput` or `.currentStandardError` | Write to the parent process's standard output or standard error |
 | `.string(limit:)` or `.string(limit:encoding:)` | Collect as `String?` |
 | `.bytes(limit:)` | Collect as `[UInt8]` |
 | `.data(limit:)` | Collect as `Data` (requires `SubprocessFoundation`) |
