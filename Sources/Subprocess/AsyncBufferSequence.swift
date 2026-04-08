@@ -50,7 +50,7 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
         }
 
         /// Retrieves the next buffer in the sequence, or `nil` if the sequence ended.
-        public mutating func next() async throws -> Buffer? {
+        public mutating func next(isolation actor: isolated (any Actor)?) async throws -> Buffer? {
             // If we have more left in buffer, use that
             guard self.buffer.isEmpty else {
                 return self.buffer.removeFirst()
@@ -80,6 +80,11 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
             }
             self.buffer = createdBuffers
             return self.buffer.removeFirst()
+        }
+
+        /// Retrieves the next buffer in the sequence, or `nil` if the sequence ended.
+        public mutating func next() async throws -> AsyncBufferSequence.Buffer? {
+            return try await self.next(isolation: nil)
         }
     }
 
@@ -176,14 +181,14 @@ extension AsyncBufferSequence {
             }
 
             /// Retrieves the next line, or `nil` if the sequence ended.
-            public mutating func next() async throws -> String? {
+            public mutating func next(isolation actor: isolated (any Actor)?) async throws -> String? {
 
                 func loadBuffer() async throws -> [Encoding.CodeUnit]? {
                     guard !self.eofReached else {
                         return nil
                     }
 
-                    guard let buffer = try await self.source.next() else {
+                    guard let buffer = try await self.source.next(isolation: actor) else {
                         self.eofReached = true
                         return nil
                     }
@@ -347,6 +352,11 @@ extension AsyncBufferSequence {
                     return yield()
                 }
                 return nil
+            }
+
+            /// Retrieves the next line, or `nil` if the sequence ended.
+            public mutating func next() async throws -> String? {
+                return try await self.next(isolation: nil)
             }
         }
 
