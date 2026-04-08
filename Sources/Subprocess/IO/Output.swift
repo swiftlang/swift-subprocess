@@ -163,7 +163,7 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
 
     /// Creates an array from a ``RawSpan``.
     public func output(from span: RawSpan) throws -> [UInt8] {
-        span.withUnsafeBytes { Arra($0) }
+        span.withUnsafeBytes { Array($0) }
     }
 
     internal init(limit: Int) {
