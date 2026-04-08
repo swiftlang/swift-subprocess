@@ -24,9 +24,6 @@ internal import Dispatch
 // MARK: - Output
 
 /// A type that serves as the output target for a subprocess.
-///
-/// Instead of creating custom implementations of ``OutputProtocol``, use the
-/// built-in implementations provided by the `Subprocess` library.
 public protocol OutputProtocol: Sendable, ~Copyable {
     associatedtype OutputType: Sendable
 
