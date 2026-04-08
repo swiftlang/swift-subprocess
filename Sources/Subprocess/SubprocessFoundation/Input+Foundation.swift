@@ -28,30 +28,26 @@ import SystemPackage
 internal import Dispatch
 
 /// A concrete input type for subprocesses that reads input from data.
-public struct DataInput: InputProtocol {
+internal struct DataInput: Sendable {
     private let data: Data
 
-    /// Asynchronously write the input to the subprocess using the
-    /// write file descriptor.
-    public func write(with writer: StandardInputWriter) async throws(SubprocessError) {
+    func write(with writer: StandardInputWriter) async throws(SubprocessError) {
         _ = try await writer.write(self.data)
     }
 
-    internal init(data: Data) {
+    init(data: Data) {
         self.data = data
     }
 }
 
 /// A concrete input type for subprocesses that accepts input from
 /// a specified sequence of data.
-public struct DataSequenceInput<
+internal struct DataSequenceInput<
     InputSequence: Sequence & Sendable
->: InputProtocol where InputSequence.Element == Data {
+>: Sendable where InputSequence.Element == Data {
     private let sequence: InputSequence
 
-    /// Asynchronously write the input to the subprocess using the
-    /// write file descriptor.
-    public func write(with writer: StandardInputWriter) async throws(SubprocessError) {
+    func write(with writer: StandardInputWriter) async throws(SubprocessError) {
         var buffer = Data()
         for chunk in self.sequence {
             buffer.append(chunk)
@@ -59,25 +55,23 @@ public struct DataSequenceInput<
         _ = try await writer.write(buffer)
     }
 
-    internal init(underlying: InputSequence) {
+    init(underlying: InputSequence) {
         self.sequence = underlying
     }
 }
 
 /// A concrete `Input` type for subprocesses that reads input
 /// from a given async sequence of `Data`.
-public struct DataAsyncSequenceInput<
+internal struct DataAsyncSequenceInput<
     InputSequence: AsyncSequence & Sendable
->: InputProtocol where InputSequence.Element == Data {
+>: Sendable where InputSequence.Element == Data {
     private let sequence: InputSequence
 
     private func writeChunk(_ chunk: Data, with writer: StandardInputWriter) async throws(SubprocessError) {
         _ = try await writer.write(chunk)
     }
 
-    /// Asynchronously write the input to the subprocess using the
-    /// write file descriptor.
-    public func write(with writer: StandardInputWriter) async throws(SubprocessError) {
+    func write(with writer: StandardInputWriter) async throws(SubprocessError) {
         do {
             for try await chunk in self.sequence {
                 try await self.writeChunk(chunk, with: writer)
@@ -92,29 +86,41 @@ public struct DataAsyncSequenceInput<
         }
     }
 
-    internal init(underlying: InputSequence) {
+    init(underlying: InputSequence) {
         self.sequence = underlying
     }
 }
 
-extension InputProtocol {
+extension InputMethod {
     /// Create a Subprocess input from a `Data`
-    public static func data(_ data: Data) -> Self where Self == DataInput {
-        return DataInput(data: data)
+    public static func data(_ data: Data) -> InputMethod {
+        let inner = DataInput(data: data)
+        return InputMethod(
+            createPipe: { try CreatedPipe(closeWhenDone: true, purpose: .input) },
+            write: { writer in try await inner.write(with: writer) }
+        )
     }
 
     /// Create a Subprocess input from a `Sequence` of `Data`.
     public static func sequence<InputSequence: Sequence & Sendable>(
         _ sequence: InputSequence
-    ) -> Self where Self == DataSequenceInput<InputSequence> {
-        return .init(underlying: sequence)
+    ) -> InputMethod where InputSequence.Element == Data {
+        let inner = DataSequenceInput(underlying: sequence)
+        return InputMethod(
+            createPipe: { try CreatedPipe(closeWhenDone: true, purpose: .input) },
+            write: { writer in try await inner.write(with: writer) }
+        )
     }
 
     /// Create a Subprocess input from a `AsyncSequence` of `Data`.
     public static func sequence<InputSequence: AsyncSequence & Sendable>(
         _ asyncSequence: InputSequence
-    ) -> Self where Self == DataAsyncSequenceInput<InputSequence> {
-        return .init(underlying: asyncSequence)
+    ) -> InputMethod where InputSequence.Element == Data {
+        let inner = DataAsyncSequenceInput(underlying: asyncSequence)
+        return InputMethod(
+            createPipe: { try CreatedPipe(closeWhenDone: true, purpose: .input) },
+            write: { writer in try await inner.write(with: writer) }
+        )
     }
 }
 

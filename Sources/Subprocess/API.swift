@@ -30,7 +30,6 @@ import SystemPackage
 ///   - error: The method to use for redirecting the standard error.
 /// - Returns: a `ExecutionRecord` containing the result of the run.
 public func run<
-    Input: InputProtocol,
     Output: Sendable,
     Error: Sendable
 >(
@@ -39,7 +38,7 @@ public func run<
     environment: Environment = .inherit,
     workingDirectory: FilePath? = nil,
     platformOptions: PlatformOptions = PlatformOptions(),
-    input: Input = .none,
+    input: InputMethod = .none,
     output: OutputMethod<Output>,
     error: ErrorOutputMethod<Error> = .discarded
 ) async throws -> ExecutionRecord<Output, Error> {
@@ -118,15 +117,14 @@ public func run<
 ///   - body: The custom execution body to manually control the running process
 /// - Returns: an `ExecutableResult` type containing the return value of the closure.
 public func run<
-    Result,
-    Input: InputProtocol
+    Result
 >(
     _ executable: Executable,
     arguments: Arguments = [],
     environment: Environment = .inherit,
     workingDirectory: FilePath? = nil,
     platformOptions: PlatformOptions = PlatformOptions(),
-    input: Input = .none,
+    input: InputMethod = .none,
     output: OutputMethod<Void> = .discarded,
     error: ErrorOutputMethod<Void> = .discarded,
     isolation: isolated (any Actor)? = #isolation,
@@ -167,13 +165,13 @@ public func run<
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom execution body to manually control the running process.
 /// - Returns: an `ExecutableResult` type containing the return value of the closure.
-public func run<Result, Input: InputProtocol>(
+public func run<Result>(
     _ executable: Executable,
     arguments: Arguments = [],
     environment: Environment = .inherit,
     workingDirectory: FilePath? = nil,
     platformOptions: PlatformOptions = PlatformOptions(),
-    input: Input = .none,
+    input: InputMethod = .none,
     error: ErrorOutputMethod<Void> = .discarded,
     preferredBufferSize: Int? = nil,
     isolation: isolated (any Actor)? = #isolation,
@@ -214,13 +212,13 @@ public func run<Result, Input: InputProtocol>(
 ///   - isolation: the isolation context to run the body closure.
 ///   - body: The custom execution body to manually control the running process
 /// - Returns: an `ExecutableResult` type containing the return value of the closure.
-public func run<Result, Input: InputProtocol>(
+public func run<Result>(
     _ executable: Executable,
     arguments: Arguments = [],
     environment: Environment = .inherit,
     workingDirectory: FilePath? = nil,
     platformOptions: PlatformOptions = PlatformOptions(),
-    input: Input = .none,
+    input: InputMethod = .none,
     output: OutputMethod<Void>,
     preferredBufferSize: Int? = nil,
     isolation: isolated (any Actor)? = #isolation,
@@ -407,12 +405,12 @@ public func run<
         standardError: Error
     )
 
-    let customInput = CustomWriteInput()
+    let customInput: InputMethod = ._customWrite
     let outputPipe = try output._createPipe()
     let errorPipe = try error._createPipe(outputPipe)
 
     let result = try await configuration.run(
-        input: try customInput.createPipe(),
+        input: try customInput._createPipe(),
         output: outputPipe,
         error: errorPipe,
     ) { execution, inputIO, outputIO, errorIO in
@@ -455,12 +453,11 @@ public func run<
 ///   - error: The method to use for redirecting the standard error.
 /// - Returns: a `ExecutionRecord` containing the result of the run.
 public func run<
-    Input: InputProtocol,
     Output: Sendable,
     Error: Sendable
 >(
     _ configuration: Configuration,
-    input: Input = .none,
+    input: InputMethod = .none,
     output: OutputMethod<Output>,
     error: ErrorOutputMethod<Error> = .discarded
 ) async throws -> ExecutionRecord<Output, Error> {
@@ -469,7 +466,7 @@ public func run<
         standardOutput: Output,
         standardError: Error
     )
-    let inputPipe = try input.createPipe()
+    let inputPipe = try input._createPipe()
     let outputPipe = try output._createPipe()
     let errorPipe = try error._createPipe(outputPipe)
 
@@ -492,7 +489,7 @@ public func run<
             group.addTask {
                 if let writeFd = inputIOContainer.take() {
                     let writer = StandardInputWriter(diskIO: writeFd)
-                    try await input.write(with: writer)
+                    try await input._write(writer)
                     try await writer.finish()
                 }
                 return nil
@@ -561,17 +558,16 @@ public func run<
 /// - Returns an executableResult type containing the return value
 ///     of the closure.
 public func run<
-    Result,
-    Input: InputProtocol
+    Result
 >(
     _ configuration: Configuration,
-    input: Input = .none,
+    input: InputMethod = .none,
     output: OutputMethod<Void> = .discarded,
     error: ErrorOutputMethod<Void> = .discarded,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution) async throws -> Result)
 ) async throws -> ExecutionOutcome<Result> {
-    let inputPipe = try input.createPipe()
+    let inputPipe = try input._createPipe()
     let outputPipe = try output._createPipe()
     let errorPipe = try error._createPipe(outputPipe)
 
@@ -589,7 +585,7 @@ public func run<
             group.addTask {
                 if let inputIO = inputIOContainer.take() {
                     let writer = StandardInputWriter(diskIO: inputIO)
-                    try await input.write(with: writer)
+                    try await input._write(writer)
                     try await writer.finish()
                 }
             }
@@ -618,18 +614,17 @@ public func run<
 /// - Returns an executableResult type containing the return value
 ///     of the closure.
 public func run<
-    Result,
-    Input: InputProtocol
+    Result
 >(
     _ configuration: Configuration,
-    input: Input = .none,
+    input: InputMethod = .none,
     error: ErrorOutputMethod<Void> = .discarded,
     preferredBufferSize: Int? = nil,
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, AsyncBufferSequence) async throws -> Result)
 ) async throws -> ExecutionOutcome<Result> {
     let outputPipe = try CreatedPipe(closeWhenDone: true, purpose: .output)
-    let inputPipe = try input.createPipe()
+    let inputPipe = try input._createPipe()
     let errorPipe = try error._createPipe(outputPipe)
 
     return try await configuration.run(
@@ -648,7 +643,7 @@ public func run<
             group.addTask {
                 if let inputIO = inputIOContainer.take() {
                     let writer = StandardInputWriter(diskIO: inputIO)
-                    try await input.write(with: writer)
+                    try await input._write(writer)
                     try await writer.finish()
                 }
             }
@@ -681,9 +676,9 @@ public func run<
 ///   - body: The custom execution body to manually control the running process
 /// - Returns an executableResult type containing the return value
 ///     of the closure.
-public func run<Result, Input: InputProtocol>(
+public func run<Result>(
     _ configuration: Configuration,
-    input: Input = .none,
+    input: InputMethod = .none,
     output: OutputMethod<Void>,
     preferredBufferSize: Int? = nil,
     isolation: isolated (any Actor)? = #isolation,
@@ -693,7 +688,7 @@ public func run<Result, Input: InputProtocol>(
     let errorPipe = try CreatedPipe(closeWhenDone: true, purpose: .output)
 
     return try await configuration.run(
-        input: try input.createPipe(),
+        input: try input._createPipe(),
         output: outputPipe,
         error: errorPipe,
     ) { execution, inputIO, outputIO, errorIO in
@@ -708,7 +703,7 @@ public func run<Result, Input: InputProtocol>(
             group.addTask {
                 if let inputIO = inputIOContainer.take() {
                     let writer = StandardInputWriter(diskIO: inputIO)
-                    try await input.write(with: writer)
+                    try await input._write(writer)
                     try await writer.finish()
                 }
             }
@@ -748,9 +743,9 @@ public func run<Result>(
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
 ) async throws -> ExecutionOutcome<Result> {
-    let input = CustomWriteInput()
+    let input: InputMethod = ._customWrite
     let outputPipe = try CreatedPipe(closeWhenDone: true, purpose: .output)
-    let inputPipe = try input.createPipe()
+    let inputPipe = try input._createPipe()
     let errorPipe = try error._createPipe(outputPipe)
 
     return try await configuration.run(
@@ -790,11 +785,11 @@ public func run<Result>(
     isolation: isolated (any Actor)? = #isolation,
     body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
 ) async throws -> ExecutionOutcome<Result> {
-    let input = CustomWriteInput()
+    let input: InputMethod = ._customWrite
     let errorPipe = try CreatedPipe(closeWhenDone: true, purpose: .output)
 
     return try await configuration.run(
-        input: try input.createPipe(),
+        input: try input._createPipe(),
         output: try output._createPipe(),
         error: errorPipe,
     ) { execution, inputIO, outputIO, errorIO in
@@ -835,12 +830,12 @@ public func run<Result>(
         ) async throws -> Result
     )
 ) async throws -> ExecutionOutcome<Result> {
-    let input = CustomWriteInput()
+    let input: InputMethod = ._customWrite
     let outputPipe = try CreatedPipe(closeWhenDone: true, purpose: .output)
     let errorPipe = try CreatedPipe(closeWhenDone: true, purpose: .output)
 
     return try await configuration.run(
-        input: try input.createPipe(),
+        input: try input._createPipe(),
         output: outputPipe,
         error: errorPipe
     ) { execution, inputIO, outputIO, errorIO in

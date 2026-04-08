@@ -2623,13 +2623,12 @@ struct TestSetup {
 }
 
 func _run<
-    Input: InputProtocol,
     Output: Sendable,
     Error: Sendable
 >(
     _ testSetup: TestSetup,
     platformOptions: PlatformOptions = PlatformOptions(),
-    input: Input,
+    input: InputMethod,
     output: OutputMethod<Output>,
     error: ErrorOutputMethod<Error>
 ) async throws -> ExecutionRecord<Output, Error> {
@@ -2669,11 +2668,10 @@ func _run<
 #endif
 
 func _run<
-    Result,
-    Input: InputProtocol
+    Result
 >(
     _ setup: TestSetup,
-    input: Input,
+    input: InputMethod,
     error: ErrorOutputMethod<Void>,
     preferredBufferSize: Int? = nil,
     body: ((Execution, AsyncBufferSequence) async throws -> Result)
