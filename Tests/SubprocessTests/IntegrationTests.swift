@@ -2624,14 +2624,14 @@ struct TestSetup {
 
 func _run<
     Input: InputProtocol,
-    Output: OutputProtocol,
-    Error: ErrorOutputProtocol
+    Output: Sendable,
+    Error: Sendable
 >(
     _ testSetup: TestSetup,
     platformOptions: PlatformOptions = PlatformOptions(),
     input: Input,
-    output: Output,
-    error: Error
+    output: OutputMethod<Output>,
+    error: ErrorOutputMethod<Error>
 ) async throws -> ExecutionRecord<Output, Error> {
     return try await Subprocess.run(
         testSetup.executable,
@@ -2648,13 +2648,13 @@ func _run<
 #if SubprocessSpan
 func _run<
     InputElement: BitwiseCopyable,
-    Output: OutputProtocol,
-    Error: ErrorOutputProtocol
+    Output: Sendable,
+    Error: Sendable
 >(
     _ testSetup: TestSetup,
     input: borrowing Span<InputElement>,
-    output: Output,
-    error: Error
+    output: OutputMethod<Output>,
+    error: ErrorOutputMethod<Error>
 ) async throws -> ExecutionRecord<Output, Error> {
     return try await Subprocess.run(
         testSetup.executable,
@@ -2670,15 +2670,14 @@ func _run<
 
 func _run<
     Result,
-    Input: InputProtocol,
-    Error: ErrorOutputProtocol
+    Input: InputProtocol
 >(
     _ setup: TestSetup,
     input: Input,
-    error: Error,
+    error: ErrorOutputMethod<Void>,
     preferredBufferSize: Int? = nil,
     body: ((Execution, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionOutcome<Result> where Error.OutputType == Void {
+) async throws -> ExecutionOutcome<Result> {
     return try await Subprocess.run(
         setup.executable,
         arguments: setup.arguments,
@@ -2692,13 +2691,12 @@ func _run<
 }
 
 func _run<
-    Result,
-    Error: ErrorOutputProtocol
+    Result
 >(
     _ setup: TestSetup,
-    error: Error,
+    error: ErrorOutputMethod<Void>,
     body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionOutcome<Result> where Error.OutputType == Void {
+) async throws -> ExecutionOutcome<Result> {
     return try await Subprocess.run(
         setup.executable,
         arguments: setup.arguments,
@@ -2710,13 +2708,12 @@ func _run<
 }
 
 func _run<
-    Result,
-    Output: OutputProtocol
+    Result
 >(
     _ setup: TestSetup,
-    output: Output,
+    output: OutputMethod<Void>,
     body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionOutcome<Result> where Output.OutputType == Void {
+) async throws -> ExecutionOutcome<Result> {
     return try await Subprocess.run(
         setup.executable,
         arguments: setup.arguments,

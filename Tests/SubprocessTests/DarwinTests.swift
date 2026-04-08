@@ -94,6 +94,19 @@ struct SubprocessDarwinTests {
             for try await _ in standardOutput {}
         }
     }
+
+    @Test func testAPI() async throws {
+        do {
+            let result = try await run(.path("/bin/cat"), output: .string(limit: .max))
+        } catch let subprocessError as SubprocessError {
+            switch subprocessError {
+            case .spawnFailed:
+                print(subprocessError)
+            default:
+                break
+            }
+        }
+    }
 }
 
 extension FileDescriptor {

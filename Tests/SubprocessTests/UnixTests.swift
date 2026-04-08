@@ -489,10 +489,10 @@ extension SubprocessUnixTests {
     }
 }
 
-internal func assertNewSessionCreated<Output: OutputProtocol>(
+internal func assertNewSessionCreated<Error: Sendable>(
     with result: ExecutionRecord<
-        StringOutput<UTF8>,
-        Output
+        String?,
+        Error
     >
 ) throws {
     try assertNewSessionCreated(

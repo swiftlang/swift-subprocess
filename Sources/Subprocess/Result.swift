@@ -35,23 +35,23 @@ public struct ExecutionOutcome<Result: Sendable>: Sendable {
 /// The result of a subprocess execution with its collected
 /// standard output and standard error.
 public struct ExecutionRecord<
-    Output: OutputProtocol,
-    Error: OutputProtocol
+    Output: Sendable,
+    Error: Sendable
 >: Sendable {
     /// The process identifier for the executed subprocess
     public let processIdentifier: ProcessIdentifier
     /// The termination status of the executed subprocess
     public let terminationStatus: TerminationStatus
     /// The captured standard output of the executed subprocess.
-    public let standardOutput: Output.OutputType
+    public let standardOutput: Output
     /// The captured standard error of the executed subprocess.
-    public let standardError: Error.OutputType
+    public let standardError: Error
 
     internal init(
         processIdentifier: ProcessIdentifier,
         terminationStatus: TerminationStatus,
-        standardOutput: Output.OutputType,
-        standardError: Error.OutputType
+        standardOutput: Output,
+        standardError: Error
     ) {
         self.processIdentifier = processIdentifier
         self.terminationStatus = terminationStatus
@@ -62,12 +62,12 @@ public struct ExecutionRecord<
 
 // MARK: - ExecutionRecord Conformances
 
-extension ExecutionRecord: Equatable where Output.OutputType: Equatable, Error.OutputType: Equatable {}
+extension ExecutionRecord: Equatable where Output: Equatable, Error: Equatable {}
 
-extension ExecutionRecord: Hashable where Output.OutputType: Hashable, Error.OutputType: Hashable {}
+extension ExecutionRecord: Hashable where Output: Hashable, Error: Hashable {}
 
 extension ExecutionRecord: CustomStringConvertible
-where Output.OutputType: CustomStringConvertible, Error.OutputType: CustomStringConvertible {
+where Output: CustomStringConvertible, Error: CustomStringConvertible {
     /// A textual representation of the collected result.
     public var description: String {
         return """
@@ -82,7 +82,7 @@ where Output.OutputType: CustomStringConvertible, Error.OutputType: CustomString
 }
 
 extension ExecutionRecord: CustomDebugStringConvertible
-where Output.OutputType: CustomDebugStringConvertible, Error.OutputType: CustomDebugStringConvertible {
+where Output: CustomDebugStringConvertible, Error: CustomDebugStringConvertible {
     /// A debug-oriented textual representation of the collected result.
     public var debugDescription: String {
         return """

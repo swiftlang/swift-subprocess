@@ -35,8 +35,7 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
     #endif
 
     /// Iterator for `AsyncBufferSequence`.
-    @_nonSendable
-    public struct Iterator: AsyncIteratorProtocol {
+    public struct Iterator: AsyncIteratorProtocol, Sendable {
         /// The element type for the iterator.
         public typealias Element = Buffer
 

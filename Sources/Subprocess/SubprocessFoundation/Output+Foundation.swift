@@ -21,35 +21,58 @@ import FoundationEssentials
 
 /// A concrete `Output` type for subprocesses that collects output
 /// from the subprocess as data.
-public struct DataOutput: OutputProtocol, ErrorOutputProtocol {
+internal struct DataOutput: OutputProtocol {
     /// The output type for this output option
-    public typealias OutputType = Data
+    typealias OutputType = Data
     /// The maximum number of bytes to collect.
-    public let maxSize: Int
+    let maxSize: Int
 
     #if SubprocessSpan
     /// Create data from a raw span.
-    public func output(from span: RawSpan) throws(SubprocessError) -> Data {
+    func output(from span: RawSpan) throws(SubprocessError) -> Data {
         return Data(span)
     }
     #else
     /// Create a data from sequence of 8-bit unsigned integers.
-    public func output(from buffer: some Sequence<UInt8>) throws(SubprocessError) -> Data {
+    func output(from buffer: some Sequence<UInt8>) throws(SubprocessError) -> Data {
         return Data(buffer)
     }
     #endif
 
-    internal init(limit: Int) {
+    init(limit: Int) {
         self.maxSize = limit
     }
 }
 
-extension OutputProtocol where Self == DataOutput {
+extension OutputMethod where T == Data {
     /// Create a `Subprocess` output that collects output as `Data`
     /// with given buffer limit in bytes. Subprocess throws an error
     /// if the child process emits more bytes than the limit.
-    public static func data(limit: Int) -> Self {
-        return .init(limit: limit)
+    public static func data(limit: Int) -> OutputMethod<Data> {
+        let inner = DataOutput(limit: limit)
+        return OutputMethod<Data>(
+            maxSize: limit,
+            createPipe: { try CreatedPipe(closeWhenDone: true, purpose: .output) },
+            captureOutput: { diskIO in
+                try await inner.captureOutput(from: diskIO)
+            }
+        )
+    }
+}
+
+extension ErrorOutputMethod where T == Data {
+    /// Create a `Subprocess` error output that collects error output as `Data`
+    /// with given buffer limit in bytes. Subprocess throws an error
+    /// if the child process emits more bytes than the limit.
+    public static func data(limit: Int) -> ErrorOutputMethod<Data> {
+        let inner = DataOutput(limit: limit)
+        return ErrorOutputMethod<Data>(
+            maxSize: limit,
+            createPipe: { _ in try CreatedPipe(closeWhenDone: true, purpose: .output) },
+            captureOutput: { diskIO in
+                try await inner.captureOutput(from: diskIO)
+            }
+        )
     }
 }
 

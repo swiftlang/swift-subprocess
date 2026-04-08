@@ -21,15 +21,287 @@ import SystemPackage
 
 internal import Dispatch
 
-// MARK: - Output
+// MARK: - OutputMethod
 
-/// Output protocol specifies the set of methods that a type must implement to
-/// serve as the output target for a subprocess.
+/// Specifies how a subprocess should handle its standard output.
 ///
-/// Instead of developing custom implementations of `OutputProtocol`, use the
-/// default implementations provided by the `Subprocess` library to specify the
-/// output handling requirements.
-public protocol OutputProtocol: Sendable, ~Copyable {
+/// Use the provided static factory methods (`.discarded`, `.string(limit:)`,
+/// `.bytes(limit:)`, `.fileDescriptor(_:closeAfterSpawningProcess:)`) to create
+/// output configurations. Custom implementations are not supported.
+public struct OutputMethod<T: Sendable>: Sendable {
+    internal let maxSize: Int
+    internal let _createPipe: @Sendable () throws -> CreatedPipe
+    internal let _captureOutput: @Sendable (consuming IOChannel?) async throws -> T
+
+    internal init(
+        maxSize: Int,
+        createPipe: @escaping @Sendable () throws -> CreatedPipe,
+        captureOutput: @escaping @Sendable (consuming IOChannel?) async throws -> T
+    ) {
+        self.maxSize = maxSize
+        self._createPipe = createPipe
+        self._captureOutput = captureOutput
+    }
+}
+
+extension OutputMethod where T == Void {
+    /// Create a Subprocess output that discards the output.
+    ///
+    /// On Unix-like systems, this redirects the standard output of the
+    /// subprocess to `/dev/null`, while on Windows, redirects to `NUL`.
+    public static var discarded: OutputMethod<Void> {
+        let inner = DiscardedOutput()
+        return OutputMethod<Void>(
+            maxSize: 0,
+            createPipe: { try inner.createPipe() },
+            captureOutput: { _ in }
+        )
+    }
+
+    /// Create a Subprocess output that writes output to a `FileDescriptor`
+    /// and optionally close the `FileDescriptor` once process spawned.
+    public static func fileDescriptor(
+        _ fd: FileDescriptor,
+        closeAfterSpawningProcess: Bool
+    ) -> OutputMethod<Void> {
+        let inner = FileDescriptorOutput(
+            fileDescriptor: fd,
+            closeAfterSpawningProcess: closeAfterSpawningProcess
+        )
+        return OutputMethod<Void>(
+            maxSize: 0,
+            createPipe: { try inner.createPipe() },
+            captureOutput: { _ in }
+        )
+    }
+
+    /// Create a Subprocess output that writes output to the standard output of
+    /// current process.
+    ///
+    /// The file descriptor isn't closed afterwards.
+    public static var standardOutput: OutputMethod<Void> {
+        return .fileDescriptor(
+            .standardOutput,
+            closeAfterSpawningProcess: false
+        )
+    }
+
+    /// Create a Subprocess output that writes output to the standard error of
+    /// current process.
+    ///
+    /// The file descriptor isn't closed afterwards.
+    public static var standardError: OutputMethod<Void> {
+        return .fileDescriptor(
+            .standardError,
+            closeAfterSpawningProcess: false
+        )
+    }
+
+    /// Internal: creates a pipe for streaming output via `AsyncBufferSequence`.
+    internal static var _sequence: OutputMethod<Void> {
+        return OutputMethod<Void>(
+            maxSize: 0,
+            createPipe: { try CreatedPipe(closeWhenDone: true, purpose: .output) },
+            captureOutput: { _ in }
+        )
+    }
+}
+
+extension OutputMethod where T == String? {
+    /// Create a `Subprocess` output that collects output as UTF8 String
+    /// with a buffer limit in bytes. Subprocess throws an error if the
+    /// child process emits more bytes than the limit.
+    public static func string(limit: Int) -> OutputMethod<String?> {
+        let inner = StringOutput(limit: limit, encoding: UTF8.self)
+        return OutputMethod<String?>(
+            maxSize: limit,
+            createPipe: { try CreatedPipe(closeWhenDone: true, purpose: .output) },
+            captureOutput: { diskIO in
+                try await inner.captureOutput(from: diskIO)
+            }
+        )
+    }
+}
+
+extension OutputMethod {
+    /// Create a `Subprocess` output that collects output as
+    /// `String` using the given encoding up to limit in bytes.
+    /// Subprocess throws an error if the child process emits
+    /// more bytes than the limit.
+    public static func string<Encoding: Unicode.Encoding>(
+        limit: Int,
+        encoding: Encoding.Type
+    ) -> OutputMethod<String?> where T == String? {
+        let inner = StringOutput(limit: limit, encoding: encoding)
+        return OutputMethod<String?>(
+            maxSize: limit,
+            createPipe: { try CreatedPipe(closeWhenDone: true, purpose: .output) },
+            captureOutput: { diskIO in
+                try await inner.captureOutput(from: diskIO)
+            }
+        )
+    }
+}
+
+extension OutputMethod where T == [UInt8] {
+    /// Create a `Subprocess` output that collects output as
+    /// `[UInt8]` with a buffer limit in bytes. Subprocess throws
+    /// an error if the child process emits more bytes than the limit.
+    public static func bytes(limit: Int) -> OutputMethod<[UInt8]> {
+        let inner = BytesOutput(limit: limit)
+        return OutputMethod<[UInt8]>(
+            maxSize: limit,
+            createPipe: { try CreatedPipe(closeWhenDone: true, purpose: .output) },
+            captureOutput: { diskIO in
+                guard let diskIO else { return [] }
+                return try await inner.captureOutput(from: diskIO)
+            }
+        )
+    }
+}
+
+// MARK: - ErrorOutputMethod
+
+/// Specifies how a subprocess should handle its standard error output.
+///
+/// Use the provided static factory methods (`.discarded`, `.string(limit:)`,
+/// `.bytes(limit:)`, `.combineWithOutput`, etc.) to create error output
+/// configurations. Custom implementations are not supported.
+public struct ErrorOutputMethod<T: Sendable>: Sendable {
+    internal let maxSize: Int
+    internal let _createPipe: @Sendable (borrowing CreatedPipe) throws -> CreatedPipe
+    internal let _captureOutput: @Sendable (consuming IOChannel?) async throws -> T
+
+    internal init(
+        maxSize: Int,
+        createPipe: @escaping @Sendable (borrowing CreatedPipe) throws -> CreatedPipe,
+        captureOutput: @escaping @Sendable (consuming IOChannel?) async throws -> T
+    ) {
+        self.maxSize = maxSize
+        self._createPipe = createPipe
+        self._captureOutput = captureOutput
+    }
+}
+
+extension ErrorOutputMethod where T == Void {
+    /// Create a Subprocess error output that discards the error output.
+    public static var discarded: ErrorOutputMethod<Void> {
+        let inner = DiscardedOutput()
+        return ErrorOutputMethod<Void>(
+            maxSize: 0,
+            createPipe: { _ in try inner.createPipe() },
+            captureOutput: { _ in }
+        )
+    }
+
+    /// Creates an error output that combines standard error with standard output.
+    ///
+    /// When using `combineWithOutput`, both standard output and standard error from
+    /// the child process are merged into a single output stream. This is equivalent
+    /// to using shell redirection like `2>&1`.
+    ///
+    /// This is useful when you want to capture or redirect both output streams
+    /// together, making it possible to process all subprocess output as a unified
+    /// stream rather than handling standard output and standard error separately.
+    ///
+    /// - Returns: An `ErrorOutputMethod` that merges standard error
+    ///   with standard output.
+    public static var combineWithOutput: ErrorOutputMethod<Void> {
+        return ErrorOutputMethod<Void>(
+            maxSize: 0,
+            createPipe: { outputPipe in
+                try CreatedPipe(duplicating: outputPipe)
+            },
+            captureOutput: { _ in }
+        )
+    }
+
+    /// Create a Subprocess error output that writes to a `FileDescriptor`
+    /// and optionally close the `FileDescriptor` once process spawned.
+    public static func fileDescriptor(
+        _ fd: FileDescriptor,
+        closeAfterSpawningProcess: Bool
+    ) -> ErrorOutputMethod<Void> {
+        let inner = FileDescriptorOutput(
+            fileDescriptor: fd,
+            closeAfterSpawningProcess: closeAfterSpawningProcess
+        )
+        return ErrorOutputMethod<Void>(
+            maxSize: 0,
+            createPipe: { _ in try inner.createPipe() },
+            captureOutput: { _ in }
+        )
+    }
+
+    /// Create a Subprocess error output that writes to the standard error of
+    /// current process.
+    ///
+    /// The file descriptor isn't closed afterwards.
+    public static var standardError: ErrorOutputMethod<Void> {
+        return .fileDescriptor(
+            .standardError,
+            closeAfterSpawningProcess: false
+        )
+    }
+}
+
+extension ErrorOutputMethod where T == String? {
+    /// Create a `Subprocess` error output that collects error output as UTF8 String
+    /// with a buffer limit in bytes. Subprocess throws an error if the
+    /// child process emits more bytes than the limit.
+    public static func string(limit: Int) -> ErrorOutputMethod<String?> {
+        let inner = StringOutput(limit: limit, encoding: UTF8.self)
+        return ErrorOutputMethod<String?>(
+            maxSize: limit,
+            createPipe: { _ in try CreatedPipe(closeWhenDone: true, purpose: .output) },
+            captureOutput: { diskIO in
+                try await inner.captureOutput(from: diskIO)
+            }
+        )
+    }
+}
+
+extension ErrorOutputMethod {
+    /// Create a `Subprocess` error output that collects error output as
+    /// `String` using the given encoding up to limit in bytes.
+    /// Subprocess throws an error if the child process emits
+    /// more bytes than the limit.
+    public static func string<Encoding: Unicode.Encoding>(
+        limit: Int,
+        encoding: Encoding.Type
+    ) -> ErrorOutputMethod<String?> where T == String? {
+        let inner = StringOutput(limit: limit, encoding: encoding)
+        return ErrorOutputMethod<String?>(
+            maxSize: limit,
+            createPipe: { _ in try CreatedPipe(closeWhenDone: true, purpose: .output) },
+            captureOutput: { diskIO in
+                try await inner.captureOutput(from: diskIO)
+            }
+        )
+    }
+}
+
+extension ErrorOutputMethod where T == [UInt8] {
+    /// Create a `Subprocess` error output that collects error output as
+    /// `[UInt8]` with a buffer limit in bytes. Subprocess throws
+    /// an error if the child process emits more bytes than the limit.
+    public static func bytes(limit: Int) -> ErrorOutputMethod<[UInt8]> {
+        let inner = BytesOutput(limit: limit)
+        return ErrorOutputMethod<[UInt8]>(
+            maxSize: limit,
+            createPipe: { _ in try CreatedPipe(closeWhenDone: true, purpose: .output) },
+            captureOutput: { diskIO in
+                guard let diskIO else { return [] }
+                return try await inner.captureOutput(from: diskIO)
+            }
+        )
+    }
+}
+
+// MARK: - Internal Output Protocol
+
+/// Internal protocol used by the concrete output type implementations.
+internal protocol OutputProtocol: Sendable, ~Copyable {
     associatedtype OutputType: Sendable
 
     #if SubprocessSpan
@@ -46,22 +318,15 @@ public protocol OutputProtocol: Sendable, ~Copyable {
 
 extension OutputProtocol {
     /// The max amount of data to collect for this output.
-    public var maxSize: Int { 128 * 1024 }
+    internal var maxSize: Int { 128 * 1024 }
 }
 
-/// A concrete output type for subprocesses that indicates that the
-/// subprocess should not collect or redirect output from the child
-/// process.
-///
-/// On Unix-like systems, `DiscardedOutput` redirects the
-/// standard output of the subprocess to `/dev/null`, while on Windows,
-/// redirects the output to `NUL`.
-public struct DiscardedOutput: OutputProtocol, ErrorOutputProtocol {
-    /// The type for the output.
-    public typealias OutputType = Void
+// MARK: - Internal Concrete Output Types
 
-    internal func createPipe() throws(SubprocessError) -> CreatedPipe {
+internal struct DiscardedOutput: OutputProtocol {
+    typealias OutputType = Void
 
+    func createPipe() throws(SubprocessError) -> CreatedPipe {
         #if os(Windows)
         let devnullFd: FileDescriptor = try .openDevNull(withAccessMode: .writeOnly)
         let devnull = HANDLE(bitPattern: _get_osfhandle(devnullFd.rawValue))!
@@ -74,22 +339,16 @@ public struct DiscardedOutput: OutputProtocol, ErrorOutputProtocol {
         )
     }
 
-    internal init() {}
+    init() {}
 }
 
-/// A concrete output type for subprocesses that writes output
-/// to a specified file descriptor.
-///
-/// Developers have the option to instruct the `Subprocess` to automatically
-/// close the related `FileDescriptor` after the subprocess is spawned.
-public struct FileDescriptorOutput: OutputProtocol, ErrorOutputProtocol {
-    /// The type for this output.
-    public typealias OutputType = Void
+internal struct FileDescriptorOutput: OutputProtocol {
+    typealias OutputType = Void
 
     private let closeAfterSpawningProcess: Bool
     private let fileDescriptor: FileDescriptor
 
-    internal func createPipe() throws(SubprocessError) -> CreatedPipe {
+    func createPipe() throws(SubprocessError) -> CreatedPipe {
         #if canImport(WinSDK)
         let writeFd = HANDLE(bitPattern: _get_osfhandle(self.fileDescriptor.rawValue))!
         #else
@@ -104,7 +363,7 @@ public struct FileDescriptorOutput: OutputProtocol, ErrorOutputProtocol {
         )
     }
 
-    internal init(
+    init(
         fileDescriptor: FileDescriptor,
         closeAfterSpawningProcess: Bool
     ) {
@@ -113,17 +372,12 @@ public struct FileDescriptorOutput: OutputProtocol, ErrorOutputProtocol {
     }
 }
 
-/// A concrete `Output` type for subprocesses that collects output
-/// from the subprocess as `String` with the given encoding.
-public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol, ErrorOutputProtocol {
-    /// The type for this output.
-    public typealias OutputType = String?
-    /// The max number of bytes to collect.
-    public let maxSize: Int
+internal struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol {
+    typealias OutputType = String?
+    let maxSize: Int
 
     #if SubprocessSpan
-    /// Create a string from a raw span.
-    public func output(from span: RawSpan) throws -> String? {
+    func output(from span: RawSpan) throws -> String? {
         // FIXME: Span to String
         var array: [UInt8] = []
         for index in 0..<span.byteCount {
@@ -133,27 +387,22 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol, ErrorOut
     }
     #endif
 
-    /// Create a String from a sequence of 8-bit unsigned integers.
-    public func output(from buffer: some Sequence<UInt8>) throws -> String? {
+    func output(from buffer: some Sequence<UInt8>) throws -> String? {
         // FIXME: Span to String
         let array = Array(buffer)
         return String(decodingBytes: array, as: Encoding.self)
     }
 
-    internal init(limit: Int, encoding: Encoding.Type) {
+    init(limit: Int, encoding: Encoding.Type) {
         self.maxSize = limit
     }
 }
 
-/// A concrete `Output` type for subprocesses that collects output from
-/// the subprocess as `[UInt8]`.
-public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
-    /// The output type for this output option
-    public typealias OutputType = [UInt8]
-    /// The max number of bytes to collect
-    public let maxSize: Int
+internal struct BytesOutput: OutputProtocol {
+    typealias OutputType = [UInt8]
+    let maxSize: Int
 
-    internal func captureOutput(
+    func captureOutput(
         from diskIO: consuming IOChannel
     ) async throws(SubprocessError) -> [UInt8] {
         #if SUBPROCESS_ASYNCIO_DISPATCH
@@ -186,159 +435,29 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
     }
 
     #if SubprocessSpan
-    /// Create an Array from `RawSpawn`.
-    /// Not implemented
-    public func output(from span: RawSpan) throws -> [UInt8] {
+    func output(from span: RawSpan) throws -> [UInt8] {
         fatalError("Not implemented")
     }
     #endif
-    /// Create an Array from `Sequence<UInt8>`.
-    /// Not implemented
-    public func output(from buffer: some Sequence<UInt8>) throws -> [UInt8] {
+
+    func output(from buffer: some Sequence<UInt8>) throws -> [UInt8] {
         fatalError("Not implemented")
     }
 
-    internal init(limit: Int) {
+    init(limit: Int) {
         self.maxSize = limit
     }
 }
 
-/// A concrete `Output` type for subprocesses that redirects the child output to
-/// the `.standardOutput` (a sequence) or `.standardError` property of
-/// `Execution`. This output type is only applicable to the `run()` family that
-/// takes a custom closure.
 internal struct SequenceOutput: OutputProtocol {
-    /// The output type for this output option
-    public typealias OutputType = Void
-
-    internal init() {}
-}
-
-extension OutputProtocol where Self == DiscardedOutput {
-    /// Create a Subprocess output that discards the output
-    public static var discarded: Self { .init() }
-}
-
-extension OutputProtocol where Self == FileDescriptorOutput {
-    /// Create a Subprocess output that writes output to a `FileDescriptor`
-    /// and optionally close the `FileDescriptor` once process spawned.
-    public static func fileDescriptor(
-        _ fd: FileDescriptor,
-        closeAfterSpawningProcess: Bool
-    ) -> Self {
-        return .init(fileDescriptor: fd, closeAfterSpawningProcess: closeAfterSpawningProcess)
-    }
-
-    /// Create a Subprocess output that writes output to the standard output of
-    /// current process.
-    ///
-    /// The file descriptor isn't closed afterwards.
-    public static var standardOutput: Self {
-        return Self.fileDescriptor(
-            .standardOutput,
-            closeAfterSpawningProcess: false
-        )
-    }
-
-    /// Create a Subprocess output that write output to the standard error of
-    /// current process.
-    ///
-    /// The file descriptor isn't closed afterwards.
-    public static var standardError: Self {
-        return Self.fileDescriptor(
-            .standardError,
-            closeAfterSpawningProcess: false
-        )
-    }
-}
-
-extension OutputProtocol where Self == StringOutput<UTF8> {
-    /// Create a `Subprocess` output that collects output as UTF8 String
-    /// with a buffer limit in bytes. Subprocess throws an error if the
-    /// child process emits more bytes than the limit.
-    public static func string(limit: Int) -> Self {
-        return .init(limit: limit, encoding: UTF8.self)
-    }
-}
-
-extension OutputProtocol {
-    /// Create a `Subprocess` output that collects output as
-    /// `String` using the given encoding up to limit in bytes.
-    /// Subprocess throws an error if the child process emits
-    /// more bytes than the limit.
-    public static func string<Encoding: Unicode.Encoding>(
-        limit: Int,
-        encoding: Encoding.Type
-    ) -> Self where Self == StringOutput<Encoding> {
-        return .init(limit: limit, encoding: encoding)
-    }
-}
-
-extension OutputProtocol where Self == BytesOutput {
-    /// Create a `Subprocess` output that collects output as
-    /// `Buffer` with a buffer limit in bytes. Subprocess throws
-    /// an error if the child process emits more bytes than the limit.
-    public static func bytes(limit: Int) -> Self {
-        return .init(limit: limit)
-    }
-}
-
-// MARK: - ErrorOutputProtocol
-
-/// Error output protocol specifies the set of methods that a type must implement to
-/// serve as the error output target for a subprocess.
-///
-/// Instead of developing custom implementations of `ErrorOutputProtocol`, use the
-/// default implementations provided by the `Subprocess` library to specify the
-/// output handling requirements.
-public protocol ErrorOutputProtocol: OutputProtocol {}
-
-/// A concrete error output type for subprocesses that combines the standard error
-/// output with the standard output stream.
-///
-/// When `CombinedErrorOutput` is used as the error output for a subprocess, both
-/// standard output and standard error from the child process are merged into a
-/// single output stream. This is equivalent to using shell redirection like `2>&1`.
-///
-/// This output type is useful when you want to capture or redirect both output
-/// streams together, making it possible to process all subprocess output as a unified
-/// stream rather than handling standard output and standard error separately.
-public struct CombinedErrorOutput: ErrorOutputProtocol {
-    public typealias OutputType = Void
-}
-
-extension ErrorOutputProtocol {
-    internal func createPipe(from outputPipe: borrowing CreatedPipe) throws(SubprocessError) -> CreatedPipe {
-        if self is CombinedErrorOutput {
-            return try CreatedPipe(duplicating: outputPipe)
-        }
-        return try createPipe()
-    }
-}
-
-extension ErrorOutputProtocol where Self == CombinedErrorOutput {
-    /// Creates an error output that combines standard error with standard output.
-    ///
-    /// When using `combineWithOutput`, both standard output and standard error from
-    /// the child process are merged into a single output stream. This is equivalent
-    /// to using shell redirection like `2>&1`.
-    ///
-    /// This is useful when you want to capture or redirect both output streams
-    /// together, making it possible to process all subprocess output as a unified
-    /// stream rather than handling standard output and standard error separately
-    ///
-    /// - Returns: A `CombinedErrorOutput` instance that merges standard error
-    ///   with standard output.
-    public static var combineWithOutput: Self {
-        return CombinedErrorOutput()
-    }
+    typealias OutputType = Void
+    init() {}
 }
 
 // MARK: - Span Default Implementations
 #if SubprocessSpan
 extension OutputProtocol {
-    /// Create an Array from `Sequence<UInt8>`.
-    public func output(from buffer: some Sequence<UInt8>) throws -> OutputType {
+    func output(from buffer: some Sequence<UInt8>) throws -> OutputType {
         guard let rawBytes: UnsafeRawBufferPointer = buffer as? UnsafeRawBufferPointer else {
             fatalError("Unexpected input type passed: \(type(of: buffer))")
         }
@@ -348,21 +467,10 @@ extension OutputProtocol {
 }
 #endif
 
-// MARK: - Default Implementations
-extension OutputProtocol {
-    @_disfavoredOverload
-    internal func createPipe() throws(SubprocessError) -> CreatedPipe {
-        if let discard = self as? DiscardedOutput {
-            return try discard.createPipe()
-        } else if let fdOutput = self as? FileDescriptorOutput {
-            return try fdOutput.createPipe()
-        }
-        // Base pipe based implementation for everything else
-        return try CreatedPipe(closeWhenDone: true, purpose: .output)
-    }
+// MARK: - Default Capture Implementation
 
+extension OutputProtocol {
     /// Capture the output from the subprocess up to maxSize
-    @_disfavoredOverload
     internal func captureOutput(
         from diskIO: consuming IOChannel?
     ) async throws -> OutputType {
@@ -370,18 +478,10 @@ extension OutputProtocol {
             try diskIO?.safelyClose()
             return () as! OutputType
         }
-        // `diskIO` is only `nil` for any types that conform to `OutputProtocol`
-        // and have `Void` as ``OutputType` (i.e. `DiscardedOutput`). Since we
-        // made sure `OutputType` is not `Void` on the line above, `diskIO`
-        // must not be nil; otherwise, this is a programmer error.
         guard var diskIO else {
             fatalError(
                 "Internal Inconsistency Error: diskIO must not be nil when OutputType is not Void"
             )
-        }
-
-        if let bytesOutput = self as? BytesOutput {
-            return try await bytesOutput.captureOutput(from: diskIO) as! Self.OutputType
         }
 
         #if SUBPROCESS_ASYNCIO_DISPATCH
@@ -392,8 +492,6 @@ extension OutputProtocol {
         do {
             var maxLength = self.maxSize
             if maxLength != .max {
-                // If we actually have a max length, attempt to read one
-                // more byte to determine whether output exceeds the limit
                 maxLength += 1
             }
             result = try await AsyncIO.shared.read(from: diskIO, upTo: maxLength)
@@ -416,16 +514,13 @@ extension OutputProtocol {
 }
 
 extension OutputProtocol where OutputType == Void {
-    internal func captureOutput(from fileDescriptor: consuming IOChannel?) async throws {}
-
     #if SubprocessSpan
-    /// Convert the output from raw span to expected output type
-    public func output(from span: RawSpan) throws {
+    func output(from span: RawSpan) throws {
         fatalError("Unexpected call to \(#function)")
     }
     #endif
-    /// Convert the output from a sequence of 8-bit unsigned integers to expected output type.
-    public func output(from buffer: some Sequence<UInt8>) throws {
+
+    func output(from buffer: some Sequence<UInt8>) throws {
         fatalError("Unexpected call to \(#function)")
     }
 }
@@ -462,6 +557,8 @@ extension OutputProtocol {
     #endif // SUBPROCESS_ASYNCIO_DISPATCH
 }
 #endif
+
+// MARK: - Utilities
 
 extension DispatchData {
     internal func array() -> [UInt8] {
