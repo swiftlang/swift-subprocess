@@ -25,19 +25,12 @@ struct ProtocolConformanceTests {
         struct JSONOutput<T: Decodable & Sendable>: OutputProtocol {
             typealias OutputType = T
 
-            #if SubprocessSpan
             func output(from span: RawSpan) throws -> T {
                 try span.withUnsafeBytes { buffer in
                     let data = Data(bytes: buffer.baseAddress!, count: buffer.count)
                     return try JSONDecoder().decode(T.self, from: data)
                 }
             }
-            #else
-            func output(from buffer: some Sequence<UInt8>) throws -> T {
-                let data = Data(Array(buffer))
-                return try JSONDecoder().decode(T.self, from: data)
-            }
-            #endif
         }
 
         struct Item: Codable, Sendable, Equatable {
