@@ -104,35 +104,68 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
         )
     }
 
-    /// Creates a line sequence that iterates through this buffer sequence line by line.
-    public func lines() -> LineSequence<UTF8> {
-        return LineSequence(
+    /// Splits the buffer into strings using the specified separator.
+    ///
+    /// - Parameters:
+    ///   - separator: The delimiter to split on. The default
+    ///     value is `.lineBreaks`.
+    ///   - bufferingPolicy: The strategy for handling
+    ///     back-pressure. The default value is
+    ///     `.maxLineLength(128 * 1024)`.
+    /// - Returns: A ``StringSequence`` that iterates through
+    ///   the buffer contents as strings.
+    public func strings(
+        separatedBy separator: StringSequence<UTF8>.Separator = .lineBreaks,
+        bufferingPolicy: StringSequence<UTF8>.BufferingPolicy = .maxLineLength(128 * 1024),
+    ) -> StringSequence<UTF8> {
+        return StringSequence(
             underlying: self,
             encoding: UTF8.self,
-            bufferingPolicy: .maxLineLength(128 * 1024)
+            bufferingPolicy: bufferingPolicy,
+            separator: separator
         )
     }
 
-    /// Creates a line sequence that iterates through this buffer sequence line by line.
+    /// Splits the buffer into strings with the given encoding
+    /// and separator.
+    ///
     /// - Parameters:
-    ///   - encoding: The target encoding for strings.
-    ///   - bufferingPolicy: The strategy for handling back-pressure.
-    /// - Returns: A ``LineSequence`` that iterates through this buffer sequence line by line.
-    public func lines<Encoding: _UnicodeEncoding>(
-        encoding: Encoding.Type,
-        bufferingPolicy: LineSequence<Encoding>.BufferingPolicy = .maxLineLength(128 * 1024)
-    ) -> LineSequence<Encoding> {
-        return LineSequence(underlying: self, encoding: encoding, bufferingPolicy: bufferingPolicy)
+    ///   - separator: The delimiter to split on. The default
+    ///     value is `.lineBreaks`.
+    ///   - bufferingPolicy: The strategy for handling
+    ///     back-pressure. The default value is
+    ///     `.maxLineLength(128 * 1024)`.
+    ///   - encoding: The Unicode encoding to decode with.
+    /// - Returns: A ``StringSequence`` that iterates through
+    ///   the buffer contents as strings.
+    public func strings<Encoding: _UnicodeEncoding>(
+        separatedBy separator: StringSequence<Encoding>.Separator = .lineBreaks,
+        bufferingPolicy: StringSequence<Encoding>.BufferingPolicy = .maxLineLength(128 * 1024),
+        as encoding: Encoding.Type,
+    ) -> StringSequence<Encoding> {
+        return StringSequence(
+            underlying: self,
+            encoding: encoding,
+            bufferingPolicy: bufferingPolicy,
+            separator: separator
+        )
     }
 }
 
 @available(*, unavailable)
 extension AsyncBufferSequence.Iterator: Sendable {}
 
-// MARK: - LineSequence
+// MARK: - StringSequence
 extension AsyncBufferSequence {
-    /// Line sequence parses and splits an asynchronous sequence of buffers into lines.
-    /// The following list of Unicode characters are considered as paragraph separators (new lines):
+    /// An asynchronous sequence of strings parsed from a buffer
+    /// sequence.
+    ///
+    /// By default, the sequence splits on Unicode line break
+    /// characters. You can supply a custom separator with the
+    /// ``Separator/unicodeScalarSequence(_:)`` factory method.
+    ///
+    /// The following Unicode characters are recognized as line
+    /// breaks:
     /// ```
     /// LF:    Line Feed, U+000A
     /// VT:    Vertical Tab, U+000B
@@ -143,18 +176,23 @@ extension AsyncBufferSequence {
     /// LS:    Line Separator, U+2028
     /// PS:    Paragraph Separator, U+2029
     /// ```
-    /// These newline characters are not included in the lines returned,
-    /// similar to how `.split(separator:)` works.
     ///
-    /// `LineSequence` is the preferred method to convert `Buffer` to `String`
-    public struct LineSequence<Encoding: _UnicodeEncoding>: AsyncSequence, Sendable {
+    /// The separator characters aren't included in the returned
+    /// strings, similar to how `.split(separator:)` works.
+    ///
+    /// When you use a custom separator created with
+    /// ``Separator/unicodeScalarSequence(_:)``, the sequence performs a
+    /// code-unit-level comparison without Unicode normalization.
+    /// See ``Separator/unicodeScalarSequence(_:)`` for details.
+    public struct StringSequence<Encoding: _UnicodeEncoding>: AsyncSequence, Sendable {
         /// The element type for the asynchronous sequence.
         public typealias Element = String
 
         private let base: AsyncBufferSequence
         private let bufferingPolicy: BufferingPolicy
+        private let separator: Separator
 
-        /// The iterator for line sequence.
+        /// An iterator for ``StringSequence``.
         public struct AsyncIterator: AsyncIteratorProtocol {
             /// The element type for this Iterator.
             public typealias Element = String
@@ -166,10 +204,13 @@ extension AsyncBufferSequence {
             private var leftover: Encoding.CodeUnit?
             private var eofReached: Bool
             private let bufferingPolicy: BufferingPolicy
+            private let separator: Separator
+            private let separatorCodeUnits: [Encoding.CodeUnit]
 
             internal init(
                 underlyingIterator: AsyncBufferSequence.AsyncIterator,
-                bufferingPolicy: BufferingPolicy
+                bufferingPolicy: BufferingPolicy,
+                separator: Separator
             ) {
                 self.source = underlyingIterator
                 self.buffer = []
@@ -178,6 +219,29 @@ extension AsyncBufferSequence {
                 self.leftover = nil
                 self.eofReached = false
                 self.bufferingPolicy = bufferingPolicy
+                self.separator = separator
+                // Pre-compute separator code unit sequences for
+                // .unicodeScalarSequence cases.
+                // Both use the same buffer-tail matching algorithm:
+                // encode each separator into its code unit representation,
+                // then suffix-match against the buffer on each incoming
+                // code unit. This is correct because UTF-8 and UTF-16
+                // are self-synchronizing encodings: a valid encoded
+                // sequence can never appear as a sub-alignment of
+                // another sequence.
+                switch separator.storage {
+                case .lineBreaks:
+                    // Line breaks uses builtin separators
+                    self.separatorCodeUnits = []
+                case .unicodeScalarSequence(let customScalars):
+                    var result: [Encoding.CodeUnit] = []
+                    for scalar in customScalars {
+                        if let encoded = Encoding.encode(scalar) {
+                            result.append(contentsOf: encoded)
+                        }
+                    }
+                    self.separatorCodeUnits = result
+                }
             }
 
             /// Retrieves the next line, or `nil` if the sequence ended.
@@ -223,7 +287,7 @@ extension AsyncBufferSequence {
                         self.buffer.removeAll(keepingCapacity: true)
                     }
                     if self.buffer.isEmpty {
-                        return nil
+                        return ""
                     }
                     return String(decoding: self.buffer, as: Encoding.self)
                 }
@@ -297,52 +361,79 @@ extension AsyncBufferSequence {
                         throw SubprocessError.outputLimitExceeded(limit: maxLength)
                     }
 
-                    buffer.append(first)
-                    switch first {
-                    case carriageReturn:
-                        // Swallow up any subsequent LF
-                        guard let next = try await nextFromSource() else {
-                            return yield() // if we ran out of bytes, the last byte was a CR
-                        }
-                        buffer.append(next)
-                        guard next == lineFeed else {
-                            // if the next character was not an LF, save it for the next iteration and still return a line
-                            leftover = buffer.removeLast()
+                    switch self.separator.storage {
+                    case .lineBreaks:
+                        switch first {
+                        case carriageReturn:
+                            // Swallow up any subsequent LF
+                            guard let next = try await nextFromSource() else {
+                                return yield() // if we ran out of bytes, the last byte was a CR
+                            }
+                            guard next == lineFeed else {
+                                // if the next character was not an LF, save it for the next iteration and still return a line
+                                leftover = next
+                                return yield()
+                            }
                             return yield()
-                        }
-                        return yield()
-                    case newLine1 where Encoding.CodeUnit.self is UInt8.Type: // this may be used to compose other UTF8 characters
-                        guard let next = try await nextFromSource() else {
-                            // technically invalid UTF8 but it should be repaired to "\u{FFFD}"
+                        case newLine1 where Encoding.CodeUnit.self is UInt8.Type: // this may be used to compose other UTF8 characters
+                            guard let next = try await nextFromSource() else {
+                                // technically invalid UTF8 but it should be repaired to "\u{FFFD}"
+                                buffer.append(first)
+                                return yield()
+                            }
+                            guard next == newLine2 else {
+                                // This character is not a valid newLine. Treat it as normal character
+                                buffer.append(first)
+                                buffer.append(next)
+                                continue
+                            }
                             return yield()
-                        }
-                        buffer.append(next)
-                        guard next == newLine2 else {
+                        case lineSeparator1 where Encoding.CodeUnit.self is UInt8.Type,
+                            paragraphSeparator1 where Encoding.CodeUnit.self is UInt8.Type:
+                            // Try to read: 80 [A8 | A9].
+                            // If we can't, then we put the byte in the buffer for error correction
+                            guard let next = try await nextFromSource() else {
+                                buffer.append(first)
+                                return yield()
+                            }
+                            guard next == lineSeparator2 || next == paragraphSeparator2 else {
+                                // Invalid lineSeparator. Treat it as normal charcter.
+                                buffer.append(first)
+                                buffer.append(next)
+                                continue
+                            }
+                            guard let fin = try await nextFromSource() else {
+                                // Invalid lineSeparator. Treat it as normal charcter.
+                                buffer.append(first)
+                                buffer.append(next)
+                                return yield()
+                            }
+                            guard fin == lineSeparator3 || fin == paragraphSeparator3 else {
+                                // Invalid lineSeparator. Treat it as normal charcter.
+                                buffer.append(first)
+                                buffer.append(next)
+                                buffer.append(fin)
+                                continue
+                            }
+                            return yield()
+                        case lineFeed..<carriageReturn, newLine1, lineSeparator1, paragraphSeparator1:
+                            return yield()
+                        default:
+                            buffer.append(first)
                             continue
                         }
-                        return yield()
-                    case lineSeparator1 where Encoding.CodeUnit.self is UInt8.Type,
-                        paragraphSeparator1 where Encoding.CodeUnit.self is UInt8.Type:
-                        // Try to read: 80 [A8 | A9].
-                        // If we can't, then we put the byte in the buffer for error correction
-                        guard let next = try await nextFromSource() else {
-                            return yield()
-                        }
-                        buffer.append(next)
-                        guard next == lineSeparator2 || next == paragraphSeparator2 else {
+                    case .unicodeScalarSequence:
+                        // Suffix match against the precomputed separator code units
+                        buffer.append(first)
+                        guard buffer.count >= self.separatorCodeUnits.count else {
                             continue
                         }
-                        guard let fin = try await nextFromSource() else {
+                        if buffer.suffix(
+                            self.separatorCodeUnits.count
+                        ).elementsEqual(self.separatorCodeUnits) {
+                            buffer.removeLast(self.separatorCodeUnits.count)
                             return yield()
                         }
-                        buffer.append(fin)
-                        guard fin == lineSeparator3 || fin == paragraphSeparator3 else {
-                            continue
-                        }
-                        return yield()
-                    case lineFeed..<carriageReturn, newLine1, lineSeparator1, paragraphSeparator1:
-                        return yield()
-                    default:
                         continue
                     }
                 }
@@ -360,29 +451,32 @@ extension AsyncBufferSequence {
             }
         }
 
-        /// Creates an iterator for this line sequence.
+        /// Creates an iterator for this string sequence.
         public func makeAsyncIterator() -> AsyncIterator {
             return AsyncIterator(
                 underlyingIterator: self.base.makeAsyncIterator(),
-                bufferingPolicy: self.bufferingPolicy
+                bufferingPolicy: self.bufferingPolicy,
+                separator: self.separator
             )
         }
 
         internal init(
             underlying: AsyncBufferSequence,
             encoding: Encoding.Type,
-            bufferingPolicy: BufferingPolicy
+            bufferingPolicy: BufferingPolicy,
+            separator: Separator
         ) {
             self.base = underlying
             self.bufferingPolicy = bufferingPolicy
+            self.separator = separator
         }
     }
 }
 
 @available(*, unavailable)
-extension AsyncBufferSequence.LineSequence.AsyncIterator: Sendable {}
+extension AsyncBufferSequence.StringSequence.AsyncIterator: Sendable {}
 
-extension AsyncBufferSequence.LineSequence {
+extension AsyncBufferSequence.StringSequence {
     /// A strategy for handling buffer capacity.
     public enum BufferingPolicy: Sendable {
         /// Adds to the buffer without imposing a limit on line length.
@@ -391,6 +485,76 @@ extension AsyncBufferSequence.LineSequence {
         ///
         /// The subprocess throws an error if a line exceeds this limit.
         case maxLineLength(Int)
+    }
+
+    /// A delimiter that determines where a ``StringSequence``
+    /// splits its input.
+    public struct Separator: Sendable, Hashable {
+        internal enum Storage: Sendable, Hashable {
+            case lineBreaks
+            case unicodeScalarSequence(Array<Unicode.Scalar>)
+        }
+
+        internal let storage: Storage
+
+        internal init(_ storage: Storage) {
+            self.storage = storage
+        }
+
+        /// Splits on Unicode line break characters.
+        /// The following Unicode characters are recognized as line
+        /// breaks:
+        /// ```
+        /// LF:    Line Feed, U+000A
+        /// VT:    Vertical Tab, U+000B
+        /// FF:    Form Feed, U+000C
+        /// CR:    Carriage Return, U+000D
+        /// CR+LF: CR (U+000D) followed by LF (U+000A)
+        /// NEL:   Next Line, U+0085
+        /// LS:    Line Separator, U+2028
+        /// PS:    Paragraph Separator, U+2029
+        /// ```
+        public static var lineBreaks: Self { .init(.lineBreaks) }
+
+        /// Splits on a custom sequence of Unicode scalars.
+        ///
+        /// ``StringSequence`` encodes the scalars into their code unit
+        /// representation and matches against the raw bytes in the
+        /// buffer. Unlike `String` comparison, this match doesn't
+        /// apply Unicode normalization. For example, "é" encoded
+        /// as U+00E9 (precomposed) doesn't match "é" encoded as
+        /// U+0065 U+0301 (decomposed). Make sure the separator
+        /// scalars use the same representation as the input data.
+        ///
+        /// - Parameter separators: The scalars that form
+        ///   the delimiter.
+        /// - Returns: A separator that matches the given
+        ///   scalar sequence.
+        public static func unicodeScalarSequence(
+            _ separators: some Sequence<Unicode.Scalar>
+        ) -> Self {
+            return .init(.unicodeScalarSequence(Array(separators)))
+        }
+
+        /// Splits on a custom sequence of Unicode scalars.
+        ///
+        /// ``StringSequence`` encodes the scalars into their code unit
+        /// representation and matches against the raw bytes in the
+        /// buffer. Unlike `String` comparison, this match doesn't
+        /// apply Unicode normalization. For example, "é" encoded
+        /// as U+00E9 (precomposed) doesn't match "é" encoded as
+        /// U+0065 U+0301 (decomposed). Make sure the separator
+        /// scalars use the same representation as the input data.
+        ///
+        /// - Parameter separators: The scalars that form
+        ///   the delimiter.
+        /// - Returns: A separator that matches the given
+        ///   scalar sequence.
+        public static func unicodeScalarSequence(
+            _ separators: Array<Unicode.Scalar>
+        ) -> Self {
+            return .init(.unicodeScalarSequence(separators))
+        }
     }
 }
 
