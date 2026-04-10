@@ -26,7 +26,7 @@ let packageSwiftSettings: [SwiftSetting] = [
 ]
 
 let package = Package(
-    name: "Subprocess",
+    name: "swift-subprocess",
     platforms: [.macOS(.v13), .iOS("99.0")],
     products: [
         .library(
