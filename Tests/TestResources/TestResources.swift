@@ -40,15 +40,6 @@ package var theMysteriousIsland: FilePath {
     return FilePath(path)
 }
 
-package var getgroupsSwift: FilePath {
-    let path = Bundle.module.url(
-        forResource: "getgroups",
-        withExtension: "swift",
-        subdirectory: "Resources"
-    )!._fileSystemPath
-    return FilePath(path)
-}
-
 package var windowsTester: FilePath {
     let path = Bundle.module.url(
         forResource: "windows-tester",

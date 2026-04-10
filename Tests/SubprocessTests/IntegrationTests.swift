@@ -35,7 +35,11 @@ import _SubprocessCShims
 @testable import Subprocess
 
 @Suite("Subprocess Integration (End to End) Tests", .serialized)
-struct SubprocessIntegrationTests {}
+struct SubprocessIntegrationTests {
+    init() {
+        _ = globallyIgnoredSIGPIPE
+    }
+}
 
 // MARK: - Executable Tests
 extension SubprocessIntegrationTests {

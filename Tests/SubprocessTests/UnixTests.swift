@@ -41,7 +41,11 @@ import SystemPackage
 #endif
 
 @Suite(.serialized)
-struct SubprocessUnixTests {}
+struct SubprocessUnixTests {
+    init() {
+        _ = globallyIgnoredSIGPIPE
+    }
+}
 
 // MARK: - PlatformOption Tests
 extension SubprocessUnixTests {
@@ -95,19 +99,26 @@ extension SubprocessUnixTests {
         }
         var platformOptions = PlatformOptions()
         platformOptions.supplementaryGroups = Array(expectedGroups)
+        // Use /usr/bin/id instead of `swift` to avoid dynamic linker
+        // issues: setgroups() replaces all supplementary groups, which
+        // can prevent the dynamic linker from finding libswiftCore.so
+        // on systems where library paths require specific group access.
         let idResult = try await Subprocess.run(
-            .name("swift"),
-            arguments: [getgroupsSwift.string],
+            .path("/usr/bin/id"),
+            arguments: ["-G"],
             platformOptions: platformOptions,
             output: .string(limit: .max),
             error: .string(limit: .max),
         )
-        #expect(idResult.terminationStatus.isSuccess)
+        #expect(idResult.terminationStatus.isSuccess, Comment(rawValue: idResult.standardError ?? ""))
         let ids = try #require(
             idResult.standardOutput
-        ).split(separator: ",")
+        ).split(separator: " ")
             .map { try #require(gid_t($0.trimmingCharacters(in: .whitespacesAndNewlines))) }
-        #expect(Set(ids) == expectedGroups)
+        // id -G includes the effective GID (0 for root) along with
+        // supplementary groups, so filter to just the expected range
+        let actualGroups = Set(ids.filter { expectedGroups.contains($0) })
+        #expect(actualGroups == expectedGroups, Comment(rawValue: idResult.standardError ?? ""))
     }
 
     @Test(
@@ -298,6 +309,8 @@ extension SubprocessUnixTests {
     func testRunawayProcess() async throws {
         do {
             try await withThrowingTaskGroup { group in
+                let (readyStream, readyContinuation) = AsyncStream.makeStream(of: Void.self)
+
                 group.addTask {
                     var platformOptions = PlatformOptions()
                     platformOptions.teardownSequence = [
@@ -322,15 +335,26 @@ extension SubprocessUnixTests {
                             """,
                         ],
                         platformOptions: platformOptions,
-                        output: .string(limit: .max),
-                        error: .fileDescriptor(.standardError, closeAfterSpawningProcess: false)
-                    )
+                        error: .fileDescriptor(.standardError, closeAfterSpawningProcess: false),
+                        preferredBufferSize: 1
+                    ) { execution, standardOutput in
+                        // Read stdout incrementally. Once we see the PID line,
+                        // we know the trap is set up and it's safe to send SIGINT.
+                        var grandChildPid: pid_t?
+                        for try await line in standardOutput.strings() {
+                            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if let pid = pid_t(trimmed) {
+                                grandChildPid = pid
+                                readyContinuation.finish()
+                            }
+                        }
+                        return grandChildPid
+                    }
                     #expect(result.terminationStatus.isSuccess)
-                    let output = try #require(result.standardOutput).trimmingNewLineAndQuotes()
-                    let grandChildPid = try #require(pid_t(output))
                     // Make sure the grand child `/usr/bin/yes` actually exited
                     // This is unfortunately racy because the pid isn't immediately invalided
                     // once `kill` returns. Allow a few failures and delay to counter this
+                    let grandChildPid = try #require(result.value)
                     for _ in 0..<10 {
                         let rc = kill(grandChildPid, 0)
                         if rc == 0 {
@@ -346,10 +370,11 @@ extension SubprocessUnixTests {
                     #expect(capturedError == ESRCH)
                 }
                 group.addTask {
-                    // Give the script some times to run
-                    try await Task.sleep(for: .milliseconds(100))
+                    // Wait until bash has echoed the PID (trap is set up)
+                    for await _ in readyStream {
+                    }
                 }
-                // Wait for the sleep task to finish
+                // Wait for the ready signal
                 _ = try await group.next()
                 // Cancel child process to trigger teardown
                 group.cancelAll()

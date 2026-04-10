@@ -615,6 +615,15 @@ int _subprocess_fork_exec(
             }
         }
 
+        if (number_of_sgroups > 0 && sgroups != NULL) {
+            // POSIX doesn't define setgroups (only getgroups) and therefore makes no guarantee of async-signal-safety,
+            // but we'll assume in practice it should be async-signal-safe on any reasonable platform based on the fact
+            // that getgroups is async-signal-safe.
+            if (setgroups(number_of_sgroups, sgroups) != 0) {
+                write_error_and_exit;
+            }
+        }
+
         if (uid != NULL) {
             if (setuid(*uid) != 0) {
                 write_error_and_exit;
@@ -623,15 +632,6 @@ int _subprocess_fork_exec(
 
         if (gid != NULL) {
             if (setgid(*gid) != 0) {
-                write_error_and_exit;
-            }
-        }
-
-        if (number_of_sgroups > 0 && sgroups != NULL) {
-            // POSIX doesn't define setgroups (only getgroups) and therefore makes no guarantee of async-signal-safety,
-            // but we'll assume in practice it should be async-signal-safe on any reasonable platform based on the fact
-            // that getgroups is async-signal-safe.
-            if (setgroups(number_of_sgroups, sgroups) != 0) {
                 write_error_and_exit;
             }
         }

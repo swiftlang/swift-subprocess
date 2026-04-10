@@ -26,6 +26,10 @@ import SystemPackage
 // MARK: PlatformOptions Tests
 @Suite(.serialized)
 struct SubprocessDarwinTests {
+    init() {
+        _ = globallyIgnoredSIGPIPE
+    }
+
     @Test func testSubprocessPlatformOptionsProcessConfiguratorUpdateSpawnAttr() async throws {
         var platformOptions = PlatformOptions()
         platformOptions.preSpawnProcessConfigurator = { spawnAttr, _ in
