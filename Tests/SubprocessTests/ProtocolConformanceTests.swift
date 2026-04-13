@@ -41,8 +41,8 @@ struct ProtocolConformanceTests {
 
         #if os(Windows)
         let result = try await Subprocess.run(
-            .name("cmd.exe"),
-            arguments: ["/c", "echo", json],
+            .name("powershell.exe"),
+            arguments: ["-Command", "Write-Output '\(json)'"],
             output: JSONOutput<Item>(),
             error: .discarded
         )
