@@ -33,6 +33,12 @@ import Synchronization
 private typealias MutexType = CRITICAL_SECTION
 private typealias ConditionType = CONDITION_VARIABLE
 private typealias ThreadType = HANDLE
+#elseif os(FreeBSD) || os(OpenBSD)
+// On FreeBSD/OpenBSD, pthread types are pointer types (e.g. struct pthread_mutex *),
+// and pthread functions expect nullable pointers to them.
+private typealias MutexType = pthread_mutex_t?
+private typealias ConditionType = pthread_cond_t?
+private typealias ThreadType = pthread_t
 #else
 private typealias MutexType = pthread_mutex_t
 private typealias ConditionType = pthread_cond_t
@@ -320,7 +326,7 @@ internal func pthread_create(
         (Unmanaged<AnyObject>.fromOpaque(context!).takeRetainedValue() as! Context).body()
         return context
     }
-    #if canImport(Glibc) || canImport(Bionic)
+    #if (canImport(Glibc) || canImport(Bionic)) && !os(FreeBSD) && !os(OpenBSD)
     var thread = pthread_t()
     #else
     var thread: pthread_t?
@@ -334,7 +340,7 @@ internal func pthread_create(
     if rc != 0 {
         throw Errno(rawValue: rc)
     }
-    #if canImport(Glibc) || canImport(Bionic)
+    #if (canImport(Glibc) || canImport(Bionic)) && !os(FreeBSD) && !os(OpenBSD)
     return thread
     #else
     return thread!

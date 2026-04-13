@@ -35,6 +35,10 @@ import _SubprocessCShims
 // MARK: PlatformOption Tests
 @Suite(.serialized)
 struct SubprocessLinuxTests {
+    init() {
+        _ = globallyIgnoredSIGPIPE
+    }
+
     @Test func testSuspendResumeProcess() async throws {
         func blockAndWaitForStatus(
             pid: pid_t,

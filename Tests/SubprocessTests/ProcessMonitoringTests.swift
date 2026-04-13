@@ -38,6 +38,7 @@ import _SubprocessCShims
 struct SubprocessProcessMonitoringTests {
 
     init() {
+        _ = globallyIgnoredSIGPIPE
         #if os(Linux) || os(Android)
         _setupMonitorSignalHandler()
         #endif

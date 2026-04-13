@@ -41,7 +41,7 @@ extern "C" {
 #endif
 
 int _subprocess_pthread_create(
-#if TARGET_OS_MAC
+#if TARGET_OS_MAC || defined(__FreeBSD__) || defined(__OpenBSD__)
     pthread_t _Nullable * _Nonnull ptr,
 #else
     pthread_t * _Nonnull ptr,

@@ -35,7 +35,11 @@ import _SubprocessCShims
 @testable import Subprocess
 
 @Suite("Subprocess.AsyncIO Unit Tests", .serialized)
-struct SubprocessAsyncIOTests {}
+struct SubprocessAsyncIOTests {
+    init() {
+        _ = globallyIgnoredSIGPIPE
+    }
+}
 
 // MARK: - Basic Functionality Tests
 extension SubprocessAsyncIOTests {
@@ -228,7 +232,7 @@ extension SubprocessAsyncIOTests {
 
 // MARK: - Utils
 extension SubprocessAsyncIOTests {
-    final class TestBed {
+    final class TestBed: Sendable {
         let ioChannel: Subprocess.IOChannel
 
         init(ioChannel: consuming Subprocess.IOChannel) {
@@ -255,18 +259,23 @@ extension SubprocessAsyncIOTests {
             let readIO = AsyncIO.shared
             let writeIO = AsyncIO()
 
+            // Create TestBeds in outer scope so both pipe endpoints
+            // stay alive until both tasks complete
+            let readTestBed = try TestBed(ioChannel: _require(readBox.take()))
+            let writeTestBed = try TestBed(ioChannel: _require(writeBox.take()))
+
             group.addTask {
-                var readIOContainer: IOChannel? = readBox.take()
-                let readTestBed = try TestBed(ioChannel: _require(readIOContainer.take()))
                 try await reader(readIO, readTestBed)
             }
             group.addTask {
-                var writeIOContainer: IOChannel? = writeBox.take()
-                let writeTestBed = try TestBed(ioChannel: _require(writeIOContainer.take()))
                 try await writer(writeIO, writeTestBed)
             }
 
             try await group.waitForAll()
+            // Keep both pipe endpoints alive until both tasks complete,
+            // preventing the DispatchIO cleanup handler from closing
+            // a pipe fd while the other task is still using it.
+            withExtendedLifetime((readTestBed, writeTestBed)) {}
             // Teardown
             // readIO shutdown is done via `atexit`.
             writeIO.shutdown()

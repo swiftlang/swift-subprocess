@@ -20,6 +20,29 @@ import FoundationEssentials
 import Testing
 import Subprocess
 
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Bionic)
+import Bionic
+#elseif canImport(Musl)
+import Musl
+#endif
+
+/// We receive a `SIGPIPE` if we write to a closed pipe, which crashes the process.
+///
+/// Some platforms have API that can be used to set state bits on a file descriptor
+/// that turn a `SIGPIPE` into an `EPIPE` instead, but this is not consistently available.
+///
+/// Instead, globally ignore `SIGPIPE` in tests to prevent us from crashing in this scenario.
+internal let globallyIgnoredSIGPIPE: Bool = {
+    #if canImport(Darwin) || canImport(Glibc) || canImport(Bionic) || canImport(Musl)
+    _ = signal(SIGPIPE, SIG_IGN)
+    #endif
+    return true
+}()
+
 #if canImport(System)
 import System
 #else

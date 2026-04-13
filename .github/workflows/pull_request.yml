@@ -10,7 +10,7 @@ on:
 jobs:
   tests:
     name: Test
-    uses: swiftlang/github-workflows/.github/workflows/swift_package_test.yml@0.0.6
+    uses: swiftlang/github-workflows/.github/workflows/swift_package_test.yml@0.0.10
     with:
       linux_os_versions: '["amazonlinux2", "bookworm", "noble", "jammy", "rhel-ubi9"]'
       linux_swift_versions: '["6.2", "nightly-main"]'
@@ -36,6 +36,8 @@ jobs:
           yum install -y procps
         fi
       linux_build_command: 'swift test && swift test -c release && swift test --disable-default-traits'
+      enable_freebsd_checks: true
+      freebsd_build_command: 'swift test && swift test -c release && swift test --disable-default-traits'
       windows_swift_versions: '["6.2", "nightly-main"]'
       windows_build_command: |
         Invoke-Program swift test
@@ -57,7 +59,7 @@ jobs:
 
   soundness:
     name: Soundness
-    uses: swiftlang/github-workflows/.github/workflows/soundness.yml@0.0.6
+    uses: swiftlang/github-workflows/.github/workflows/soundness.yml@0.0.10
     with:
       license_header_check_project_name: "Swift.org"
       docs_check_enabled: false
