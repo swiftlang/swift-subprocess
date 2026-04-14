@@ -62,7 +62,9 @@ public struct NoInput: InputProtocol {
 
     /// Writes the input to the subprocess asynchronously.
     public func write(with writer: StandardInputWriter) async throws {
-        fatalError("Unexpected call to \(#function)")
+        // Intentional no-op
+        // NoInput redirects stdin to /dev/null, so there is no
+        // data to write to the subprocess.
     }
 
     internal init() {}
@@ -93,7 +95,9 @@ public struct FileDescriptorInput: InputProtocol {
 
     /// Writes the input to the subprocess asynchronously.
     public func write(with writer: StandardInputWriter) async throws {
-        fatalError("Unexpected call to \(#function)")
+        // Intentional no-op
+        // FileDescriptorInput reads from a pre-existing file
+        // descriptor, so there is no data to write to the subprocess.
     }
 
     internal init(
@@ -148,7 +152,9 @@ internal struct CustomWriteInput: InputProtocol {
     /// Asynchronously write the input to the subprocess using the
     /// write file descriptor.
     public func write(with writer: StandardInputWriter) async throws {
-        fatalError("Unexpected call to \(#function)")
+        // Intentional no-op
+        // CustomWriteInput exposes the StandardInputWriter directly
+        // to the caller's closure, so writing is handled there instead.
     }
 
     internal init() {}

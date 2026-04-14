@@ -24,9 +24,6 @@ internal import Dispatch
 // MARK: - Output
 
 /// A type that serves as the output target for a subprocess.
-///
-/// Instead of creating custom implementations of ``OutputProtocol``, use the
-/// built-in implementations provided by the `Subprocess` library.
 public protocol OutputProtocol: Sendable, ~Copyable {
     associatedtype OutputType: Sendable
 
@@ -111,12 +108,10 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol, ErrorOut
 
     /// Creates a string from a raw span.
     public func output(from span: RawSpan) throws -> String? {
-        // FIXME: Span to String
-        var array: [UInt8] = []
-        for index in 0..<span.byteCount {
-            array.append(span.unsafeLoad(fromByteOffset: index, as: UInt8.self))
+        span.withUnsafeBytes { ptr in
+            let array = Array(ptr)
+            return String(decodingBytes: array, as: Encoding.self)
         }
-        return String(decodingBytes: array, as: Encoding.self)
     }
 
     internal init(limit: Int, encoding: Encoding.Type) {
@@ -165,7 +160,7 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
 
     /// Creates an array from a ``RawSpan``.
     public func output(from span: RawSpan) throws -> [UInt8] {
-        fatalError("Not implemented")
+        span.withUnsafeBytes { Array($0) }
     }
 
     internal init(limit: Int) {
@@ -378,7 +373,8 @@ extension OutputProtocol where OutputType == Void {
 
     /// Converts the output from a raw span to the expected output type.
     public func output(from span: RawSpan) throws {
-        fatalError("Unexpected call to \(#function)")
+        // When OutputType is Void, there is no output to process,
+        // So this is effectively a no-op.
     }
 }
 
