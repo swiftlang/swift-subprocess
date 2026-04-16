@@ -407,6 +407,52 @@ public func run<Result>(
     )
 }
 
+#if !os(Windows)
+/// Run an executable with given parameters specified by a `Configuration`
+/// in PTY mode and a custom closure to manage the running subprocess' lifetime, write to its
+/// standard input, and stream its combined output.
+/// - Parameters:
+///   - executable: The executable to run
+///   - arguments: The arguments to pass to the executable
+///   - environment: The environment in which to run the executable
+///   - workingDirectory: The working directory in which to run the executable.
+///   - platformOptions: The platform-specific options to use when running the executable.
+///   - pseudoterminalOptions: The configuration options for the pseudoterminal.
+///   - preferredBufferSize: The preferred size in bytes for the buffer used when reading
+///     from the subprocess's standard output and error stream. If `nil`, uses the system page size
+///     as the default buffer size. Larger buffer sizes may improve performance for
+///     subprocesses that produce large amounts of output, while smaller buffer sizes
+///     may reduce memory usage and improve responsiveness for interactive applications.
+///   - isolation: the isolation context to run the body closure.
+///   - body: The custom configuration body to manually control the running process,
+///         its pseudoterminal, write to its standard input, and stream its combined output and error.
+/// - Returns: an `ExecutionOutcome` type containing the return value of the closure.
+public func run<Result>(
+    _ executable: Executable,
+    arguments: Arguments = [],
+    environment: Environment = .inherit,
+    workingDirectory: FilePath? = nil,
+    platformOptions: PlatformOptions = PlatformOptions(),
+    pseudoterminalOptions: PseudoterminalOptions,
+    preferredBufferSize: Int? = nil,
+    isolation: isolated (any Actor)? = #isolation,
+    body: (Execution, Pseudoterminal, StandardInputWriter, AsyncBufferSequence) async throws -> Result
+) async throws -> ExecutionOutcome<Result> {
+    var configuration = Configuration(
+        executable: executable,
+        arguments: arguments,
+        environment: environment,
+        workingDirectory: workingDirectory,
+        platformOptions: platformOptions
+    )
+    return try await configuration.runPTY(
+        pseudoterminalOptions: pseudoterminalOptions,
+        preferredBufferSize: preferredBufferSize,
+        body: body
+    )
+}
+#endif
+
 // MARK: - Configuration Based
 
 /// Runs a configuration asynchronously and returns
@@ -909,3 +955,36 @@ public func run<Result>(
         return try await body(execution, writer, outputSequence, errorSequence)
     }
 }
+
+#if !os(Windows)
+/// Run an executable with given parameters specified by a `Configuration`
+/// in PTY mode and a custom closure to manage the running subprocess' lifetime, write to its
+/// standard input, and stream its combined output.
+/// - Parameters:
+///   - configuration: The `Subprocess` configuration to run.
+///   - pseudoterminalOptions: The configuration options for the pseudoterminal.
+///   - preferredBufferSize: The preferred size in bytes for the buffer used when reading
+///     from the subprocess's standard output and error stream. If `nil`, uses the system page size
+///     as the default buffer size. Larger buffer sizes may improve performance for
+///     subprocesses that produce large amounts of output, while smaller buffer sizes
+///     may reduce memory usage and improve responsiveness for interactive applications.
+///   - isolation: the isolation context to run the body closure.
+///   - body: The custom configuration body to manually control the running process,
+///         its pseudoterminal, write to its standard input, and stream its combined output and error.
+/// - Returns: an `ExecutionOutcome` type containing the return value of the closure.
+public func run<Result>(
+    _ configuration: Configuration,
+    pseudoterminalOptions: PseudoterminalOptions,
+    preferredBufferSize: Int? = nil,
+    isolation: isolated (any Actor)? = #isolation,
+    body: (Execution, Pseudoterminal, StandardInputWriter, AsyncBufferSequence) async throws -> Result
+) async throws -> ExecutionOutcome<Result> {
+    // Update environment and insert TERM
+    var updatedConfiguration = configuration
+    return try await updatedConfiguration.runPTY(
+        pseudoterminalOptions: pseudoterminalOptions,
+        preferredBufferSize: preferredBufferSize,
+        body: body
+    )
+}
+#endif

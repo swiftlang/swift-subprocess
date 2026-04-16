@@ -189,32 +189,17 @@ extension Configuration {
         let gidPtr: UnsafeMutablePointer<gid_t>?
     }
 
-    internal func spawn(
-        withInput inputPipe: consuming CreatedPipe,
-        outputPipe: consuming CreatedPipe,
-        errorPipe: consuming CreatedPipe
-    ) async throws -> SpawnResult {
+    internal func spawnCore(
+        fileActionsConfig: (inout posix_spawn_file_actions_t?) throws -> Void,
+    ) async throws -> Execution {
         // Instead of checking if every possible executable path
         // is valid, spawn each directly and catch ENOENT
         let possiblePaths = self.executable.possibleExecutablePaths(
             withPathValue: self.environment.pathValue()
         )
-        var inputPipeBox: CreatedPipe? = consume inputPipe
-        var outputPipeBox: CreatedPipe? = consume outputPipe
-        var errorPipeBox: CreatedPipe? = consume errorPipe
 
-        return try await self.preSpawn { args throws -> SpawnResult in
+        return try await self.preSpawn { args throws -> Execution in
             let (env, uidPtr, gidPtr, supplementaryGroups) = args
-            var _inputPipe = inputPipeBox.take()!
-            var _outputPipe = outputPipeBox.take()!
-            var _errorPipe = errorPipeBox.take()!
-
-            let inputReadFileDescriptor: IODescriptor? = _inputPipe.readFileDescriptor()
-            let inputWriteFileDescriptor: IODescriptor? = _inputPipe.writeFileDescriptor()
-            let outputReadFileDescriptor: IODescriptor? = _outputPipe.readFileDescriptor()
-            let outputWriteFileDescriptor: IODescriptor? = _outputPipe.writeFileDescriptor()
-            let errorReadFileDescriptor: IODescriptor? = _errorPipe.readFileDescriptor()
-            let errorWriteFileDescriptor: IODescriptor? = _errorPipe.writeFileDescriptor()
 
             for possibleExecutablePath in possiblePaths {
                 // Setup Arguments
@@ -225,7 +210,7 @@ extension Configuration {
                     for ptr in argv { ptr?.deallocate() }
                 }
 
-                // Setup file actions and spawn attributes
+                // Setup file actions
                 var fileActions: posix_spawn_file_actions_t? = nil
                 var spawnAttributes: posix_spawnattr_t? = nil
                 // Setup stdin, stdout, and stderr
@@ -233,121 +218,8 @@ extension Configuration {
                 defer {
                     posix_spawn_file_actions_destroy(&fileActions)
                 }
+                try fileActionsConfig(&fileActions)
 
-                // Input
-                var result: Int32 = -1
-                if inputReadFileDescriptor != nil {
-                    result = posix_spawn_file_actions_adddup2(
-                        &fileActions, inputReadFileDescriptor!.platformDescriptor(), 0)
-                    guard result == 0 else {
-                        try self.safelyCloseMultiple(
-                            inputRead: inputReadFileDescriptor,
-                            inputWrite: inputWriteFileDescriptor,
-                            outputRead: outputReadFileDescriptor,
-                            outputWrite: outputWriteFileDescriptor,
-                            errorRead: errorReadFileDescriptor,
-                            errorWrite: errorWriteFileDescriptor
-                        )
-                        throw SubprocessError.spawnFailed(
-                            withUnderlyingError: Errno(rawValue: result)
-                        )
-                    }
-                }
-                if inputWriteFileDescriptor != nil {
-                    // Close parent side
-                    result = posix_spawn_file_actions_addclose(
-                        &fileActions, inputWriteFileDescriptor!.platformDescriptor()
-                    )
-                    guard result == 0 else {
-                        try self.safelyCloseMultiple(
-                            inputRead: inputReadFileDescriptor,
-                            inputWrite: inputWriteFileDescriptor,
-                            outputRead: outputReadFileDescriptor,
-                            outputWrite: outputWriteFileDescriptor,
-                            errorRead: errorReadFileDescriptor,
-                            errorWrite: errorWriteFileDescriptor
-                        )
-                        throw SubprocessError.spawnFailed(
-                            withUnderlyingError: Errno(rawValue: result)
-                        )
-                    }
-                }
-                // Output
-                if outputWriteFileDescriptor != nil {
-                    result = posix_spawn_file_actions_adddup2(
-                        &fileActions, outputWriteFileDescriptor!.platformDescriptor(), 1
-                    )
-                    guard result == 0 else {
-                        try self.safelyCloseMultiple(
-                            inputRead: inputReadFileDescriptor,
-                            inputWrite: inputWriteFileDescriptor,
-                            outputRead: outputReadFileDescriptor,
-                            outputWrite: outputWriteFileDescriptor,
-                            errorRead: errorReadFileDescriptor,
-                            errorWrite: errorWriteFileDescriptor
-                        )
-                        throw SubprocessError.spawnFailed(
-                            withUnderlyingError: Errno(rawValue: result)
-                        )
-                    }
-                }
-                if outputReadFileDescriptor != nil {
-                    // Close parent side
-                    result = posix_spawn_file_actions_addclose(
-                        &fileActions, outputReadFileDescriptor!.platformDescriptor()
-                    )
-                    guard result == 0 else {
-                        try self.safelyCloseMultiple(
-                            inputRead: inputReadFileDescriptor,
-                            inputWrite: inputWriteFileDescriptor,
-                            outputRead: outputReadFileDescriptor,
-                            outputWrite: outputWriteFileDescriptor,
-                            errorRead: errorReadFileDescriptor,
-                            errorWrite: errorWriteFileDescriptor
-                        )
-                        throw SubprocessError.spawnFailed(
-                            withUnderlyingError: Errno(rawValue: result)
-                        )
-                    }
-                }
-                // Error
-                if errorWriteFileDescriptor != nil {
-                    result = posix_spawn_file_actions_adddup2(
-                        &fileActions, errorWriteFileDescriptor!.platformDescriptor(), 2
-                    )
-                    guard result == 0 else {
-                        try self.safelyCloseMultiple(
-                            inputRead: inputReadFileDescriptor,
-                            inputWrite: inputWriteFileDescriptor,
-                            outputRead: outputReadFileDescriptor,
-                            outputWrite: outputWriteFileDescriptor,
-                            errorRead: errorReadFileDescriptor,
-                            errorWrite: errorWriteFileDescriptor
-                        )
-                        throw SubprocessError.spawnFailed(
-                            withUnderlyingError: Errno(rawValue: result)
-                        )
-                    }
-                }
-                if errorReadFileDescriptor != nil {
-                    // Close parent side
-                    result = posix_spawn_file_actions_addclose(
-                        &fileActions, errorReadFileDescriptor!.platformDescriptor()
-                    )
-                    guard result == 0 else {
-                        try self.safelyCloseMultiple(
-                            inputRead: inputReadFileDescriptor,
-                            inputWrite: inputWriteFileDescriptor,
-                            outputRead: outputReadFileDescriptor,
-                            outputWrite: outputWriteFileDescriptor,
-                            errorRead: errorReadFileDescriptor,
-                            errorWrite: errorWriteFileDescriptor
-                        )
-                        throw SubprocessError.spawnFailed(
-                            withUnderlyingError: Errno(rawValue: result)
-                        )
-                    }
-                }
                 // Setup spawnAttributes
                 posix_spawnattr_init(&spawnAttributes)
                 defer {
@@ -365,6 +237,9 @@ extension Configuration {
                 if let pgid = self.platformOptions.processGroupID {
                     flags |= POSIX_SPAWN_SETPGROUP
                     spawnAttributeError = posix_spawnattr_setpgroup(&spawnAttributes, pid_t(pgid))
+                }
+                if self.platformOptions.createSession {
+                    flags |= POSIX_SPAWN_SETSID
                 }
                 spawnAttributeError = posix_spawnattr_setflags(&spawnAttributes, Int16(flags))
                 // Set QualityOfService
@@ -388,18 +263,9 @@ extension Configuration {
 
                 // Error handling
                 if chdirError != 0 || spawnAttributeError != 0 {
-                    try self.safelyCloseMultiple(
-                        inputRead: inputReadFileDescriptor,
-                        inputWrite: inputWriteFileDescriptor,
-                        outputRead: outputReadFileDescriptor,
-                        outputWrite: outputWriteFileDescriptor,
-                        errorRead: errorReadFileDescriptor,
-                        errorWrite: errorWriteFileDescriptor
-                    )
-
                     let error: SubprocessError
                     if spawnAttributeError != 0 {
-                        error = SubprocessError.spawnFailed(withUnderlyingError: Errno(rawValue: result))
+                        error = SubprocessError.spawnFailed(withUnderlyingError: Errno(rawValue: spawnAttributeError))
                     } else {
                         error = SubprocessError.failedToChangeWorkingDirectory(
                             self.workingDirectory?.string,
@@ -438,8 +304,7 @@ extension Configuration {
                                 spawnContext.uidPtr,
                                 spawnContext.gidPtr,
                                 Int32(supplementaryGroups?.count ?? 0),
-                                sgroups?.baseAddress,
-                                self.platformOptions.createSession ? 1 : 0
+                                sgroups?.baseAddress
                             )
                             return (rc, pid)
                         }
@@ -452,36 +317,12 @@ extension Configuration {
                         continue
                     }
                     // Throw all other errors
-                    try self.safelyCloseMultiple(
-                        inputRead: inputReadFileDescriptor,
-                        inputWrite: inputWriteFileDescriptor,
-                        outputRead: outputReadFileDescriptor,
-                        outputWrite: outputWriteFileDescriptor,
-                        errorRead: errorReadFileDescriptor,
-                        errorWrite: errorWriteFileDescriptor
-                    )
                     throw SubprocessError.spawnFailed(withUnderlyingError: Errno(rawValue: spawnError))
                 }
-
-                // After spawn finishes, close all child side fds
-                try self.safelyCloseMultiple(
-                    inputRead: inputReadFileDescriptor,
-                    inputWrite: nil,
-                    outputRead: nil,
-                    outputWrite: outputWriteFileDescriptor,
-                    errorRead: nil,
-                    errorWrite: errorWriteFileDescriptor
-                )
-
                 let execution = Execution(
                     processIdentifier: .init(value: pid)
                 )
-                return SpawnResult(
-                    execution: execution,
-                    inputWriteEnd: inputWriteFileDescriptor?.createIOChannel(),
-                    outputReadEnd: outputReadFileDescriptor?.createIOChannel(),
-                    errorReadEnd: errorReadFileDescriptor?.createIOChannel()
-                )
+                return execution
             }
 
             // If we reach this point, it means either the executable path
@@ -489,14 +330,6 @@ extension Configuration {
             // provide which one is not valid, here we make a best effort guess
             // by checking whether the working directory is valid. This technically
             // still causes TOUTOC issue, but it's the best we can do for error recovery.
-            try self.safelyCloseMultiple(
-                inputRead: inputReadFileDescriptor,
-                inputWrite: inputWriteFileDescriptor,
-                outputRead: outputReadFileDescriptor,
-                outputWrite: outputWriteFileDescriptor,
-                errorRead: errorReadFileDescriptor,
-                errorWrite: errorWriteFileDescriptor
-            )
             if let workingDirectory = self.workingDirectory?.string {
                 guard Configuration.pathAccessible(workingDirectory, mode: F_OK) else {
                     throw SubprocessError.failedToChangeWorkingDirectory(
@@ -510,6 +343,118 @@ extension Configuration {
                 underlyingError: Errno(rawValue: ENOENT)
             )
         }
+    }
+
+    internal func spawn(
+        withInput inputPipe: consuming CreatedPipe,
+        outputPipe: consuming CreatedPipe,
+        errorPipe: consuming CreatedPipe
+    ) async throws -> SpawnResult {
+        let inputReadFileDescriptor: IODescriptor? = inputPipe.readFileDescriptor()
+        let inputWriteFileDescriptor: IODescriptor? = inputPipe.writeFileDescriptor()
+        let outputReadFileDescriptor: IODescriptor? = outputPipe.readFileDescriptor()
+        let outputWriteFileDescriptor: IODescriptor? = outputPipe.writeFileDescriptor()
+        let errorReadFileDescriptor: IODescriptor? = errorPipe.readFileDescriptor()
+        let errorWriteFileDescriptor: IODescriptor? = errorPipe.writeFileDescriptor()
+
+        let execution: Execution
+        do {
+            execution = try await self.spawnCore { fileActions in
+                // Input
+                var result: Int32 = -1
+                if inputReadFileDescriptor != nil {
+                    result = posix_spawn_file_actions_adddup2(
+                        &fileActions, inputReadFileDescriptor!.platformDescriptor(), 0)
+                    guard result == 0 else {
+                        throw SubprocessError.spawnFailed(
+                            withUnderlyingError: Errno(rawValue: result)
+                        )
+                    }
+                }
+                if inputWriteFileDescriptor != nil {
+                    // Close parent side
+                    result = posix_spawn_file_actions_addclose(
+                        &fileActions, inputWriteFileDescriptor!.platformDescriptor()
+                    )
+                    guard result == 0 else {
+                        throw SubprocessError.spawnFailed(
+                            withUnderlyingError: Errno(rawValue: result)
+                        )
+                    }
+                }
+                // Output
+                if outputWriteFileDescriptor != nil {
+                    result = posix_spawn_file_actions_adddup2(
+                        &fileActions, outputWriteFileDescriptor!.platformDescriptor(), 1
+                    )
+                    guard result == 0 else {
+                        throw SubprocessError.spawnFailed(
+                            withUnderlyingError: Errno(rawValue: result)
+                        )
+                    }
+                }
+                if outputReadFileDescriptor != nil {
+                    // Close parent side
+                    result = posix_spawn_file_actions_addclose(
+                        &fileActions, outputReadFileDescriptor!.platformDescriptor()
+                    )
+                    guard result == 0 else {
+                        throw SubprocessError.spawnFailed(
+                            withUnderlyingError: Errno(rawValue: result)
+                        )
+                    }
+                }
+                // Error
+                if errorWriteFileDescriptor != nil {
+                    result = posix_spawn_file_actions_adddup2(
+                        &fileActions, errorWriteFileDescriptor!.platformDescriptor(), 2
+                    )
+                    guard result == 0 else {
+                        throw SubprocessError.spawnFailed(
+                            withUnderlyingError: Errno(rawValue: result)
+                        )
+                    }
+                }
+                if errorReadFileDescriptor != nil {
+                    // Close parent side
+                    result = posix_spawn_file_actions_addclose(
+                        &fileActions, errorReadFileDescriptor!.platformDescriptor()
+                    )
+                    guard result == 0 else {
+                        throw SubprocessError.spawnFailed(
+                            withUnderlyingError: Errno(rawValue: result)
+                        )
+                    }
+                }
+            }
+        } catch {
+            try? self.safelyCloseMultiple(
+                inputRead: inputReadFileDescriptor,
+                inputWrite: inputWriteFileDescriptor,
+                outputRead: outputReadFileDescriptor,
+                outputWrite: outputWriteFileDescriptor,
+                errorRead: errorReadFileDescriptor,
+                errorWrite: errorWriteFileDescriptor
+            )
+            throw error
+        }
+
+        // After spawn finishes, close all child side fds
+        try self.safelyCloseMultiple(
+            inputRead: inputReadFileDescriptor,
+            inputWrite: nil,
+            outputRead: nil,
+            outputWrite: outputWriteFileDescriptor,
+            errorRead: nil,
+            errorWrite: errorWriteFileDescriptor
+        )
+
+        return SpawnResult(
+            execution: execution,
+            inputWriteEnd: inputWriteFileDescriptor?.createIOChannel(),
+            outputReadEnd: outputReadFileDescriptor?.createIOChannel(),
+            errorReadEnd: errorReadFileDescriptor?.createIOChannel()
+        )
     }
 }
 
