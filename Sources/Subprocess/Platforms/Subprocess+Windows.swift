@@ -11,7 +11,7 @@
 
 #if canImport(WinSDK)
 
-@preconcurrency import WinSDK
+@preconcurrency public import WinSDK
 internal import Dispatch
 #if canImport(System)
 import System

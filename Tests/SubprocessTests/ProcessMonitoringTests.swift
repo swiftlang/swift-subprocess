@@ -204,7 +204,7 @@ extension SubprocessProcessMonitoringTests {
         let processIdentifier = ProcessIdentifier(
             value: .max, processDescriptor: INVALID_HANDLE_VALUE, threadHandle: INVALID_HANDLE_VALUE
         )
-        #elseif os(Linux) || os(Android) || os(FreeBSD)
+        #elseif os(Linux) || os(Android) || os(FreeBSD) || os(OpenBSD)
         let underlying = Errno(rawValue: ECHILD)
         let processIdentifier = ProcessIdentifier(
             value: .max, processDescriptor: -1

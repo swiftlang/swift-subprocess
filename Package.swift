@@ -22,7 +22,11 @@ dep.append(
 let defaultTraits: Set<String> = ["SubprocessFoundation"]
 
 let packageSwiftSettings: [SwiftSetting] = [
-    .define("SUBPROCESS_ASYNCIO_DISPATCH", .when(platforms: [.macOS, .custom("freebsd"), .openbsd]))
+    .define("SUBPROCESS_ASYNCIO_DISPATCH", .when(platforms: [.macOS, .custom("freebsd"), .openbsd])),
+    .enableUpcomingFeature("ExistentialAny"),
+    .enableUpcomingFeature("MemberImportVisibility"),
+    .enableUpcomingFeature("InternalImportsByDefault"),
+    .swiftLanguageMode(.v6),
 ]
 
 let package = Package(
@@ -77,7 +81,8 @@ let package = Package(
             path: "Tests/TestResources",
             resources: [
                 .copy("Resources")
-            ]
+            ],
+            swiftSettings: packageSwiftSettings
         ),
 
         .target(

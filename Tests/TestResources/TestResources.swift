@@ -17,9 +17,9 @@
 import Foundation
 
 #if canImport(System)
-import System
+package import System
 #else
-import SystemPackage
+package import SystemPackage
 #endif
 
 package var prideAndPrejudice: FilePath {

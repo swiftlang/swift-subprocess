@@ -10,9 +10,9 @@
 //===----------------------------------------------------------------------===//
 
 #if canImport(System)
-import System
+public import System
 #else
-import SystemPackage
+public import SystemPackage
 #endif
 
 #if canImport(Darwin)
@@ -24,7 +24,7 @@ import Glibc
 #elseif canImport(Musl)
 import Musl
 #elseif canImport(WinSDK)
-@preconcurrency import WinSDK
+@preconcurrency public import WinSDK
 #endif
 
 internal import Dispatch

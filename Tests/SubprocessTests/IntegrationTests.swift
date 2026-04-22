@@ -3026,7 +3026,7 @@ extension FileDescriptor {
     /// If `body` throws an error
     /// or an error occurs while closing the file descriptor,
     /// this method rethrows that error.
-    public func closeAfter<R>(_ body: () async throws -> R) async throws -> R {
+    func closeAfter<R>(_ body: () async throws -> R) async throws -> R {
         // No underscore helper, since the closure's throw isn't necessarily typed.
         let result: R
         do {
