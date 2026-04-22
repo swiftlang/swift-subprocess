@@ -73,7 +73,7 @@ jobs:
     container: swiftlang/swift:nightly-noble
     steps:
       - name: checkout sources
-        uses: actions/checkout@v1
+        uses: actions/checkout@v6
       - name: Install dependencies
         shell: bash
         run: apt update && apt install -y cmake ninja-build
