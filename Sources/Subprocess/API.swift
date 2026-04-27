@@ -255,6 +255,56 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
 }
 
 /// Runs an executable with given parameters and a custom closure to manage the
+/// running subprocess's lifetime and stream its standard output and error.
+/// - Parameters:
+///   - executable: The executable to run.
+///   - arguments: The arguments to pass to the executable.
+///   - environment: The environment in which to run the executable.
+///   - workingDirectory: The working directory in which to run the executable.
+///   - platformOptions: The platform-specific options to use when running the executable.
+///   - input: The input to send to the executable.
+///   - preferredBufferSize: The preferred size in bytes for the buffer used when reading
+///     from the subprocess's standard error stream. If `nil`, uses the system page size
+///     as the default buffer size. Larger buffer sizes may improve performance for
+///     subprocesses that produce large amounts of output, while smaller buffer sizes
+///     may reduce memory usage and improve responsiveness for interactive applications.
+///   - isolation: The isolation context to run the body closure.
+///   - body: A closure to manage the running process.
+///     All arguments passed to this closure are valid only for
+///     the duration of the closure's execution and must not be escaped.
+///     - execution: The running subprocess.
+///     - errorSequence: The standard error as an asynchronous sequence of buffers.
+/// - Returns: An ``ExecutionOutcome`` that contains the closure's return value.
+public func run<Result, Input: InputProtocol>(
+    _ executable: Executable,
+    arguments: Arguments = [],
+    environment: Environment = .inherit,
+    workingDirectory: FilePath? = nil,
+    platformOptions: PlatformOptions = PlatformOptions(),
+    input: Input = .none,
+    preferredBufferSize: Int? = nil,
+    body: (
+        _ execution: Execution,
+        _ outputSequence: AsyncBufferSequence,
+        _ errorSequence: AsyncBufferSequence
+    ) async throws -> Result
+) async throws -> ExecutionOutcome<Result> {
+    let configuration = Configuration(
+        executable: executable,
+        arguments: arguments,
+        environment: environment,
+        workingDirectory: workingDirectory,
+        platformOptions: platformOptions
+    )
+    return try await run(
+        configuration,
+        input: input,
+        preferredBufferSize: preferredBufferSize,
+        body: body
+    )
+}
+
+/// Runs an executable with given parameters and a custom closure to manage the
 /// running subprocess's lifetime, write to its standard input, and stream its standard output.
 /// - Parameters:
 ///   - executable: The executable to run.
@@ -757,6 +807,78 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
             )
 
             let result = try await body(execution, errorSequence)
+            try await group.waitForAll()
+            return result
+        }
+    }
+}
+
+/// Runs an executable with a given ``Configuration`` and a custom closure
+/// to manage the running subprocess's lifetime and stream its standard output and error.
+/// - Parameters:
+///   - configuration: The configuration to run.
+///   - input: The input to send to the executable.
+///   - output: How to manage executable standard output.
+///   - preferredBufferSize: The preferred size in bytes for the buffer used when reading
+///     from the subprocess's standard error stream. If `nil`, uses the system page size
+///     as the default buffer size. Larger buffer sizes may improve performance for
+///     subprocesses that produce large amounts of output, while smaller buffer sizes
+///     may reduce memory usage and improve responsiveness for interactive applications.
+///   - isolation: The isolation context to run the body closure.
+///   - body: A closure to manage the running process.
+///     All arguments passed to this closure are valid only for
+///     the duration of the closure's execution and must not be escaped.
+///     - execution: The running subprocess.
+///     - outputSequence: The standard output an asynchronous sequence of buffers.
+///     - errorSequence: The standard error as an asynchronous sequence of buffers.
+/// - Returns: An ``ExecutionOutcome`` that contains the closure's return value.
+public func run<Result, Input: InputProtocol>(
+    _ configuration: Configuration,
+    input: Input = .none,
+    preferredBufferSize: Int? = nil,
+    body: (
+        _ execution: Execution,
+        _ outputSequence: AsyncBufferSequence,
+        _ errorSequence: AsyncBufferSequence
+    ) async throws -> Result
+) async throws -> ExecutionOutcome<Result> {
+    let output = SequenceOutput()
+    let error = SequenceOutput()
+
+    return try await configuration.run(
+        input: try input.createPipe(),
+        output: try output.createPipe(),
+        error: try error.createPipe(),
+    ) { execution, inputIO, outputIO, errorIO in
+        var inputIOBox: IOChannel? = consume inputIO
+        var outputIOBox: IOChannel? = consume outputIO
+        var errorIOBox: IOChannel? = consume errorIO
+
+        return try await withThrowingTaskGroup(
+            of: Void.self,
+            returning: Result.self
+        ) { group in
+            var inputIOContainer: IOChannel? = inputIOBox.take()
+            group.addTask {
+                if let inputIO = inputIOContainer.take() {
+                    let writer = StandardInputWriter(diskIO: inputIO)
+                    try await input.write(with: writer)
+                    try await writer.finish()
+                }
+            }
+
+            // Body runs in the same isolation
+            let outputSequence = AsyncBufferSequence(
+                diskIO: outputIOBox.take()!.consumeIOChannel(),
+                preferredBufferSize: preferredBufferSize
+            )
+
+            let errorSequence = AsyncBufferSequence(
+                diskIO: errorIOBox.take()!.consumeIOChannel(),
+                preferredBufferSize: preferredBufferSize
+            )
+
+            let result = try await body(execution, outputSequence, errorSequence)
             try await group.waitForAll()
             return result
         }

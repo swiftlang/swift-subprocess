@@ -2042,6 +2042,45 @@ extension SubprocessIntegrationTests {
             #expect(output.contains("Hello Stderr"))
         }
     }
+
+    @Test func testStreamingBothStandardOutputAndError() async throws {
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: ["/c", "echo Hello Stdout & echo Hello Stderr 1>&2"]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "echo Hello Stdout; echo Hello Stderr 1>&2"]
+        )
+        #endif
+
+        _ = try await _run(
+            setup,
+            input: .none
+        ) { execution, standardOutput, standardError in
+            try await withThrowingTaskGroup { group in
+                group.addTask {
+                    var stdout: String = ""
+                    for try await line in standardOutput.strings() {
+                        stdout += line
+                    }
+                    #expect(stdout.contains("Hello Stdout"))
+                }
+
+                group.addTask {
+                    var stderr: String = ""
+                    for try await line in standardError.strings() {
+                        stderr += line
+                    }
+                    #expect(stderr.contains("Hello Stderr"))
+                }
+
+                try await group.waitForAll()
+            }
+        }
+    }
 }
 
 // MARK: - Other Tests
@@ -2960,6 +2999,26 @@ func _run<
         workingDirectory: setup.workingDirectory,
         input: input,
         error: error,
+        preferredBufferSize: preferredBufferSize,
+        body: body
+    )
+}
+
+func _run<
+    Result,
+    Input: InputProtocol
+>(
+    _ setup: TestSetup,
+    input: Input,
+    preferredBufferSize: Int? = nil,
+    body: ((Execution, AsyncBufferSequence, AsyncBufferSequence) async throws -> Result)
+) async throws -> ExecutionOutcome<Result> {
+    return try await Subprocess.run(
+        setup.executable,
+        arguments: setup.arguments,
+        environment: setup.environment,
+        workingDirectory: setup.workingDirectory,
+        input: input,
         preferredBufferSize: preferredBufferSize,
         body: body
     )
