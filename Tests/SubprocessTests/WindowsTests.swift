@@ -97,7 +97,7 @@ extension SubprocessWindowsTests {
         let sameConsoleResult = try await Subprocess.run(
             .name("powershell.exe"),
             arguments: [
-                "-File", windowsTester.string,
+                "-ExecutionPolicy", "Bypass", "-File", windowsTester.string,
                 "-mode", "get-console-window",
             ],
             output: .string(limit: .max)
@@ -116,7 +116,7 @@ extension SubprocessWindowsTests {
         let differentConsoleResult = try await Subprocess.run(
             .name("powershell.exe"),
             arguments: [
-                "-File", windowsTester.string,
+                "-ExecutionPolicy", "Bypass", "-File", windowsTester.string,
                 "-mode", "get-console-window",
             ],
             platformOptions: platformOptions,
@@ -138,7 +138,7 @@ extension SubprocessWindowsTests {
         let detachConsoleResult = try await Subprocess.run(
             .name("powershell.exe"),
             arguments: [
-                "-File", windowsTester.string,
+                "-ExecutionPolicy", "Bypass", "-File", windowsTester.string,
                 "-mode", "get-console-window",
             ],
             platformOptions: platformOptions,
@@ -162,7 +162,7 @@ extension SubprocessWindowsTests {
         let newConsoleResult = try await Subprocess.run(
             .name("powershell.exe"),
             arguments: [
-                "-File", windowsTester.string,
+                "-ExecutionPolicy", "Bypass", "-File", windowsTester.string,
                 "-mode", "get-console-window",
             ],
             platformOptions: platformOptions,
@@ -241,7 +241,7 @@ extension SubprocessWindowsTests {
             var checkResult = try await Subprocess.run(
                 .name("powershell.exe"),
                 arguments: [
-                    "-File", windowsTester.string,
+                    "-ExecutionPolicy", "Bypass", "-File", windowsTester.string,
                     "-mode", "is-process-suspended",
                     "-processID", "\(subprocess.processIdentifier.value)",
                 ],
@@ -258,7 +258,7 @@ extension SubprocessWindowsTests {
             checkResult = try await Subprocess.run(
                 .name("powershell.exe"),
                 arguments: [
-                    "-File", windowsTester.string,
+                    "-ExecutionPolicy", "Bypass", "-File", windowsTester.string,
                     "-mode", "is-process-suspended",
                     "-processID", "\(subprocess.processIdentifier.value)",
                 ],

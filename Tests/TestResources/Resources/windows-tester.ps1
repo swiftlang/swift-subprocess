@@ -25,7 +25,7 @@ Add-Type @"
 
 function GetConsoleWindow {
     $consoleHandle = [NativeMethods]::GetConsoleWindow()
-    Write-Host $consoleHandle
+    Write-Output $consoleHandle
 }
 
 function IsProcessSuspended {
@@ -34,17 +34,17 @@ function IsProcessSuspended {
         $threads = $process.Threads
         $suspendedThreadCount = ($threads | Where-Object { $_.WaitReason -eq 'Suspended' }).Count
         if ($threads.Count -eq $suspendedThreadCount) {
-            Write-Host "true"
+            Write-Output "true"
         } else {
-            Write-Host "false"
+            Write-Output "false"
         }
     } else {
-        Write-Host "Process not found."
+        Write-Output "Process not found."
     }
 }
 
 switch ($mode) {
     'get-console-window' { GetConsoleWindow }
     'is-process-suspended' { IsProcessSuspended -processID $processID }
-    default { Write-Host "Invalid mode specified: [$mode]" }
+    default { Write-Output "Invalid mode specified: [$mode]" }
 }
