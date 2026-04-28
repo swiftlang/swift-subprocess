@@ -10,14 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #if canImport(Darwin) || canImport(Glibc)
-
-#if canImport(Darwin)
-// On Darwin always prefer system Foundation
 import Foundation
-#else
-// On other platforms prefer FoundationEssentials
-import FoundationEssentials
-#endif
 
 #if canImport(Glibc)
 import Glibc

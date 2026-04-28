@@ -13,6 +13,18 @@
 
 #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl)
 @preconcurrency internal import Dispatch
+
+#if SubprocessFoundation
+
+#if canImport(Darwin)
+// On Darwin always prefer system Foundation
+internal import Foundation
+#else
+// On other platforms prefer FoundationEssentials
+internal import FoundationEssentials
+#endif
+
+#endif
 #endif
 
 extension AsyncBufferSequence {

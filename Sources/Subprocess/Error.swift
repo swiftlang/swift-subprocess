@@ -18,13 +18,13 @@ import Glibc
 #elseif canImport(Musl)
 import Musl
 #elseif canImport(WinSDK)
-@preconcurrency import WinSDK
+@preconcurrency public import WinSDK
 #endif
 
 #if canImport(System)
-import System
+public import System
 #else
-import SystemPackage
+public import SystemPackage
 #endif
 
 /// An error thrown by a subprocess operation.

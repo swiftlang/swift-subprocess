@@ -12,7 +12,7 @@
 #if canImport(WinSDK)
 
 @preconcurrency import WinSDK
-import FoundationEssentials
+import Foundation
 import Testing
 import Dispatch
 

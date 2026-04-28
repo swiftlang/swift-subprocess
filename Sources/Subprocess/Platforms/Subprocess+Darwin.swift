@@ -11,7 +11,7 @@
 
 #if canImport(Darwin)
 
-import Darwin
+public import Darwin
 internal import Dispatch
 #if canImport(System)
 import System
@@ -25,10 +25,10 @@ import _SubprocessCShims
 
 #if canImport(Darwin)
 // On Darwin always prefer system Foundation
-import Foundation
+public import Foundation
 #else
 // On other platforms prefer FoundationEssentials
-import FoundationEssentials
+public import FoundationEssentials
 #endif
 
 #endif // SubprocessFoundation

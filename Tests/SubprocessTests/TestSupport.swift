@@ -9,14 +9,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#if canImport(Darwin)
-// On Darwin always prefer system Foundation
 import Foundation
-#else
-// On other platforms prefer FoundationEssentials
-import FoundationEssentials
-#endif
-
 import Testing
 import Subprocess
 
@@ -94,7 +87,7 @@ internal func directory(_ lhs: String, isSameAs rhs: String) -> Bool {
 
 extension Trait where Self == ConditionTrait {
     /// This test requires bash to run (instead of sh)
-    public static var requiresBash: Self {
+    static var requiresBash: Self {
         enabled(
             if: (try? Executable.name("bash").resolveExecutablePath(in: .inherit)) != nil,
             "This test requires bash (install `bash` package on Linux/BSD)"

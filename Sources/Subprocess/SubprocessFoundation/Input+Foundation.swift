@@ -13,10 +13,10 @@
 
 #if canImport(Darwin)
 // On Darwin always prefer system Foundation
-import Foundation
+public import Foundation
 #else
 // On other platforms prefer FoundationEssentials
-import FoundationEssentials
+public import FoundationEssentials
 #endif // canImport(Darwin)
 
 #if canImport(System)

@@ -10,6 +10,12 @@
 //===----------------------------------------------------------------------===//
 
 import Testing
+import Foundation
+#if canImport(System)
+import System
+#else
+import SystemPackage
+#endif
 @testable import Subprocess
 
 private func enableLintingTest() -> Bool {

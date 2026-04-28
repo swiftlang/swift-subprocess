@@ -71,7 +71,7 @@ private struct BackgroundWorkItem {
 
     init<Result>(
         _ body: @Sendable @escaping () throws -> Result,
-        continuation: CheckedContinuation<Result, Error>
+        continuation: CheckedContinuation<Result, any Error>
     ) {
         self.work = {
             do {

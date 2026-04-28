@@ -17,6 +17,18 @@ import SystemPackage
 
 #if !os(Windows)
 internal import Dispatch
+
+#if SubprocessFoundation
+
+#if canImport(Darwin)
+// On Darwin always prefer system Foundation
+internal import Foundation
+#else
+// On other platforms prefer FoundationEssentials
+internal import FoundationEssentials
+#endif
+
+#endif
 #endif
 
 /// An asynchronous sequence of buffers that streams output from a subprocess.

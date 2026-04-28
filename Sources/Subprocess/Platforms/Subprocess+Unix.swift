@@ -22,11 +22,11 @@ import _SubprocessCShims
 #if canImport(Darwin)
 import Darwin
 #elseif canImport(Android)
-import Android
+public import Android
 #elseif canImport(Glibc)
-import Glibc
+public import Glibc
 #elseif canImport(Musl)
-import Musl
+public import Musl
 #endif
 
 @preconcurrency internal import Dispatch
@@ -407,6 +407,21 @@ internal typealias PlatformFileDescriptor = CInt
 // MARK: - Spawning
 
 #if !canImport(Darwin)
+
+#if canImport(Android)
+public typealias pid_t = Android.pid_t
+public typealias uid_t = Android.uid_t
+public typealias gid_t = Android.gid_t
+#elseif canImport(Glibc)
+public typealias pid_t = Glibc.pid_t
+public typealias uid_t = Glibc.uid_t
+public typealias gid_t = Glibc.gid_t
+#elseif canImport(Musl)
+public typealias pid_t = Musl.pid_t
+public typealias uid_t = Musl.uid_t
+public typealias gid_t = Musl.gid_t
+#endif
+
 extension Configuration {
 
     // @unchecked Sendable because we need to capture UnsafePointers

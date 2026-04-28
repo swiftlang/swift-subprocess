@@ -10,9 +10,9 @@
 //===----------------------------------------------------------------------===//
 
 #if canImport(System)
-import System
+public import System
 #else
-import SystemPackage
+public import SystemPackage
 #endif
 
 // MARK: - Collected Result
