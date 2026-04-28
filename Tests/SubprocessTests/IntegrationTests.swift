@@ -1833,7 +1833,7 @@ extension SubprocessIntegrationTests {
         #expect(result.standardError?.trimmingNewLineAndQuotes() == "")
     }
 
-    @Test func testCustomStreamingBufferSize() async throws {
+    @Test func testStreamingSmallInputs() async throws {
         #if os(Windows)
         let setup = TestSetup(
             executable: .name("cmd.exe"),
@@ -1863,13 +1863,12 @@ extension SubprocessIntegrationTests {
         _ = try await _run(
             setup,
             input: .none,
-            error: .discarded,
-            preferredBufferSize: 1
+            error: .discarded
         ) { execution, standardOutput in
             for try await line in standardOutput.strings() {
-                // If we use default buffer size this test will hang
-                // because Subprocess is stuck on waiting 16k worth of
-                // output when there are only 3.
+                // This test should not hang when there are only
+                // 3 bytes of output even though Subprocess'
+                // internal buffer size is something like 16k.
                 #expect(line.trimmingNewLineAndQuotes() == "one")
                 // Kill the child process since it intentionally hang
                 #if os(Windows)
@@ -2312,6 +2311,87 @@ extension SubprocessIntegrationTests {
                 "iteration \(i)"
             )
             #endif
+        }
+    }
+
+    @Test(
+        .disabled(
+            "Flaky on FreeBSD in GitHub Actions",
+            {
+                #if os(FreeBSD)
+                return true
+                #else
+                return false
+                #endif
+            })) func testCancelAllTearsDownProcess() async throws
+    {
+        enum WhoReturned {
+            case okReceived
+            case finished(Subprocess.ExecutionOutcome<Void>)
+        }
+        struct WrongLineReceived: Error {
+            var line: String
+        }
+        struct NoOutputReceived: Error {
+        }
+
+        let (okSignal, okSignalContinuation) = AsyncThrowingStream.makeStream(of: Void.self)
+
+        try await withThrowingTaskGroup(of: WhoReturned.self) { group in
+            group.addTask {
+                let executable: Subprocess.Executable
+                let arguments: Subprocess.Arguments
+                #if os(Windows)
+                executable = .name("powershell.exe")
+                arguments = ["-Command", "echo OK ; Start-Sleep -Seconds 9999"]
+                #else
+                executable = .path("/bin/sh")
+                arguments = [
+                    "-c",
+                    """
+                    echo OK;
+                    while true; do sleep 1; done
+                    """,
+                ]
+                #endif
+                let outcome = try await Subprocess.run(
+                    executable,
+                    arguments: arguments,
+                    error: .discarded
+                ) { execution, outputSequence in
+                    for try await line in outputSequence.strings(separatedBy: .lineBreaks) {
+                        if line == "OK" {
+                            okSignalContinuation.yield(())
+                            okSignalContinuation.finish()
+                        } else {
+                            Issue.record("unexpected output: \(line)")
+                            okSignalContinuation.finish(throwing: WrongLineReceived(line: line))
+                        }
+                        return
+                    }
+                    Issue.record("no output")
+                    okSignalContinuation.finish(throwing: NoOutputReceived())
+                }
+                return .finished(outcome)
+            }
+
+            group.addTask {
+                var iterator = okSignal.makeAsyncIterator()
+                _ = try await iterator.next()
+                return .okReceived
+            }
+
+            var finalOutcome: Subprocess.ExecutionOutcome<Void>? = nil
+            while let taskResult = try await group.next() {
+                switch taskResult {
+                case .okReceived:
+                    group.cancelAll()
+                case .finished(let outcome):
+                    finalOutcome = outcome
+                }
+            }
+
+            #expect(finalOutcome != nil)
         }
     }
 

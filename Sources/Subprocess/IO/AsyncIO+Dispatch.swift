@@ -33,49 +33,81 @@ final class AsyncIO: Sendable {
         from diskIO: borrowing IOChannel,
         upTo maxLength: Int
     ) async throws(SubprocessError) -> DispatchData? {
-        return try await self.read(
-            from: diskIO.channel,
-            upTo: maxLength,
+        if maxLength == .max {
+            return try await self.readAll(from: diskIO, upTo: maxLength)
+        }
+        return try await self.readChunk(
+            fd: diskIO.channel.rawValue,
+            maxLength: maxLength,
         )
     }
 
     internal func read(
-        from dispatchIO: DispatchIO,
+        from fileDescriptor: FileDescriptor,
         upTo maxLength: Int
+    ) async throws(SubprocessError) -> DispatchData? {
+        if maxLength == .max {
+            return try await self.readAll(
+                fd: fileDescriptor.rawValue,
+                upTo: maxLength
+            )
+        }
+        return try await self.readChunk(
+            fd: fileDescriptor.rawValue,
+            maxLength: maxLength,
+        )
+    }
+
+    internal func readAll(
+        from diskIO: borrowing IOChannel,
+        upTo maxLength: Int
+    ) async throws(SubprocessError) -> DispatchData? {
+        return try await self.readAll(
+            fd: diskIO.channel.rawValue,
+            upTo: maxLength
+        )
+    }
+
+    private func readAll(
+        fd: Int32,
+        upTo maxLength: Int
+    ) async throws(SubprocessError) -> DispatchData? {
+        var accumulated: DispatchData = .empty
+        while accumulated.count < maxLength {
+            if Task.isCancelled {
+                throw SubprocessError.asyncIOFailed(
+                    reason: "Cancelled",
+                    underlyingError: nil
+                )
+            }
+            let remaining = maxLength == .max ? .max : maxLength - accumulated.count
+            let chunk: DispatchData? = try await self.readChunk(fd: fd, maxLength: remaining)
+            guard let chunk else { break }
+            accumulated.append(chunk)
+        }
+        return accumulated.isEmpty ? nil : accumulated
+    }
+
+    private func readChunk(
+        fd: Int32,
+        maxLength: Int
     ) async throws(SubprocessError) -> DispatchData? {
         // https://github.com/swiftlang/swift/issues/87810
         return try await _castError {
             return try await withCheckedThrowingContinuation { continuation in
-                var buffer: DispatchData = .empty
-                dispatchIO.read(
-                    offset: 0,
-                    length: maxLength,
-                    queue: DispatchQueue(label: "SubprocessReadQueue")
-                ) { done, data, error in
+                DispatchIO.read(
+                    fromFileDescriptor: fd,
+                    maxLength: maxLength,
+                    runningHandlerOn: .global()
+                ) { data, error in
                     if error != 0 {
                         continuation.resume(
-                            throwing:
-                                SubprocessError
-                                .failedToReadFromProcess(
-                                    withUnderlyingError: Errno(rawValue: error)
-                                )
-                        )
+                            throwing: SubprocessError.failedToReadFromProcess(
+                                withUnderlyingError: Errno(rawValue: error)
+                            ))
                         return
                     }
-                    if let data {
-                        if buffer.isEmpty {
-                            buffer = data
-                        } else {
-                            buffer.append(data)
-                        }
-                    }
-                    if done {
-                        if !buffer.isEmpty {
-                            continuation.resume(returning: buffer)
-                        } else {
-                            continuation.resume(returning: nil)
-                        }
-                    }
+                    continuation.resume(returning: data.isEmpty ? nil : data)
                 }
             }
         }
@@ -147,27 +179,31 @@ final class AsyncIO: Sendable {
         queue: DispatchQueue = .global(),
         completion: @escaping (Int, SubprocessError?) -> Void
     ) {
-        diskIO.channel.write(
-            offset: 0,
-            data: dispatchData,
-            queue: queue
-        ) { done, unwritten, error in
-            guard done else {
-                // Wait until we are done writing or encountered some error
-                return
+        let fd = diskIO.channel.rawValue
+        var totalWritten = 0
+        func writeRemaining(_ data: DispatchData) {
+            DispatchIO.write(
+                toFileDescriptor: fd,
+                data: data,
+                runningHandlerOn: queue
+            ) { unwritten, error in
+                let unwrittenLength = unwritten?.count ?? 0
+                totalWritten += data.count - unwrittenLength
+                if error != 0 {
+                    completion(
+                        totalWritten,
+                        .failedToWriteToProcess(withUnderlyingError: Errno(rawValue: error))
+                    )
+                    return
+                }
+                if let unwritten, !unwritten.isEmpty {
+                    writeRemaining(unwritten)
+                } else {
+                    completion(totalWritten, nil)
+                }
             }
-
-            let unwrittenLength = unwritten?.count ?? 0
-            let writtenLength = dispatchData.count - unwrittenLength
-            guard error != 0 else {
-                completion(writtenLength, nil)
-                return
-            }
-            completion(
-                writtenLength,
-                .failedToWriteToProcess(withUnderlyingError: Errno(rawValue: error))
-            )
         }
+        writeRemaining(dispatchData)
     }
 }
 

@@ -332,12 +332,55 @@ extension AsyncIO {
         from diskIO: borrowing IOChannel,
         upTo maxLength: Int
     ) async throws(SubprocessError) -> [UInt8]? {
-        return try await self.read(from: diskIO.channel, upTo: maxLength)
+        if maxLength == .max {
+            return try await self._readAll(from: diskIO.channel, upTo: maxLength)
+        }
+        return try await self._readChunk(from: diskIO.channel, upTo: maxLength)
     }
 
     func read(
         from fileDescriptor: FileDescriptor,
         upTo maxLength: Int
+    ) async throws(SubprocessError) -> [UInt8]? {
+        if maxLength == .max {
+            return try await self._readAll(from: fileDescriptor, upTo: maxLength)
+        }
+        return try await self._readChunk(from: fileDescriptor, upTo: maxLength)
+    }
+
+    func readAll(
+        from diskIO: borrowing IOChannel,
+        upTo maxLength: Int
+    ) async throws(SubprocessError) -> [UInt8]? {
+        return try await self._readAll(from: diskIO.channel, upTo: maxLength)
+    }
+
+    private func _readChunk(
+        from fileDescriptor: FileDescriptor,
+        upTo maxLength: Int
+    ) async throws(SubprocessError) -> [UInt8]? {
+        return try await self._read(
+            from: fileDescriptor,
+            upTo: maxLength,
+            returnOnFirstRead: true
+        )
+    }
+
+    private func _readAll(
+        from fileDescriptor: FileDescriptor,
+        upTo maxLength: Int
+    ) async throws(SubprocessError) -> [UInt8]? {
+        return try await self._read(
+            from: fileDescriptor,
+            upTo: maxLength,
+            returnOnFirstRead: false
+        )
+    }
+
+    private func _read(
+        from fileDescriptor: FileDescriptor,
+        upTo maxLength: Int,
+        returnOnFirstRead: Bool
     ) async throws(SubprocessError) -> [UInt8]? {
         guard maxLength > 0 else {
             return nil
@@ -375,7 +418,11 @@ extension AsyncIO {
                     if bytesRead > 0 {
                         // Read some data
                         readLength += bytesRead
-                        if maxLength == .max {
+                        if returnOnFirstRead {
+                            try self.removeRegistration(for: fileDescriptor)
+                            resultBuffer.removeLast(resultBuffer.count - readLength)
+                            return resultBuffer
+                        } else if maxLength == .max {
                             // Grow resultBuffer if needed
                             guard Double(readLength) > 0.8 * Double(resultBuffer.count) else {
                                 continue

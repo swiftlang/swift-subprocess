@@ -71,7 +71,7 @@ extension SubprocessAsyncIOTests {
         try await runReadWriteTest { readIO, readTestBed in
             for expectedChunk in chunks {
                 let readData = try #require(
-                    try await readIO.read(from: readTestBed.ioChannel, upTo: expectedChunk.count)
+                    try await readIO.readAll(from: readTestBed.ioChannel, upTo: expectedChunk.count)
                 )
                 #expect(Array(readData) == expectedChunk)
             }
@@ -285,9 +285,7 @@ extension SubprocessAsyncIOTests {
 
 extension SubprocessAsyncIOTests.TestBed {
     consuming func finish() async throws {
-        #if SUBPROCESS_ASYNCIO_DISPATCH
-        try _safelyClose(.dispatchIO(self.ioChannel.channel))
-        #elseif canImport(WinSDK)
+        #if canImport(WinSDK)
         try _safelyClose(.handle(self.ioChannel.channel))
         #else
         try _safelyClose(.fileDescriptor(self.ioChannel.channel))

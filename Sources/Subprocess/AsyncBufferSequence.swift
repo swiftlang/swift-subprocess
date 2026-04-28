@@ -38,9 +38,7 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
     /// The element type for the asynchronous sequence.
     public typealias Element = Buffer
 
-    #if SUBPROCESS_ASYNCIO_DISPATCH
-    internal typealias DiskIO = DispatchIO
-    #elseif canImport(WinSDK)
+    #if canImport(WinSDK)
     internal typealias DiskIO = HANDLE
     #else
     internal typealias DiskIO = FileDescriptor
@@ -74,9 +72,7 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
             )
             guard let data else {
                 // We finished reading. Close the file descriptor now
-                #if SUBPROCESS_ASYNCIO_DISPATCH
-                try _safelyClose(.dispatchIO(self.diskIO))
-                #elseif canImport(WinSDK)
+                #if canImport(WinSDK)
                 try _safelyClose(.handle(self.diskIO))
                 #else
                 try _safelyClose(.fileDescriptor(self.diskIO))

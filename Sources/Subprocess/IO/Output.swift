@@ -141,7 +141,7 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
                 // more byte to determine whether output exceeds the limit
                 maxLength += 1
             }
-            result = try await AsyncIO.shared.read(from: diskIO, upTo: maxLength)
+            result = try await AsyncIO.shared.readAll(from: diskIO, upTo: maxLength)
         } catch {
             try diskIO.safelyClose()
             throw error
@@ -349,7 +349,7 @@ extension OutputProtocol {
                 // more byte to determine whether output exceeds the limit
                 maxLength += 1
             }
-            result = try await AsyncIO.shared.read(from: diskIO, upTo: maxLength)
+            result = try await AsyncIO.shared.readAll(from: diskIO, upTo: maxLength)
         } catch {
             try diskIO.safelyClose()
             throw error

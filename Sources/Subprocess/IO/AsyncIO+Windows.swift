@@ -246,12 +246,55 @@ final class AsyncIO: @unchecked Sendable {
         from diskIO: borrowing IOChannel,
         upTo maxLength: Int
     ) async throws(SubprocessError) -> [UInt8]? {
-        return try await self.read(from: diskIO.channel, upTo: maxLength)
+        if maxLength == .max {
+            return try await self._readAll(from: diskIO.channel, upTo: maxLength)
+        }
+        return try await self._readChunk(from: diskIO.channel, upTo: maxLength)
     }
 
     func read(
         from handle: HANDLE,
         upTo maxLength: Int
+    ) async throws(SubprocessError) -> [UInt8]? {
+        if maxLength == .max {
+            return try await self._readAll(from: handle, upTo: maxLength)
+        }
+        return try await self._readChunk(from: handle, upTo: maxLength)
+    }
+
+    func readAll(
+        from diskIO: borrowing IOChannel,
+        upTo maxLength: Int
+    ) async throws(SubprocessError) -> [UInt8]? {
+        return try await self._readAll(from: diskIO.channel, upTo: maxLength)
+    }
+
+    private func _readChunk(
+        from handle: HANDLE,
+        upTo maxLength: Int
+    ) async throws(SubprocessError) -> [UInt8]? {
+        return try await self._read(
+            from: handle,
+            upTo: maxLength,
+            returnOnFirstRead: true
+        )
+    }
+
+    private func _readAll(
+        from handle: HANDLE,
+        upTo maxLength: Int
+    ) async throws(SubprocessError) -> [UInt8]? {
+        return try await self._read(
+            from: handle,
+            upTo: maxLength,
+            returnOnFirstRead: false
+        )
+    }
+
+    private func _read(
+        from handle: HANDLE,
+        upTo maxLength: Int,
+        returnOnFirstRead: Bool
     ) async throws(SubprocessError) -> [UInt8]? {
         guard maxLength > 0 else {
             return nil
@@ -333,7 +376,10 @@ final class AsyncIO: @unchecked Sendable {
             } else {
                 // Read some data
                 readLength += Int(truncatingIfNeeded: bytesRead)
-                if maxLength == .max {
+                if returnOnFirstRead {
+                    resultBuffer.removeLast(resultBuffer.count - readLength)
+                    return resultBuffer
+                } else if maxLength == .max {
                     // Grow resultBuffer if needed
                     guard Double(readLength) > 0.8 * Double(resultBuffer.count) else {
                         continue

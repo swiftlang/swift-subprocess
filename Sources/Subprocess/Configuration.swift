@@ -760,7 +760,6 @@ internal enum _CloseTarget {
     #else
     case fileDescriptor(FileDescriptor)
     #endif
-    case dispatchIO(DispatchIO)
 }
 
 internal func _safelyClose(_ target: _CloseTarget) throws(SubprocessError) {
@@ -822,8 +821,6 @@ internal func _safelyClose(_ target: _CloseTarget) throws(SubprocessError) {
             )
         }
     #endif
-    case .dispatchIO(let dispatchIO):
-        dispatchIO.close()
     }
 }
 
@@ -879,24 +876,7 @@ internal struct IODescriptor: ~Copyable {
     consuming func createIOChannel() -> IOChannel {
         let shouldClose = self.closeWhenDone
         self.closeWhenDone = false
-        #if SUBPROCESS_ASYNCIO_DISPATCH
-        // Transferring out the ownership of fileDescriptor means we don't have go close here
-        let closeFd = self.descriptor
-        let dispatchIO: DispatchIO = DispatchIO(
-            type: .stream,
-            fileDescriptor: self.platformDescriptor(),
-            queue: .global(),
-            cleanupHandler: { @Sendable error in
-                // Close the file descriptor
-                if shouldClose {
-                    try? closeFd.close()
-                }
-            }
-        )
-        return IOChannel(dispatchIO, closeWhenDone: shouldClose)
-        #else
         return IOChannel(self.descriptor, closeWhenDone: shouldClose)
-        #endif
     }
 
     internal mutating func safelyClose() throws(SubprocessError) {
@@ -934,9 +914,7 @@ internal struct IODescriptor: ~Copyable {
 }
 
 internal struct IOChannel: ~Copyable, @unchecked Sendable {
-    #if SUBPROCESS_ASYNCIO_DISPATCH
-    typealias Channel = DispatchIO
-    #elseif canImport(WinSDK)
+    #if canImport(WinSDK)
     typealias Channel = HANDLE
     #else
     typealias Channel = FileDescriptor
@@ -959,9 +937,7 @@ internal struct IOChannel: ~Copyable, @unchecked Sendable {
         }
         closeWhenDone = false
 
-        #if SUBPROCESS_ASYNCIO_DISPATCH
-        try _safelyClose(.dispatchIO(self.channel))
-        #elseif canImport(WinSDK)
+        #if canImport(WinSDK)
         try _safelyClose(.handle(self.channel))
         #else
         try _safelyClose(.fileDescriptor(self.channel))
