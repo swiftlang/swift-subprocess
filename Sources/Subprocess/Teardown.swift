@@ -31,9 +31,9 @@ import Musl
 public struct TeardownStep: Sendable, Hashable {
     internal enum Storage: Sendable, Hashable {
         #if !os(Windows)
-        case sendSignal(Signal, allowedDuration: Duration)
+        case sendSignal(Signal, toProcessGroup: Bool, allowedDuration: Duration)
         #endif
-        case gracefulShutDown(allowedDuration: Duration)
+        case gracefulShutDown(toProcessGroup: Bool, allowedDuration: Duration)
         case kill
     }
     var storage: Storage
@@ -43,13 +43,22 @@ public struct TeardownStep: Sendable, Hashable {
     /// before proceeding to the next step.
     ///
     /// The final step in the sequence always sends a `.kill` signal.
+    ///
+    /// - Important: When sending the signal to the process group, unless you
+    /// also set `createSession` to `true`, or `processGroupID` to a
+    /// non-inherited value, the targeted process group includes the parent
+    /// process. This is almost never what you want. Pair `toProcessGroup`
+    /// with `createSession` to isolate the subprocess and its descendants in
+    /// their own session.
     public static func send(
         signal: Signal,
+        toProcessGroup: Bool = false,
         allowedDurationToNextStep: Duration
     ) -> Self {
         return Self(
             storage: .sendSignal(
                 signal,
+                toProcessGroup: toProcessGroup,
                 allowedDuration: allowedDurationToNextStep
             )
         )
@@ -64,11 +73,22 @@ public struct TeardownStep: Sendable, Hashable {
     ///   1. Sends `WM_CLOSE` if the child process is a GUI process.
     ///   2. Sends `CTRL_C_EVENT` to the console.
     ///   3. Sends `CTRL_BREAK_EVENT` to the process group.
+    ///
+    /// - Important: On Unix, when sending the signal to the process group,
+    /// unless you also set `createSession` to `true`, or `processGroupID`
+    /// to a non-inherited value, the targeted process group includes the parent
+    /// process. This is almost never what you want. Pair `toProcessGroup`
+    /// with `createSession` to isolate the subprocess and its descendants in
+    /// their own session. On Windows, the `toProcessGroup` parameter has no
+    /// effect; `WM_CLOSE` and `CTRL_C_EVENT` have no process-group equivalent,
+    /// and `CTRL_BREAK_EVENT` is always sent to the process group.
     public static func gracefulShutDown(
+        toProcessGroup: Bool = false,
         allowedDurationToNextStep: Duration
     ) -> Self {
         return Self(
             storage: .gracefulShutDown(
+                toProcessGroup: toProcessGroup,
                 allowedDuration: allowedDurationToNextStep
             )
         )
@@ -95,6 +115,7 @@ internal enum TeardownStepCompletion {
 
 extension Execution {
     internal func gracefulShutDown(
+        toProcessGroup: Bool,
         allowedDurationToNextStep duration: Duration
     ) async {
         #if os(Windows)
@@ -129,7 +150,7 @@ extension Execution {
         // Send SIGTERM
         try? self.send(
             signal: .terminate,
-            toProcessGroup: false
+            toProcessGroup: toProcessGroup
         )
         #endif
     }
@@ -137,8 +158,22 @@ extension Execution {
     internal func runTeardownSequence(
         _ sequence: some Sequence<TeardownStep> & Sendable
     ) async {
-        // First insert the `.kill` step
-        let finalSequence = sequence + [TeardownStep(storage: .kill)]
+        // The implicit final `.kill` inherits `toProcessGroup` from the last
+        // explicit step in the sequence. This matches user intent: A sequence
+        // configured to target the process group should have its terminal kill
+        // also target the group, so descendants don't leak after teardown.
+        let steps = Array(sequence)
+        let killProcessGroup: Bool = {
+            guard let last = steps.last else { return false }
+            switch last.storage {
+            #if !os(Windows)
+            case .sendSignal(_, let toProcessGroup, _): return toProcessGroup
+            #endif
+            case .gracefulShutDown(let toProcessGroup, _): return toProcessGroup
+            case .kill: return false
+            }
+        }()
+        let finalSequence = steps + [TeardownStep(storage: .kill)]
         for step in finalSequence {
             let stepCompletion: TeardownStepCompletion
             guard self.isPotentiallyStillAlive() else {
@@ -147,7 +182,7 @@ extension Execution {
             }
 
             switch step.storage {
-            case .gracefulShutDown(let allowedDuration):
+            case .gracefulShutDown(let toProcessGroup, let allowedDuration):
                 stepCompletion = await withTaskGroup(of: TeardownStepCompletion.self) { group in
                     group.addTask {
                         do {
@@ -160,12 +195,13 @@ extension Execution {
                         }
                     }
                     await self.gracefulShutDown(
+                        toProcessGroup: toProcessGroup,
                         allowedDurationToNextStep: allowedDuration
                     )
                     return await group.next()!
                 }
             #if !os(Windows)
-            case .sendSignal(let signal, let allowedDuration):
+            case .sendSignal(let signal, let toProcessGroup, let allowedDuration):
                 stepCompletion = await withTaskGroup(of: TeardownStepCompletion.self) { group in
                     group.addTask {
                         do {
@@ -177,7 +213,7 @@ extension Execution {
                             return .processHasExited
                         }
                     }
-                    try? self.send(signal: signal, toProcessGroup: false)
+                    try? self.send(signal: signal, toProcessGroup: toProcessGroup)
                     return await group.next()!
                 }
             #endif // !os(Windows)
@@ -187,7 +223,7 @@ extension Execution {
                     withExitCode: 0
                 )
                 #else
-                try? self.send(signal: .kill, toProcessGroup: false)
+                try? self.send(signal: .kill, toProcessGroup: killProcessGroup)
                 #endif
                 stepCompletion = .killedTheProcess
             }

@@ -389,6 +389,82 @@ extension SubprocessUnixTests {
         }
     }
 
+    @Test(.requiresBash)
+    func testTeardownSignalsProcessGroup() async throws {
+        do {
+            try await withThrowingTaskGroup { group in
+                let (readyStream, readyContinuation) = AsyncStream.makeStream(of: Void.self)
+
+                group.addTask {
+                    var platformOptions = PlatformOptions()
+                    // Creating a new session puts the shell (and its descendants,
+                    // absent further setsid calls) in their own process group, so
+                    // the teardown signal reaches everything spawned from the shell.
+                    platformOptions.createSession = true
+                    platformOptions.teardownSequence = [
+                        .send(signal: .terminate, toProcessGroup: true, allowedDurationToNextStep: .milliseconds(200))
+                    ]
+                    let result = try await Subprocess.run(
+                        .name("bash"),
+                        arguments: [
+                            "-c",
+                            """
+                            set -e
+                            # Spawn a grandchild that would otherwise outlive the shell.
+                            # Deliberately install NO trap: we want to verify that the
+                            # teardown signal reaches the grandchild directly via the
+                            # process group, not that bash cooperatively cleans up.
+                            /usr/bin/yes "Runaway process from \(#function), please file a SwiftSubprocess bug." > /dev/null &
+                            child_pid=$!
+                            echo "$child_pid"
+                            wait $child_pid
+                            """,
+                        ],
+                        platformOptions: platformOptions,
+                        error: .fileDescriptor(.standardError, closeAfterSpawningProcess: false),
+                        preferredBufferSize: 1
+                    ) { _, standardOutput in
+                        var grandChildPid: pid_t?
+                        for try await line in standardOutput.strings() {
+                            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if let pid = pid_t(trimmed) {
+                                grandChildPid = pid
+                                readyContinuation.finish()
+                            }
+                        }
+                        return grandChildPid
+                    }
+                    #expect(result.terminationStatus == .signaled(SIGTERM))
+                    let grandChildPid = try #require(result.value)
+                    // Grandchild should have been signalled via the process group.
+                    // Allow a few iterations for signal propagation and reaping.
+                    for _ in 0..<10 {
+                        if kill(grandChildPid, 0) != 0 { break }
+                        try await Task.sleep(for: .milliseconds(100))
+                    }
+                    let finalRC = kill(grandChildPid, 0)
+                    let capturedError = errno
+                    #expect(finalRC != 0)
+                    #expect(capturedError == ESRCH)
+                }
+                group.addTask {
+                    for await _ in readyStream {}
+                }
+                // Wait for the ready signal
+                _ = try await group.next()
+                // Cancel child process to trigger teardown
+                group.cancelAll()
+                try await group.waitForAll()
+            }
+        } catch {
+            if error is CancellationError {
+                // We intentionally cancelled the task
+                return
+            }
+            throw error
+        }
+    }
+
     @Test func testSubprocessDoesNotInheritVeryHighFileDescriptors() async throws {
         var openedFileDescriptors: [CInt] = []
         // Open /dev/null to use as source for duplication
