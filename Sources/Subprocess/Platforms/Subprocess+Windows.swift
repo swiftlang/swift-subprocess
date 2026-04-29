@@ -220,9 +220,9 @@ extension Configuration {
 
             return SpawnResult(
                 execution: execution,
-                inputWriteEnd: inputWriteFileDescriptor?.createIOChannel(),
-                outputReadEnd: outputReadFileDescriptor?.createIOChannel(),
-                errorReadEnd: errorReadFileDescriptor?.createIOChannel()
+                inputWriteEnd: inputWriteFileDescriptor,
+                outputReadEnd: outputReadFileDescriptor,
+                errorReadEnd: errorReadFileDescriptor
             )
         }
 
@@ -430,9 +430,9 @@ extension Configuration {
 
             return SpawnResult(
                 execution: execution,
-                inputWriteEnd: inputWriteFileDescriptor?.createIOChannel(),
-                outputReadEnd: outputReadFileDescriptor?.createIOChannel(),
-                errorReadEnd: errorReadFileDescriptor?.createIOChannel()
+                inputWriteEnd: inputWriteFileDescriptor,
+                outputReadEnd: outputReadFileDescriptor,
+                errorReadEnd: errorReadFileDescriptor
             )
         }
 
@@ -1533,7 +1533,7 @@ internal func fillNullTerminatedWideStringBuffer(
                 return result
             }
         } catch {
-            throw error as! SubprocessError.WindowsError
+            throw error
         }
     }
     throw SubprocessError.WindowsError(rawValue: DWORD(ERROR_INSUFFICIENT_BUFFER))

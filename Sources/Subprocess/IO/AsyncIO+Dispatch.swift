@@ -20,7 +20,30 @@ import System
 import SystemPackage
 #endif
 
-internal import Dispatch
+#if canImport(os)
+import os
+#endif
+
+@preconcurrency internal import Dispatch
+import Synchronization
+
+private typealias Registration = (
+    continuation: SignalStream.Continuation,
+    source: any DispatchSourceProtocol
+)
+
+#if canImport(Darwin)
+// We can't unconditionally use Mutex on macOS because we want to
+// support macOS 13.
+private typealias _Mutex = OSAllocatedUnfairLock
+#else
+private typealias _Mutex = Synchronization.Mutex
+#endif
+
+private let _registration:
+    _Mutex<
+        [PlatformFileDescriptor: Registration]
+    > = _Mutex([:])
 
 final class AsyncIO: Sendable {
     static let shared: AsyncIO = AsyncIO()
@@ -29,158 +52,61 @@ final class AsyncIO: Sendable {
 
     internal func shutdown() { /* noop on Darwin */  }
 
-    internal func read(
-        from diskIO: borrowing IOChannel,
-        upTo maxLength: Int
-    ) async throws(SubprocessError) -> DispatchData? {
-        return try await self.read(
-            from: diskIO.channel,
-            upTo: maxLength,
-        )
-    }
-
-    internal func read(
-        from dispatchIO: DispatchIO,
-        upTo maxLength: Int
-    ) async throws(SubprocessError) -> DispatchData? {
-        // https://github.com/swiftlang/swift/issues/87810
-        return try await _castError {
-            return try await withCheckedThrowingContinuation { continuation in
-                var buffer: DispatchData = .empty
-                dispatchIO.read(
-                    offset: 0,
-                    length: maxLength,
-                    queue: DispatchQueue(label: "SubprocessReadQueue")
-                ) { done, data, error in
-                    if error != 0 {
-                        continuation.resume(
-                            throwing:
-                                SubprocessError
-                                .failedToReadFromProcess(
-                                    withUnderlyingError: Errno(rawValue: error)
-                                )
-                        )
-                        return
-                    }
-                    if let data {
-                        if buffer.isEmpty {
-                            buffer = data
-                        } else {
-                            buffer.append(data)
-                        }
-                    }
-                    if done {
-                        if !buffer.isEmpty {
-                            continuation.resume(returning: buffer)
-                        } else {
-                            continuation.resume(returning: nil)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    internal func write(
-        _ span: borrowing RawSpan,
-        to diskIO: borrowing IOChannel
-    ) async throws(SubprocessError) -> Int {
-        // https://github.com/swiftlang/swift/issues/87810
-        return try await _castError {
-            return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int, any Error>) in
-                span.withUnsafeBytes {
-                    let dispatchData = DispatchData(
-                        bytesNoCopy: $0,
-                        deallocator: .custom(
-                            nil,
-                            {
-                                // noop
-                            }
-                        )
-                    )
-
-                    self.write(dispatchData, to: diskIO) { writtenLength, error in
-                        if let error {
-                            continuation.resume(throwing: error)
-                        } else {
-                            continuation.resume(returning: writtenLength)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    internal func write(
-        _ array: [UInt8],
-        to diskIO: borrowing IOChannel
-    ) async throws(SubprocessError) -> Int {
-        // https://github.com/swiftlang/swift/issues/87810
-        return try await _castError {
-            return try await withCheckedThrowingContinuation { continuation in
-                array.withUnsafeBytes {
-                    let dispatchData = DispatchData(
-                        bytesNoCopy: $0,
-                        deallocator: .custom(
-                            nil,
-                            {
-                                // noop
-                            }
-                        )
-                    )
-
-                    self.write(dispatchData, to: diskIO) { writtenLength, error in
-                        if let error {
-                            continuation.resume(throwing: error)
-                        } else {
-                            continuation.resume(returning: writtenLength)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    internal func write(
-        _ dispatchData: DispatchData,
-        to diskIO: borrowing IOChannel,
-        queue: DispatchQueue = .global(),
-        completion: @escaping (Int, SubprocessError?) -> Void
-    ) {
-        diskIO.channel.write(
-            offset: 0,
-            data: dispatchData,
-            queue: queue
-        ) { done, unwritten, error in
-            guard done else {
-                // Wait until we are done writing or encountered some error
+    internal func registerFileDescriptor(
+        _ fileDescriptor: FileDescriptor,
+        for event: Event
+    ) -> SignalStream {
+        return SignalStream { (continuation: SignalStream.Continuation) -> () in
+            // Set file descriptor to be non blocking
+            if let nonBlockingFdError = self.setNonblocking(for: fileDescriptor) {
+                continuation.finish(throwing: nonBlockingFdError)
                 return
             }
-
-            let unwrittenLength = unwritten?.count ?? 0
-            let writtenLength = dispatchData.count - unwrittenLength
-            guard error != 0 else {
-                completion(writtenLength, nil)
-                return
+            // Register source
+            let source: any DispatchSourceProtocol
+            switch event {
+            case .read:
+                source = DispatchSource.makeReadSource(
+                    fileDescriptor: fileDescriptor.rawValue
+                )
+            case .write:
+                source = DispatchSource.makeWriteSource(
+                    fileDescriptor: fileDescriptor.rawValue
+                )
             }
-            completion(
-                writtenLength,
-                .failedToWriteToProcess(withUnderlyingError: Errno(rawValue: error))
-            )
+
+            source.setEventHandler {
+                // We are ready to read more data
+                continuation.yield(true)
+            }
+
+            source.resume()
+
+            // Save the continuation and source
+            _registration.withLock { storage in
+                storage[fileDescriptor.rawValue] = (continuation, source)
+            }
         }
+    }
+
+    internal func removeRegistration(for fileDescriptor: FileDescriptor) throws(SubprocessError) {
+        let registration = _registration.withLock { storage in
+            return storage.removeValue(forKey: fileDescriptor.rawValue)
+        }
+        guard let registration else {
+            return
+        }
+        registration.source.cancel()
+        registration.continuation.finish()
     }
 }
 
 #if canImport(Darwin)
-// Dispatch has a -user-module-version of 54 in the macOS 15.3 SDK
-#if canImport(Dispatch, _version: "54")
-// DispatchData is annotated as Sendable
-#else
-// Retroactively conform DispatchData to Sendable
-extension DispatchData: @retroactive @unchecked Sendable {}
-#endif // canImport(Dispatch, _version: "54")
-#else
-extension DispatchData: @retroactive @unchecked Sendable {}
-#endif // canImport(Darwin)
+extension OSAllocatedUnfairLock where State: Sendable {
+    init(_ initialValue: State) {
+        self.init(initialState: initialValue)
+    }
+}
+#endif
 
 #endif // SUBPROCESS_ASYNCIO_DISPATCH

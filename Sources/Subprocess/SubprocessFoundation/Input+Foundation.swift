@@ -149,47 +149,15 @@ extension StandardInputWriter {
     }
 }
 
-#if SUBPROCESS_ASYNCIO_DISPATCH
-extension AsyncIO {
-    internal func write(
-        _ data: Data,
-        to diskIO: borrowing IOChannel
-    ) async throws(SubprocessError) -> Int {
-        try await _castError {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int, any Error>) in
-                let dispatchData = data.withUnsafeBytes {
-                    return DispatchData(
-                        bytesNoCopy: $0,
-                        deallocator: .custom(
-                            nil,
-                            {
-                                // noop
-                            }
-                        )
-                    )
-                }
-                self.write(dispatchData, to: diskIO) { writtenLength, error in
-                    if let error = error {
-                        continuation.resume(throwing: error)
-                    } else {
-                        continuation.resume(returning: writtenLength)
-                    }
-                }
-            }
-        }
-    }
-}
-#else
 extension Data: AsyncIO._ContiguousBytes {}
 
 extension AsyncIO {
     internal func write(
         _ data: Data,
-        to diskIO: borrowing IOChannel
+        to diskIO: borrowing IODescriptor
     ) async throws(SubprocessError) -> Int {
         return try await self._write(data, to: diskIO)
     }
 }
-#endif // SUBPROCESS_ASYNCIO_DISPATCH
 
 #endif // SubprocessFoundation
