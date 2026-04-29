@@ -1864,7 +1864,6 @@ extension SubprocessIntegrationTests {
             setup,
             input: .none,
             error: .discarded,
-            preferredBufferSize: 1
         ) { execution, standardOutput in
             for try await line in standardOutput.strings() {
                 // If we use default buffer size this test will hang
@@ -2154,9 +2153,9 @@ extension SubprocessIntegrationTests {
             let length: Int
             switch size {
             case .large:
-                length = Int(Double.random(in: 1.0..<2.0) * Double(readBufferSize)) + 1
+                length = Int(Double.random(in: 1.0..<2.0) * Double(systemPageSize)) + 1
             case .medium:
-                length = Int(Double.random(in: 0.2..<1.0) * Double(readBufferSize)) + 1
+                length = Int(Double.random(in: 0.2..<1.0) * Double(systemPageSize)) + 1
             case .small:
                 length = Int.random(in: 1..<16)
             }
@@ -2989,7 +2988,6 @@ func _run<
     _ setup: TestSetup,
     input: Input,
     error: Error,
-    preferredBufferSize: Int? = nil,
     body: ((Execution, AsyncBufferSequence) async throws -> Result)
 ) async throws -> ExecutionOutcome<Result> where Error.OutputType == Void {
     return try await Subprocess.run(
@@ -2999,7 +2997,6 @@ func _run<
         workingDirectory: setup.workingDirectory,
         input: input,
         error: error,
-        preferredBufferSize: preferredBufferSize,
         body: body
     )
 }

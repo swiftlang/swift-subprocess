@@ -9,9 +9,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-/// Linux AsyncIO implementation based on epoll
+/// AsyncIO implementation based on kqueue
 
-#if os(Linux) || os(Android)
+#if SUBPROCESS_ASYNCIO_KQUEUE
 
 #if canImport(System)
 import System
@@ -19,98 +19,148 @@ import System
 import SystemPackage
 #endif
 
-#if canImport(Glibc)
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
 import Glibc
-#elseif canImport(Android)
-import Android
-import posix_filesystem.sys_epoll
-#elseif canImport(Musl)
-import Musl
+#endif
+
+#if canImport(os)
+import os
 #endif
 
 import _SubprocessCShims
 import Synchronization
 
-private let _epollEventSize = 256
+#if canImport(Darwin)
+private typealias _Mutex = OSAllocatedUnfairLock
+#else
+private typealias _Mutex = Synchronization.Mutex
+#endif
+
+// The kevent() C function and the kevent struct share the same name.
+// Swift can disambiguate when given an explicit function type.
+private let _kevent:
+    @convention(c) (
+        Int32,
+        UnsafePointer<kevent>?,
+        Int32,
+        UnsafeMutablePointer<kevent>?,
+        Int32,
+        UnsafePointer<timespec>?
+    ) -> Int32 = kevent
+
+private let _kqueueEventSize = 256
 private let _registration:
-    Mutex<
+    _Mutex<
         [PlatformFileDescriptor: SignalStream.Continuation]
-    > = Mutex([:])
+    > = _Mutex([:])
+
+private func _makeKevent(
+    ident: UInt,
+    filter: Int16,
+    flags: UInt16
+) -> kevent {
+    #if canImport(Darwin)
+    return kevent(
+        ident: ident,
+        filter: filter,
+        flags: flags,
+        fflags: 0,
+        data: 0,
+        udata: nil
+    )
+    #else
+    return kevent(
+        ident: ident,
+        filter: filter,
+        flags: flags,
+        fflags: 0,
+        data: 0,
+        udata: nil,
+        ext: (0, 0, 0, 0)
+    )
+    #endif
+}
 
 final class AsyncIO: Sendable {
 
     typealias OutputStream = AsyncThrowingStream<AsyncBufferSequence.Buffer, any Error>
 
     private struct MonitorThreadContext: Sendable {
-        let epollFileDescriptor: CInt
-        let shutdownFileDescriptor: CInt
-
-        init(
-            epollFileDescriptor: CInt,
-            shutdownFileDescriptor: CInt
-        ) {
-            self.epollFileDescriptor = epollFileDescriptor
-            self.shutdownFileDescriptor = shutdownFileDescriptor
-        }
+        let kqueueFileDescriptor: CInt
+        let shutdownReadFileDescriptor: CInt
     }
 
-    private struct State {
-        let epollFileDescriptor: CInt
-        let shutdownFileDescriptor: CInt
-        let monitorThread: pthread_t
+    private struct State: Sendable {
+        let kqueueFileDescriptor: CInt
+        let shutdownReadFileDescriptor: CInt
+        let shutdownWriteFileDescriptor: CInt
+        nonisolated(unsafe) let monitorThread: pthread_t
     }
 
     static let shared: AsyncIO = AsyncIO()
 
     private let state: Result<State, SubprocessError>
+    #if canImport(Darwin)
+    private let shutdownFlag: OSAllocatedUnfairLock<Bool> = OSAllocatedUnfairLock(initialState: false)
+    #else
     private let shutdownFlag: Atomic<UInt8> = Atomic(0)
+    #endif
 
     internal init() {
-        // Create main epoll fd
-        let epollFileDescriptor = epoll_create1(CInt(EPOLL_CLOEXEC))
-        guard epollFileDescriptor >= 0 else {
+        #if os(FreeBSD) || os(OpenBSD)
+        let kqueueFileDescriptor = kqueue1(O_CLOEXEC)
+        #else
+        let kqueueFileDescriptor = kqueue()
+        #endif
+        guard kqueueFileDescriptor >= 0 else {
             let error: SubprocessError = .asyncIOFailed(
-                reason: "epoll_create1 failed",
+                reason: "kqueue failed",
                 underlyingError: Errno(rawValue: errno)
             )
             self.state = .failure(error)
             return
         }
-        // Create shutdownFileDescriptor
-        let shutdownFileDescriptor = eventfd(0, CInt(EFD_NONBLOCK | EFD_CLOEXEC))
-        guard shutdownFileDescriptor >= 0 else {
+        let shutdownPipe: (readEnd: FileDescriptor, writeEnd: FileDescriptor)
+        do {
+            shutdownPipe = try FileDescriptor.pipe()
+        } catch {
             let error: SubprocessError = .asyncIOFailed(
-                reason: "eventfd failed",
-                underlyingError: Errno(rawValue: errno)
+                reason: "pipe failed for shutdown signaling",
+                underlyingError: error as? Errno
             )
             self.state = .failure(error)
             return
         }
+        let shutdownReadFd = shutdownPipe.readEnd.rawValue
+        let shutdownWriteFd = shutdownPipe.writeEnd.rawValue
 
-        // Register shutdownFileDescriptor with epoll
-        var event = epoll_event(
-            events: EPOLLIN.rawValue,
-            data: epoll_data(fd: shutdownFileDescriptor)
+        var shutdownEvent = _makeKevent(
+            ident: UInt(shutdownReadFd),
+            filter: Int16(EVFILT_READ),
+            flags: UInt16(EV_ADD | EV_ENABLE)
         )
-        let rc = epoll_ctl(
-            epollFileDescriptor,
-            EPOLL_CTL_ADD,
-            shutdownFileDescriptor,
-            &event
+        let rc = _kevent(
+            kqueueFileDescriptor,
+            &shutdownEvent,
+            1,
+            nil,
+            0,
+            nil
         )
         guard rc == 0 else {
             let error: SubprocessError = .asyncIOFailed(
-                reason: "failed to add shutdown fd \(shutdownFileDescriptor) to epoll list",
+                reason: "failed to add shutdown fd to kqueue",
                 underlyingError: Errno(rawValue: errno)
             )
             self.state = .failure(error)
             return
         }
 
-        // Create thread data
         let context = MonitorThreadContext(
-            epollFileDescriptor: epollFileDescriptor,
-            shutdownFileDescriptor: shutdownFileDescriptor
+            kqueueFileDescriptor: kqueueFileDescriptor,
+            shutdownReadFileDescriptor: shutdownReadFd
         )
         let thread: pthread_t
         do throws(Errno) {
@@ -123,26 +173,26 @@ final class AsyncIO: Sendable {
                     }
                 }
 
-                var events: [epoll_event] = Array(
-                    repeating: epoll_event(events: 0, data: epoll_data(fd: 0)),
-                    count: _epollEventSize
+                var events: [kevent] = Array(
+                    repeating: _makeKevent(ident: 0, filter: 0, flags: 0),
+                    count: _kqueueEventSize
                 )
 
-                // Enter the monitor loop
                 monitorLoop: while true {
-                    let eventCount = epoll_wait(
-                        context.epollFileDescriptor,
+                    let eventCount = _kevent(
+                        context.kqueueFileDescriptor,
+                        nil,
+                        0,
                         &events,
-                        CInt(events.count),
-                        -1
+                        Int32(events.count),
+                        nil
                     )
                     if eventCount < 0 {
                         if errno == EINTR || errno == EAGAIN {
-                            continue // interrupted by signal; try again
+                            continue
                         }
-                        // Report other errors
                         let error: SubprocessError = .asyncIOFailed(
-                            reason: "epoll_wait failed",
+                            reason: "kevent wait failed",
                             underlyingError: Errno(rawValue: errno)
                         )
                         reportError(error)
@@ -151,20 +201,17 @@ final class AsyncIO: Sendable {
 
                     for index in 0..<Int(eventCount) {
                         let event = events[index]
-                        let targetFileDescriptor = event.data.fd
-                        // Breakout the monitor loop if we received shutdown
-                        // from the shutdownFD
-                        if targetFileDescriptor == context.shutdownFileDescriptor {
-                            var buf: UInt64 = 0
+                        let targetFileDescriptor = Int32(event.ident)
+                        if targetFileDescriptor == context.shutdownReadFileDescriptor {
+                            var buf: UInt8 = 0
                             withUnsafeMutableBytes(of: &buf) { ptr in
                                 _ = try? FileDescriptor(
-                                    rawValue: context.shutdownFileDescriptor
+                                    rawValue: context.shutdownReadFileDescriptor
                                 ).read(into: ptr, retryOnInterrupt: true)
                             }
                             break monitorLoop
                         }
 
-                        // Notify the continuation
                         let continuation = _registration.withLock { store -> SignalStream.Continuation? in
                             if let continuation = store[targetFileDescriptor] {
                                 return continuation
@@ -185,8 +232,9 @@ final class AsyncIO: Sendable {
         }
 
         let state = State(
-            epollFileDescriptor: epollFileDescriptor,
-            shutdownFileDescriptor: shutdownFileDescriptor,
+            kqueueFileDescriptor: kqueueFileDescriptor,
+            shutdownReadFileDescriptor: shutdownReadFd,
+            shutdownWriteFileDescriptor: shutdownWriteFd,
             monitorThread: thread
         )
         self.state = .success(state)
@@ -201,34 +249,46 @@ final class AsyncIO: Sendable {
             return
         }
 
+        #if canImport(Darwin)
+        let alreadyShutdown = self.shutdownFlag.withLock { flag -> Bool in
+            if flag { return true }
+            flag = true
+            return false
+        }
+        guard !alreadyShutdown else { return }
+        #else
         guard self.shutdownFlag.add(1, ordering: .sequentiallyConsistent).newValue == 1 else {
-            // We already closed this AsyncIO
             return
         }
-        var one: UInt64 = 1
-        // Wake up the thread for shutdown
-        let shutdownFd = FileDescriptor(rawValue: currentState.shutdownFileDescriptor)
-        let epollFd = FileDescriptor(rawValue: currentState.epollFileDescriptor)
+        #endif
+        var one: UInt8 = 1
+        let kqueueFd = FileDescriptor(rawValue: currentState.kqueueFileDescriptor)
+        let shutdownWriteFd = FileDescriptor(rawValue: currentState.shutdownWriteFileDescriptor)
+        let shutdownReadFd = FileDescriptor(rawValue: currentState.shutdownReadFileDescriptor)
         withUnsafeBytes(of: &one) { ptr in
-            _ = try? shutdownFd.write(ptr)
+            _ = try? shutdownWriteFd.write(ptr)
         }
-        // Cleanup the monitor thread
-        pthread_join(currentState.monitorThread, nil)
 
+        pthread_join(currentState.monitorThread, nil)
         var closeError: Errno? = nil
         do {
-            try epollFd.close()
+            try kqueueFd.close()
         } catch {
             closeError = error as? Errno
         }
         do {
-            try shutdownFd.close()
+            try shutdownReadFd.close()
+        } catch {
+            closeError = error as? Errno
+        }
+        do {
+            try shutdownWriteFd.close()
         } catch {
             closeError = error as? Errno
         }
 
         if let closeError {
-            fatalError("Failed to close epollfd: \(closeError)")
+            fatalError("Failed to close kqueue fds: \(closeError)")
         }
     }
 
@@ -237,46 +297,44 @@ final class AsyncIO: Sendable {
         for event: Event
     ) -> SignalStream {
         return SignalStream { (continuation: SignalStream.Continuation) -> () in
-            // If setup failed, nothing much we can do
             switch self.state {
             case .success(let state):
-                // Set file descriptor to be non blocking
                 if let nonBlockingFdError = self.setNonblocking(for: fileDescriptor) {
                     continuation.finish(throwing: nonBlockingFdError)
                     return
                 }
-                // Register event
-                let targetEvent: EPOLL_EVENTS
+                let filter: Int16
                 switch event {
                 case .read:
-                    targetEvent = EPOLL_EVENTS(EPOLLIN)
+                    filter = Int16(EVFILT_READ)
                 case .write:
-                    targetEvent = EPOLL_EVENTS(EPOLLOUT)
+                    filter = Int16(EVFILT_WRITE)
                 }
 
-                // Save the continuation (before calling epoll_ctl, so we don't miss any data)
                 _registration.withLock { storage in
                     storage[fileDescriptor.rawValue] = continuation
                 }
 
-                var event = epoll_event(
-                    events: targetEvent.rawValue,
-                    data: epoll_data(fd: fileDescriptor.rawValue)
+                var kev = _makeKevent(
+                    ident: UInt(fileDescriptor.rawValue),
+                    filter: filter,
+                    flags: UInt16(EV_ADD | EV_ENABLE)
                 )
-                let rc = epoll_ctl(
-                    state.epollFileDescriptor,
-                    EPOLL_CTL_ADD,
-                    fileDescriptor.rawValue,
-                    &event
+                let rc = _kevent(
+                    state.kqueueFileDescriptor,
+                    &kev,
+                    1,
+                    nil,
+                    0,
+                    nil
                 )
                 if rc != 0 {
                     _registration.withLock { storage in
                         _ = storage.removeValue(forKey: fileDescriptor.rawValue)
                     }
-
                     let capturedError = errno
                     let error: SubprocessError = .asyncIOFailed(
-                        reason: "failed to add \(fileDescriptor.rawValue) to epoll list",
+                        reason: "failed to add \(fileDescriptor.rawValue) to kqueue",
                         underlyingError: Errno(rawValue: capturedError)
                     )
                     continuation.finish(throwing: error)
@@ -299,22 +357,40 @@ final class AsyncIO: Sendable {
                 return
             }
             registration.finish()
-            let rc = epoll_ctl(
-                state.epollFileDescriptor,
-                EPOLL_CTL_DEL,
-                fileDescriptor.rawValue,
+            var kev = _makeKevent(
+                ident: UInt(fileDescriptor.rawValue),
+                filter: Int16(EVFILT_READ),
+                flags: UInt16(EV_DELETE)
+            )
+            _ = _kevent(
+                state.kqueueFileDescriptor,
+                &kev,
+                1,
+                nil,
+                0,
                 nil
             )
-            guard rc == 0 else {
-                throw SubprocessError.asyncIOFailed(
-                    reason: "failed to remove \(fileDescriptor.rawValue) from epoll list",
-                    underlyingError: Errno(rawValue: errno)
-                )
-            }
+            kev.filter = Int16(EVFILT_WRITE)
+            _ = _kevent(
+                state.kqueueFileDescriptor,
+                &kev,
+                1,
+                nil,
+                0,
+                nil
+            )
         case .failure(let setupFailure):
             throw setupFailure
         }
     }
 }
 
-#endif // canImport(Glibc) || canImport(Android) || canImport(Musl)
+#if canImport(Darwin)
+extension OSAllocatedUnfairLock where State: Sendable {
+    fileprivate init(_ initialValue: State) {
+        self.init(initialState: initialValue)
+    }
+}
+#endif
+
+#endif // SUBPROCESS_ASYNCIO_KQUEUE

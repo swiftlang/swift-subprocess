@@ -237,9 +237,9 @@ extension InputProtocol {
 /// A writer that sends data to the standard input of a subprocess.
 public final actor StandardInputWriter: Sendable {
 
-    internal var diskIO: IOChannel
+    internal var diskIO: IODescriptor
 
-    init(diskIO: consuming IOChannel) {
+    init(diskIO: consuming IODescriptor) {
         self.diskIO = diskIO
     }
 

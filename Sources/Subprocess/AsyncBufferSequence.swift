@@ -38,9 +38,7 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
     /// The element type for the asynchronous sequence.
     public typealias Element = Buffer
 
-    #if SUBPROCESS_ASYNCIO_DISPATCH
-    internal typealias DiskIO = DispatchIO
-    #elseif canImport(WinSDK)
+    #if canImport(WinSDK)
     internal typealias DiskIO = HANDLE
     #else
     internal typealias DiskIO = FileDescriptor
@@ -55,10 +53,11 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
         private let preferredBufferSize: Int
         private var buffer: [Buffer]
 
-        internal init(diskIO: DiskIO, preferredBufferSize: Int?) {
+        internal init(diskIO: DiskIO) {
             self.diskIO = diskIO
             self.buffer = []
-            self.preferredBufferSize = preferredBufferSize ?? readBufferSize
+            // Only need to query it once at beginning of stream
+            self.preferredBufferSize = AsyncIO.queryPipeBufferSize(for: diskIO)
         }
 
         /// Retrieves the next buffer in the sequence, or `nil` if the sequence ended.
@@ -74,24 +73,14 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
             )
             guard let data else {
                 // We finished reading. Close the file descriptor now
-                #if SUBPROCESS_ASYNCIO_DISPATCH
-                try _safelyClose(.dispatchIO(self.diskIO))
-                #elseif canImport(WinSDK)
+                #if canImport(WinSDK)
                 try _safelyClose(.handle(self.diskIO))
                 #else
                 try _safelyClose(.fileDescriptor(self.diskIO))
                 #endif
                 return nil
             }
-            let createdBuffers = Buffer.createFrom(data)
-            // Most (all?) cases there should be only one buffer
-            // because DispatchData are mostly contiguous
-            if _fastPath(createdBuffers.count == 1) {
-                // No need to push to the stack
-                return createdBuffers[0]
-            }
-            self.buffer = createdBuffers
-            return self.buffer.removeFirst()
+            return Buffer(data: data)
         }
 
         /// Retrieves the next buffer in the sequence, or `nil` if the sequence ended.
@@ -101,19 +90,14 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
     }
 
     private let diskIO: DiskIO
-    private let preferredBufferSize: Int?
 
-    internal init(diskIO: DiskIO, preferredBufferSize: Int?) {
+    internal init(diskIO: DiskIO) {
         self.diskIO = diskIO
-        self.preferredBufferSize = preferredBufferSize
     }
 
     /// Creates an iterator for this asynchronous sequence.
     public func makeAsyncIterator() -> Iterator {
-        return Iterator(
-            diskIO: self.diskIO,
-            preferredBufferSize: self.preferredBufferSize
-        )
+        return Iterator(diskIO: self.diskIO)
     }
 
     /// Splits the buffer into strings using the specified separator.
@@ -268,29 +252,12 @@ extension AsyncBufferSequence {
                         self.eofReached = true
                         return nil
                     }
-                    #if SUBPROCESS_ASYNCIO_DISPATCH
-                    // Unfortunately here we _have to_ copy the bytes out because
-                    // DispatchIO (rightfully) reuses buffer, which means `buffer.data`
-                    // has the same address on all iterations, therefore we can't directly
-                    // create the result array from buffer.data
-
-                    // Calculate how many CodePoint elements we have
-                    let elementCount = buffer.data.count / MemoryLayout<Encoding.CodeUnit>.stride
-
-                    // Create array by copying from the buffer reinterpreted as CodePoint
-                    let result: Array<Encoding.CodeUnit> = buffer.data.withUnsafeBytes { ptr -> Array<Encoding.CodeUnit> in
-                        return Array(
-                            UnsafeBufferPointer(start: ptr.baseAddress?.assumingMemoryBound(to: Encoding.CodeUnit.self), count: elementCount)
-                        )
-                    }
-                    #else
                     // Cast data to CodeUnit type
                     let result = buffer.withUnsafeBytes { ptr in
                         return ptr.withMemoryRebound(to: Encoding.CodeUnit.self) { codeUnitPtr in
                             return Array(codeUnitPtr)
                         }
                     }
-                    #endif
                     return result.isEmpty ? nil : result
                 }
 
@@ -604,6 +571,6 @@ private let _pageSize: Int = Int(getpagesize())
 #endif // canImport(Darwin)
 
 @inline(__always)
-internal var readBufferSize: Int {
+internal var systemPageSize: Int {
     return _pageSize
 }
