@@ -27,10 +27,6 @@ import Musl
 @preconcurrency public import WinSDK
 #endif
 
-internal import Dispatch
-
-import Synchronization
-
 /// A collection of configuration parameters to use when
 /// spawning a subprocess.
 public struct Configuration: Sendable {
@@ -93,36 +89,34 @@ public struct Configuration: Sendable {
         _ body: (
             (
                 Execution,
-                consuming IOChannel?,
-                consuming IOChannel?,
-                consuming IOChannel?
+                consuming IODescriptor?,
+                consuming IODescriptor?,
+                consuming IODescriptor?
             ) async throws -> Result
         )
     ) async throws -> ExecutionOutcome<Result> {
-        let spawnResults = try await self.spawn(
+        var spawnResults = try await self.spawn(
             withInput: input,
             outputPipe: output,
             errorPipe: error
         )
 
-        var spawnResultBox: SpawnResult?? = consume spawnResults
-        var _spawnResult = spawnResultBox!.take()!
-
-        let execution = _spawnResult.execution
+        let execution = spawnResults.execution
         defer {
             // Close process file descriptor now we finished monitoring
             execution.processIdentifier.close()
         }
 
         return try await withAsyncTaskCleanupHandler { () throws -> ExecutionOutcome<Result> in
-            let inputIO = _spawnResult.inputWriteEnd()
-            let outputIO = _spawnResult.outputReadEnd()
-            let errorIO = _spawnResult.errorReadEnd()
+            let inputIO = spawnResults.inputWriteEnd()
+            let outputIO = spawnResults.outputReadEnd()
+            let errorIO = spawnResults.errorReadEnd()
 
             let result: Swift.Result<Result, any Error>
             do {
                 // Body runs in the same isolation
-                let bodyResult = try await body(_spawnResult.execution, inputIO, outputIO, errorIO)
+                let bodyResult = try await body(execution, inputIO, outputIO, errorIO)
+
                 result = .success(bodyResult)
             } catch {
                 result = .failure(error)
@@ -200,17 +194,17 @@ extension Configuration {
         // as opposed to actually try to close it.
         var remainingSet: Set<IODescriptor.Descriptor> = Set(
             optionalSequence: [
-                inputRead?.descriptor,
-                inputWrite?.descriptor,
-                outputRead?.descriptor,
-                outputWrite?.descriptor,
-                errorRead?.descriptor,
-                errorWrite?.descriptor,
+                inputRead?.descriptor(),
+                inputWrite?.descriptor(),
+                outputRead?.descriptor(),
+                outputWrite?.descriptor(),
+                errorRead?.descriptor(),
+                errorWrite?.descriptor(),
             ]
         )
 
         do {
-            if remainingSet.tryRemove(inputRead?.descriptor) {
+            if remainingSet.tryRemove(inputRead?.descriptor()) {
                 try inputRead?.safelyClose()
             } else {
                 try inputRead?.markAsClosed()
@@ -219,7 +213,7 @@ extension Configuration {
             possibleError = error
         }
         do {
-            if remainingSet.tryRemove(inputWrite?.descriptor) {
+            if remainingSet.tryRemove(inputWrite?.descriptor()) {
                 try inputWrite?.safelyClose()
             } else {
                 try inputWrite?.markAsClosed()
@@ -228,7 +222,7 @@ extension Configuration {
             possibleError = error
         }
         do {
-            if remainingSet.tryRemove(outputRead?.descriptor) {
+            if remainingSet.tryRemove(outputRead?.descriptor()) {
                 try outputRead?.safelyClose()
             } else {
                 try outputRead?.markAsClosed()
@@ -237,7 +231,7 @@ extension Configuration {
             possibleError = error
         }
         do {
-            if remainingSet.tryRemove(outputWrite?.descriptor) {
+            if remainingSet.tryRemove(outputWrite?.descriptor()) {
                 try outputWrite?.safelyClose()
             } else {
                 try outputWrite?.markAsClosed()
@@ -246,7 +240,7 @@ extension Configuration {
             possibleError = error
         }
         do {
-            if remainingSet.tryRemove(errorRead?.descriptor) {
+            if remainingSet.tryRemove(errorRead?.descriptor()) {
                 try errorRead?.safelyClose()
             } else {
                 try errorRead?.markAsClosed()
@@ -255,7 +249,7 @@ extension Configuration {
             possibleError = error
         }
         do {
-            if remainingSet.tryRemove(errorWrite?.descriptor) {
+            if remainingSet.tryRemove(errorWrite?.descriptor()) {
                 try errorWrite?.safelyClose()
             } else {
                 try errorWrite?.markAsClosed()
@@ -660,15 +654,15 @@ extension Configuration {
     /// via `SpawnResult` to perform actual reads
     internal struct SpawnResult: ~Copyable {
         let execution: Execution
-        var _inputWriteEnd: IOChannel?
-        var _outputReadEnd: IOChannel?
-        var _errorReadEnd: IOChannel?
+        var _inputWriteEnd: IODescriptor?
+        var _outputReadEnd: IODescriptor?
+        var _errorReadEnd: IODescriptor?
 
         init(
             execution: Execution,
-            inputWriteEnd: consuming IOChannel?,
-            outputReadEnd: consuming IOChannel?,
-            errorReadEnd: consuming IOChannel?
+            inputWriteEnd: consuming IODescriptor?,
+            outputReadEnd: consuming IODescriptor?,
+            errorReadEnd: consuming IODescriptor?
         ) {
             self.execution = execution
             self._inputWriteEnd = consume inputWriteEnd
@@ -676,15 +670,15 @@ extension Configuration {
             self._errorReadEnd = consume errorReadEnd
         }
 
-        mutating func inputWriteEnd() -> IOChannel? {
+        mutating func inputWriteEnd() -> IODescriptor? {
             return self._inputWriteEnd.take()
         }
 
-        mutating func outputReadEnd() -> IOChannel? {
+        mutating func outputReadEnd() -> IODescriptor? {
             return self._outputReadEnd.take()
         }
 
-        mutating func errorReadEnd() -> IOChannel? {
+        mutating func errorReadEnd() -> IODescriptor? {
             return self._errorReadEnd.take()
         }
     }
@@ -760,7 +754,6 @@ internal enum _CloseTarget {
     #else
     case fileDescriptor(FileDescriptor)
     #endif
-    case dispatchIO(DispatchIO)
 }
 
 internal func _safelyClose(_ target: _CloseTarget) throws(SubprocessError) {
@@ -822,8 +815,6 @@ internal func _safelyClose(_ target: _CloseTarget) throws(SubprocessError) {
             )
         }
     #endif
-    case .dispatchIO(let dispatchIO):
-        dispatchIO.close()
     }
 }
 
@@ -843,16 +834,16 @@ internal struct IODescriptor: ~Copyable {
 
     internal var closeWhenDone: Bool
     #if canImport(WinSDK)
-    internal nonisolated(unsafe) let descriptor: Descriptor
+    internal nonisolated(unsafe) let _descriptor: Descriptor
     #else
-    internal let descriptor: Descriptor
+    internal let _descriptor: Descriptor
     #endif
 
     internal init(
         _ descriptor: Descriptor,
         closeWhenDone: Bool
     ) {
-        self.descriptor = descriptor
+        self._descriptor = descriptor
         self.closeWhenDone = closeWhenDone
     }
 
@@ -867,36 +858,13 @@ internal struct IODescriptor: ~Copyable {
 
     func duplicate() throws(SubprocessError) -> IODescriptor {
         do throws(any Error) {
-            return try IODescriptor(self.descriptor.duplicate(), closeWhenDone: self.closeWhenDone)
+            return try IODescriptor(self._descriptor.duplicate(), closeWhenDone: self.closeWhenDone)
         } catch {
             throw SubprocessError.asyncIOFailed(
-                reason: "Failed to duplicate file descriptor \(self.descriptor)",
+                reason: "Failed to duplicate file descriptor \(self._descriptor)",
                 underlyingError: error as? SubprocessError.UnderlyingError
             )
         }
-    }
-
-    consuming func createIOChannel() -> IOChannel {
-        let shouldClose = self.closeWhenDone
-        self.closeWhenDone = false
-        #if SUBPROCESS_ASYNCIO_DISPATCH
-        // Transferring out the ownership of fileDescriptor means we don't have go close here
-        let closeFd = self.descriptor
-        let dispatchIO: DispatchIO = DispatchIO(
-            type: .stream,
-            fileDescriptor: self.platformDescriptor(),
-            queue: .global(),
-            cleanupHandler: { @Sendable error in
-                // Close the file descriptor
-                if shouldClose {
-                    try? closeFd.close()
-                }
-            }
-        )
-        return IOChannel(dispatchIO, closeWhenDone: shouldClose)
-        #else
-        return IOChannel(self.descriptor, closeWhenDone: shouldClose)
-        #endif
     }
 
     internal mutating func safelyClose() throws(SubprocessError) {
@@ -906,9 +874,9 @@ internal struct IODescriptor: ~Copyable {
         closeWhenDone = false
 
         #if canImport(WinSDK)
-        try _safelyClose(.handle(self.descriptor))
+        try _safelyClose(.handle(self._descriptor))
         #else
-        try _safelyClose(.fileDescriptor(self.descriptor))
+        try _safelyClose(.fileDescriptor(self._descriptor))
         #endif
     }
 
@@ -921,64 +889,31 @@ internal struct IODescriptor: ~Copyable {
             return
         }
 
-        fatalError("FileDescriptor \(self.descriptor) was not closed")
+        fatalError("FileDescriptor \(self._descriptor) was not closed")
     }
 
     internal func platformDescriptor() -> PlatformFileDescriptor {
         #if canImport(WinSDK)
-        return self.descriptor
+        return self._descriptor
         #else
-        return self.descriptor.platformDescriptor
-        #endif
-    }
-}
-
-internal struct IOChannel: ~Copyable, @unchecked Sendable {
-    #if SUBPROCESS_ASYNCIO_DISPATCH
-    typealias Channel = DispatchIO
-    #elseif canImport(WinSDK)
-    typealias Channel = HANDLE
-    #else
-    typealias Channel = FileDescriptor
-    #endif
-
-    internal var closeWhenDone: Bool
-    internal let channel: Channel
-
-    internal init(
-        _ channel: Channel,
-        closeWhenDone: Bool
-    ) {
-        self.channel = channel
-        self.closeWhenDone = closeWhenDone
-    }
-
-    internal mutating func safelyClose() throws(SubprocessError) {
-        guard self.closeWhenDone else {
-            return
-        }
-        closeWhenDone = false
-
-        #if SUBPROCESS_ASYNCIO_DISPATCH
-        try _safelyClose(.dispatchIO(self.channel))
-        #elseif canImport(WinSDK)
-        try _safelyClose(.handle(self.channel))
-        #else
-        try _safelyClose(.fileDescriptor(self.channel))
+        return self._descriptor.platformDescriptor
         #endif
     }
 
-    @_optimize(none)
-    internal consuming func consumeIOChannel() -> Channel {
-        let result = self.channel
-        // Transfer the ownership out and therefor
-        // don't perform close on deinit
+    internal func descriptor() -> Descriptor {
+        return self._descriptor
+    }
+
+    internal mutating func consumeDescriptor() -> Descriptor {
+        // This Descriptor has been consumed, we don't need to close it anymore
         self.closeWhenDone = false
-        return result
+        return self._descriptor
     }
 }
 
 #if canImport(WinSDK)
+import Synchronization
+
 internal enum PipeNameCounter {
     private static let value = Atomic<UInt64>(0)
 
@@ -1069,8 +1004,9 @@ internal struct CreatedPipe: ~Copyable {
                     openMode,
                     DWORD(PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS),
                     1, // Max instance,
-                    DWORD(readBufferSize),
-                    DWORD(readBufferSize),
+                    // Both libuv (Node) and Rust std::process use this value
+                    DWORD(64 * 1024),
+                    DWORD(64 * 1024),
                     0,
                     nil
                 )

@@ -21,10 +21,19 @@ import Musl
 @preconcurrency public import WinSDK
 #endif
 
+#if os(Windows)
+// Windows does not use Errno in public type
+#if canImport(System)
+import System
+#else
+import SystemPackage
+#endif
+#else
 #if canImport(System)
 public import System
 #else
 public import SystemPackage
+#endif
 #endif
 
 /// An error thrown by a subprocess operation.
