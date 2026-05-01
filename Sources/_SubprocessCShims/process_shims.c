@@ -286,6 +286,28 @@ int _pidfd_open(pid_t pid) {
     return syscall(SYS_pidfd_open, pid, 0);
 }
 
+static int _sigchld_write_fd = -1;
+
+static void _subprocess_sigchld_handler(int signo) {
+    int savedErrno = errno;
+    unsigned char one = 1;
+    (void)write(_sigchld_write_fd, &one, 1);
+    errno = savedErrno;
+}
+
+int _subprocess_install_sigchld_handler(int writeFd) {
+    _sigchld_write_fd = writeFd;
+    struct sigaction action;
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = _subprocess_sigchld_handler;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+    if (sigaction(SIGCHLD, &action, NULL) != 0) {
+        return errno;
+    }
+    return 0;
+}
+
 // SYS_pidfd_send_signal is only defined on Linux Kernel 5.1 and above
 // Define our dummy value if it's not available
 #ifndef SYS_pidfd_send_signal
