@@ -454,16 +454,21 @@ extension SubprocessUnixTests {
 
     @Test(.requiresBash) func testSubprocessDoesNotInheritRandomFileDescriptors() async throws {
         let pipe = try FileDescriptor.ssp_pipe()
+        // Move write end to a high fd to avoid interaction with library-internal fds
+        // that may share the same fd number on some platforms
+        let testWriteEnd = try pipe.writeEnd.duplicate(as: FileDescriptor(rawValue: 1000))
+        try pipe.writeEnd.close()
+
         try await pipe.readEnd.closeAfter {
-            let result = try await pipe.writeEnd.closeAfter {
+            let result = try await testWriteEnd.closeAfter {
                 // Spawn bash and then attempt to write to the write end
                 try await Subprocess.run(
                     .name("bash"),
                     arguments: [
                         "-c",
                         """
-                        echo this string should be discarded >&\(pipe.writeEnd.rawValue);
-                        echo wrote into \(pipe.writeEnd.rawValue), echo exit code $?;
+                        echo this string should be discarded >&\(testWriteEnd.rawValue);
+                        echo wrote into \(testWriteEnd.rawValue), echo exit code $?;
                         """,
                     ],
                     input: .none,
@@ -480,7 +485,7 @@ extension SubprocessUnixTests {
             }
             #expect(readCount == 0)
             #expect(
-                result.standardOutput?.trimmingNewLineAndQuotes() == "wrote into \(pipe.writeEnd.rawValue), echo exit code 1"
+                result.standardOutput?.trimmingNewLineAndQuotes() == "wrote into \(testWriteEnd.rawValue), echo exit code 1"
             )
         }
     }
