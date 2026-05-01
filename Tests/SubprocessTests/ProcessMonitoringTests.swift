@@ -148,7 +148,7 @@ extension SubprocessProcessMonitoringTests {
     #if !os(Windows)
     @Test func testExitViaSignal() async throws {
         let config = Configuration(
-            executable: .path("/usr/bin/tail"),
+            executable: .name("tail"),
             arguments: ["-f", "/dev/null"]
         )
         try await withSpawnedExecution(config: config) { execution in

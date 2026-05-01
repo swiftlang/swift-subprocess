@@ -19,8 +19,8 @@ import SystemPackage
 import Darwin
 #elseif canImport(Glibc)
 import Glibc
-#elseif canImport(Bionic)
-import Bionic
+#elseif canImport(Android)
+import Android
 #elseif canImport(Musl)
 import Musl
 #elseif canImport(WinSDK)
