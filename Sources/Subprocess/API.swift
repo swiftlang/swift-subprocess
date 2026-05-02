@@ -112,7 +112,6 @@ public func run<
 ///   - input: The input to send to the executable.
 ///   - output: How to manage executable standard output.
 ///   - error: How to manage executable standard error.
-///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
 ///     All arguments passed to this closure are valid only for
 ///     the duration of the closure's execution and must not be escaped.
@@ -160,12 +159,6 @@ public func run<
 ///   - platformOptions: The platform-specific options to use when running the executable.
 ///   - input: The input to send to the executable.
 ///   - error: How to manage executable standard error.
-///   - preferredBufferSize: The preferred size in bytes for the buffer used when reading
-///     from the subprocess's standard output stream. If `nil`, uses the system page size
-///     as the default buffer size. Larger buffer sizes may improve performance for
-///     subprocesses that produce large amounts of output, while smaller buffer sizes
-///     may reduce memory usage and improve responsiveness for interactive applications.
-///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
 ///     All arguments passed to this closure are valid only for
 ///     the duration of the closure's execution and must not be escaped.
@@ -180,7 +173,6 @@ public func run<Result, Input: InputProtocol, Error: ErrorOutputProtocol>(
     platformOptions: PlatformOptions = PlatformOptions(),
     input: Input = .none,
     error: Error = .discarded,
-    preferredBufferSize: Int? = nil,
     body: (
         _ execution: Execution,
         _ outputSequence: AsyncBufferSequence
@@ -197,7 +189,6 @@ public func run<Result, Input: InputProtocol, Error: ErrorOutputProtocol>(
         configuration,
         input: input,
         error: error,
-        preferredBufferSize: preferredBufferSize,
         body: body
     )
 }
@@ -212,12 +203,6 @@ public func run<Result, Input: InputProtocol, Error: ErrorOutputProtocol>(
 ///   - platformOptions: The platform-specific options to use when running the executable.
 ///   - input: The input to send to the executable.
 ///   - output: How to manage executable standard output.
-///   - preferredBufferSize: The preferred size in bytes for the buffer used when reading
-///     from the subprocess's standard error stream. If `nil`, uses the system page size
-///     as the default buffer size. Larger buffer sizes may improve performance for
-///     subprocesses that produce large amounts of output, while smaller buffer sizes
-///     may reduce memory usage and improve responsiveness for interactive applications.
-///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
 ///     All arguments passed to this closure are valid only for
 ///     the duration of the closure's execution and must not be escaped.
@@ -232,7 +217,6 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
     platformOptions: PlatformOptions = PlatformOptions(),
     input: Input = .none,
     output: Output,
-    preferredBufferSize: Int? = nil,
     body: (
         _ execution: Execution,
         _ errorSequence: AsyncBufferSequence
@@ -249,7 +233,6 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
         configuration,
         input: input,
         output: output,
-        preferredBufferSize: preferredBufferSize,
         body: body
     )
 }
@@ -313,12 +296,6 @@ public func run<Result, Input: InputProtocol>(
 ///   - workingDirectory: The working directory in which to run the executable.
 ///   - platformOptions: The platform-specific options to use when running the executable.
 ///   - error: How to manage executable standard error.
-///   - preferredBufferSize: The preferred size in bytes for the buffer used when reading
-///     from the subprocess's standard output stream. If `nil`, uses the system page size
-///     as the default buffer size. Larger buffer sizes may improve performance for
-///     subprocesses that produce large amounts of output, while smaller buffer sizes
-///     may reduce memory usage and improve responsiveness for interactive applications.
-///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
 ///     All arguments passed to this closure are valid only for
 ///     the duration of the closure's execution and must not be escaped.
@@ -333,7 +310,6 @@ public func run<Result, Error: ErrorOutputProtocol>(
     workingDirectory: FilePath? = nil,
     platformOptions: PlatformOptions = PlatformOptions(),
     error: Error = .discarded,
-    preferredBufferSize: Int? = nil,
     body: (
         _ execution: Execution,
         _ inputWriter: StandardInputWriter,
@@ -350,7 +326,6 @@ public func run<Result, Error: ErrorOutputProtocol>(
     return try await run(
         configuration,
         error: error,
-        preferredBufferSize: preferredBufferSize,
         body: body
     )
 }
@@ -364,12 +339,6 @@ public func run<Result, Error: ErrorOutputProtocol>(
 ///   - workingDirectory: The working directory in which to run the executable.
 ///   - platformOptions: The platform-specific options to use when running the executable.
 ///   - output: How to manage executable standard output.
-///   - preferredBufferSize: The preferred size in bytes for the buffer used when reading
-///     from the subprocess's standard error stream. If `nil`, uses the system page size
-///     as the default buffer size. Larger buffer sizes may improve performance for
-///     subprocesses that produce large amounts of output, while smaller buffer sizes
-///     may reduce memory usage and improve responsiveness for interactive applications.
-///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
 ///     All arguments passed to this closure are valid only for
 ///     the duration of the closure's execution and must not be escaped.
@@ -384,7 +353,6 @@ public func run<Result, Output: OutputProtocol>(
     workingDirectory: FilePath? = nil,
     platformOptions: PlatformOptions = PlatformOptions(),
     output: Output,
-    preferredBufferSize: Int? = nil,
     body: (
         _ execution: Execution,
         _ inputWriter: StandardInputWriter,
@@ -401,7 +369,6 @@ public func run<Result, Output: OutputProtocol>(
     return try await run(
         configuration,
         output: output,
-        preferredBufferSize: preferredBufferSize,
         body: body
     )
 }
@@ -415,12 +382,6 @@ public func run<Result, Output: OutputProtocol>(
 ///   - environment: The environment in which to run the executable.
 ///   - workingDirectory: The working directory in which to run the executable.
 ///   - platformOptions: The platform-specific options to use when running the executable.
-///   - preferredBufferSize: The preferred size in bytes for the buffer used when reading
-///     from the subprocess's standard output and error stream. If `nil`, uses the system page size
-///     as the default buffer size. Larger buffer sizes may improve performance for
-///     subprocesses that produce large amounts of output, while smaller buffer sizes
-///     may reduce memory usage and improve responsiveness for interactive applications.
-///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
 ///     All arguments passed to this closure are valid only for
 ///     the duration of the closure's execution and must not be escaped.
@@ -435,7 +396,6 @@ public func run<Result>(
     environment: Environment = .inherit,
     workingDirectory: FilePath? = nil,
     platformOptions: PlatformOptions = PlatformOptions(),
-    preferredBufferSize: Int? = nil,
     body: (
         _ execution: Execution,
         _ inputWriter: StandardInputWriter,
@@ -452,7 +412,6 @@ public func run<Result>(
     )
     return try await run(
         configuration,
-        preferredBufferSize: preferredBufferSize,
         body: body
     )
 }
@@ -490,9 +449,9 @@ public func run<
         output: try output.createPipe(),
         error: try error.createPipe(),
     ) { execution, inputIO, outputIO, errorIO in
-        var inputIOBox: IOChannel? = consume inputIO
-        var outputIOBox: IOChannel? = consume outputIO
-        var errorIOBox: IOChannel? = consume errorIO
+        var inputIOBox: IODescriptor? = consume inputIO
+        var outputIOBox: IODescriptor? = consume outputIO
+        var errorIOBox: IODescriptor? = consume errorIO
 
         // Write input, capture output and error in parallel
         async let stdout = try output.captureOutput(from: outputIOBox.take())
@@ -552,16 +511,16 @@ public func run<
         error: errorPipe
     ) { execution, inputIO, outputIO, errorIO in
         // Write input, capture output and error in parallel
-        var inputIOBox: IOChannel? = consume inputIO
-        var outputIOBox: IOChannel? = consume outputIO
-        var errorIOBox: IOChannel? = consume errorIO
+        var inputIOBox: IODescriptor? = consume inputIO
+        var outputIOBox: IODescriptor? = consume outputIO
+        var errorIOBox: IODescriptor? = consume errorIO
         return try await withThrowingTaskGroup(
             of: OutputCapturingState<Output.OutputType, Error.OutputType>?.self,
             returning: RunResult.self
         ) { group in
-            var inputIOContainer: IOChannel? = inputIOBox.take()
-            var outputIOContainer: IOChannel? = outputIOBox.take()
-            var errorIOContainer: IOChannel? = errorIOBox.take()
+            var inputIOContainer: IODescriptor? = inputIOBox.take()
+            var outputIOContainer: IODescriptor? = outputIOBox.take()
+            var errorIOContainer: IODescriptor? = errorIOBox.take()
             group.addTask {
                 if let writeFd = inputIOContainer.take() {
                     let writer = StandardInputWriter(diskIO: writeFd)
@@ -629,7 +588,6 @@ public func run<
 ///   - input: The input to send to the executable.
 ///   - output: How to manage executable standard output.
 ///   - error: How to manage executable standard error.
-///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
 ///     All arguments passed to this closure are valid only for
 ///     the duration of the closure's execution and must not be escaped.
@@ -656,12 +614,17 @@ public func run<
         output: outputPipe,
         error: errorPipe
     ) { execution, inputIO, outputIO, errorIO in
-        var inputIOBox: IOChannel? = consume inputIO
+        var inputIOBox: IODescriptor? = consume inputIO
+        var outputIOBox: IODescriptor? = consume outputIO
+        var errorIOBox: IODescriptor? = consume errorIO
+        try outputIOBox?.safelyClose()
+        try errorIOBox?.safelyClose()
+
         return try await withThrowingTaskGroup(
             of: Void.self,
             returning: Result.self
         ) { group in
-            var inputIOContainer: IOChannel? = inputIOBox.take()
+            var inputIOContainer: IODescriptor? = inputIOBox.take()
             group.addTask {
                 if let inputIO = inputIOContainer.take() {
                     let writer = StandardInputWriter(diskIO: inputIO)
@@ -672,6 +635,7 @@ public func run<
 
             // Body runs in the same isolation
             let result = try await body(execution)
+
             try await group.waitForAll()
             return result
         }
@@ -684,12 +648,6 @@ public func run<
 ///   - configuration: The configuration to run.
 ///   - input: The input to send to the executable.
 ///   - error: How to manage executable standard error.
-///   - preferredBufferSize: The preferred size in bytes for the buffer used when reading
-///     from the subprocess's standard output stream. If `nil`, uses the system page size
-///     as the default buffer size. Larger buffer sizes may improve performance for
-///     subprocesses that produce large amounts of output, while smaller buffer sizes
-///     may reduce memory usage and improve responsiveness for interactive applications.
-///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
 ///     All arguments passed to this closure are valid only for
 ///     the duration of the closure's execution and must not be escaped.
@@ -704,7 +662,6 @@ public func run<
     _ configuration: Configuration,
     input: Input = .none,
     error: Error = .discarded,
-    preferredBufferSize: Int? = nil,
     body: (
         _ execution: Execution,
         _ outputSequence: AsyncBufferSequence
@@ -720,14 +677,16 @@ public func run<
         output: outputPipe,
         error: errorPipe
     ) { execution, inputIO, outputIO, errorIO in
-        var inputIOBox: IOChannel? = consume inputIO
-        var outputIOBox: IOChannel? = consume outputIO
+        var inputIOBox: IODescriptor? = consume inputIO
+        var outputIOBox: IODescriptor? = consume outputIO
+        var errorIOBox: IODescriptor? = consume errorIO
+        try errorIOBox?.safelyClose()
 
         return try await withThrowingTaskGroup(
             of: Void.self,
             returning: Result.self
         ) { group in
-            var inputIOContainer: IOChannel? = inputIOBox.take()
+            var inputIOContainer: IODescriptor? = inputIOBox.take()
             group.addTask {
                 if let inputIO = inputIOContainer.take() {
                     let writer = StandardInputWriter(diskIO: inputIO)
@@ -738,8 +697,7 @@ public func run<
 
             // Body runs in the same isolation
             let outputSequence = AsyncBufferSequence(
-                diskIO: outputIOBox.take()!.consumeIOChannel(),
-                preferredBufferSize: preferredBufferSize
+                diskIO: outputIOBox!.consumeDescriptor()
             )
 
             let result = try await body(execution, outputSequence)
@@ -755,12 +713,6 @@ public func run<
 ///   - configuration: The configuration to run.
 ///   - input: The input to send to the executable.
 ///   - output: How to manage executable standard output.
-///   - preferredBufferSize: The preferred size in bytes for the buffer used when reading
-///     from the subprocess's standard error stream. If `nil`, uses the system page size
-///     as the default buffer size. Larger buffer sizes may improve performance for
-///     subprocesses that produce large amounts of output, while smaller buffer sizes
-///     may reduce memory usage and improve responsiveness for interactive applications.
-///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
 ///     All arguments passed to this closure are valid only for
 ///     the duration of the closure's execution and must not be escaped.
@@ -771,7 +723,6 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
     _ configuration: Configuration,
     input: Input = .none,
     output: Output,
-    preferredBufferSize: Int? = nil,
     body: (
         _ execution: Execution,
         _ errorSequence: AsyncBufferSequence
@@ -784,14 +735,16 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
         output: try output.createPipe(),
         error: try error.createPipe(),
     ) { execution, inputIO, outputIO, errorIO in
-        var inputIOBox: IOChannel? = consume inputIO
-        var errorIOBox: IOChannel? = consume errorIO
+        var inputIOBox: IODescriptor? = consume inputIO
+        var outputIOBox: IODescriptor? = consume outputIO
+        var errorIOBox: IODescriptor? = consume errorIO
+        try outputIOBox?.safelyClose()
 
         return try await withThrowingTaskGroup(
             of: Void.self,
             returning: Result.self
         ) { group in
-            var inputIOContainer: IOChannel? = inputIOBox.take()
+            var inputIOContainer: IODescriptor? = inputIOBox.take()
             group.addTask {
                 if let inputIO = inputIOContainer.take() {
                     let writer = StandardInputWriter(diskIO: inputIO)
@@ -799,14 +752,12 @@ public func run<Result, Input: InputProtocol, Output: OutputProtocol>(
                     try await writer.finish()
                 }
             }
-
-            // Body runs in the same isolation
             let errorSequence = AsyncBufferSequence(
-                diskIO: errorIOBox.take()!.consumeIOChannel(),
-                preferredBufferSize: preferredBufferSize
+                diskIO: errorIOBox!.consumeDescriptor()
             )
-
+            // Body runs in the same isolation
             let result = try await body(execution, errorSequence)
+
             try await group.waitForAll()
             return result
         }
@@ -891,12 +842,6 @@ public func run<Result, Input: InputProtocol>(
 /// - Parameters:
 ///   - configuration: The configuration to run.
 ///   - error: How to manage executable standard error.
-///   - preferredBufferSize: The preferred size in bytes for the buffer used when reading
-///     from the subprocess's standard output stream. If `nil`, uses the system page size
-///     as the default buffer size. Larger buffer sizes may improve performance for
-///     subprocesses that produce large amounts of output, while smaller buffer sizes
-///     may reduce memory usage and improve responsiveness for interactive applications.
-///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
 ///     All arguments passed to this closure are valid only for
 ///     the duration of the closure's execution and must not be escaped.
@@ -907,7 +852,6 @@ public func run<Result, Input: InputProtocol>(
 public func run<Result, Error: ErrorOutputProtocol>(
     _ configuration: Configuration,
     error: Error = .discarded,
-    preferredBufferSize: Int? = nil,
     body: (
         _ execution: Execution,
         _ inputWriter: StandardInputWriter,
@@ -925,13 +869,18 @@ public func run<Result, Error: ErrorOutputProtocol>(
         output: outputPipe,
         error: errorPipe
     ) { execution, inputIO, outputIO, errorIO in
+        var outputIOBox = consume outputIO
+        var errorIOBox = consume errorIO
+        try errorIOBox?.safelyClose()
+
         let writer = StandardInputWriter(diskIO: inputIO!)
         let outputSequence = AsyncBufferSequence(
-            diskIO: outputIO!.consumeIOChannel(),
-            preferredBufferSize: preferredBufferSize
+            diskIO: outputIOBox!.consumeDescriptor()
         )
 
-        return try await body(execution, writer, outputSequence)
+        let result = try await body(execution, writer, outputSequence)
+        try await writer.finish()
+        return result
     }
 }
 
@@ -941,12 +890,6 @@ public func run<Result, Error: ErrorOutputProtocol>(
 /// - Parameters:
 ///   - configuration: The configuration to run.
 ///   - output: How to manage executable standard output.
-///   - preferredBufferSize: The preferred size in bytes for the buffer used when reading
-///     from the subprocess's standard error stream. If `nil`, uses the system page size
-///     as the default buffer size. Larger buffer sizes may improve performance for
-///     subprocesses that produce large amounts of output, while smaller buffer sizes
-///     may reduce memory usage and improve responsiveness for interactive applications.
-///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
 ///     All arguments passed to this closure are valid only for
 ///     the duration of the closure's execution and must not be escaped.
@@ -957,7 +900,6 @@ public func run<Result, Error: ErrorOutputProtocol>(
 public func run<Result, Output: OutputProtocol>(
     _ configuration: Configuration,
     output: Output,
-    preferredBufferSize: Int? = nil,
     body: (
         _ execution: Execution,
         _ inputWriter: StandardInputWriter,
@@ -972,12 +914,17 @@ public func run<Result, Output: OutputProtocol>(
         output: try output.createPipe(),
         error: try error.createPipe(),
     ) { execution, inputIO, outputIO, errorIO in
+        var outputIOBox = consume outputIO
+        var errorIOBox = consume errorIO
+        try outputIOBox?.safelyClose()
+
         let writer = StandardInputWriter(diskIO: inputIO!)
         let errorSequence = AsyncBufferSequence(
-            diskIO: errorIO!.consumeIOChannel(),
-            preferredBufferSize: preferredBufferSize
+            diskIO: errorIOBox!.consumeDescriptor()
         )
-        return try await body(execution, writer, errorSequence)
+        let bodyResult = try await body(execution, writer, errorSequence)
+        try await writer.finish()
+        return bodyResult
     }
 }
 
@@ -986,12 +933,6 @@ public func run<Result, Output: OutputProtocol>(
 /// standard input, and stream its standard output and standard error.
 /// - Parameters:
 ///   - configuration: The configuration to run.
-///   - preferredBufferSize: The preferred size in bytes for the buffer used when reading
-///     from the subprocess's standard output and error stream. If `nil`, uses the system page size
-///     as the default buffer size. Larger buffer sizes may improve performance for
-///     subprocesses that produce large amounts of output, while smaller buffer sizes
-///     may reduce memory usage and improve responsiveness for interactive applications.
-///   - isolation: The isolation context to run the body closure.
 ///   - body: A closure to manage the running process.
 ///     All arguments passed to this closure are valid only for
 ///     the duration of the closure's execution and must not be escaped.
@@ -1002,7 +943,6 @@ public func run<Result, Output: OutputProtocol>(
 /// - Returns: An ``ExecutionOutcome`` that contains the closure's return value.
 public func run<Result>(
     _ configuration: Configuration,
-    preferredBufferSize: Int? = nil,
     body: (
         _ execution: Execution,
         _ inputWriter: StandardInputWriter,
@@ -1019,15 +959,18 @@ public func run<Result>(
         output: try output.createPipe(),
         error: try error.createPipe()
     ) { execution, inputIO, outputIO, errorIO in
+        var outputIOBox = consume outputIO
+        var errorIOBox = consume errorIO
+
         let writer = StandardInputWriter(diskIO: inputIO!)
         let outputSequence = AsyncBufferSequence(
-            diskIO: outputIO!.consumeIOChannel(),
-            preferredBufferSize: preferredBufferSize
+            diskIO: outputIOBox!.consumeDescriptor()
         )
         let errorSequence = AsyncBufferSequence(
-            diskIO: errorIO!.consumeIOChannel(),
-            preferredBufferSize: preferredBufferSize
+            diskIO: errorIOBox!.consumeDescriptor()
         )
-        return try await body(execution, writer, outputSequence, errorSequence)
+        let result = try await body(execution, writer, outputSequence, errorSequence)
+        try await writer.finish()
+        return result
     }
 }

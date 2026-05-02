@@ -243,10 +243,10 @@ final class AsyncIO: @unchecked Sendable {
     }
 
     func read(
-        from diskIO: borrowing IOChannel,
+        from diskIO: borrowing IODescriptor,
         upTo maxLength: Int
     ) async throws(SubprocessError) -> [UInt8]? {
-        return try await self.read(from: diskIO.channel, upTo: maxLength)
+        return try await self.read(from: diskIO.descriptor(), upTo: maxLength)
     }
 
     func read(
@@ -256,115 +256,97 @@ final class AsyncIO: @unchecked Sendable {
         guard maxLength > 0 else {
             return nil
         }
-        // If we are reading until EOF, start with readBufferSize
-        // and gradually increase buffer size
-        let bufferLength = maxLength == .max ? readBufferSize : maxLength
+        let bufferLength: Int
+        if maxLength == .max {
+            // Prevent OOM allocation
+            bufferLength = Self.queryPipeBufferSize(for: handle)
+        } else {
+            bufferLength = maxLength
+        }
 
         var resultBuffer: [UInt8] = Array(
             repeating: 0, count: bufferLength
         )
-        var readLength: Int = 0
         var signalStream = self.registerHandle(handle).makeAsyncIterator()
 
-        while true {
-            // We use an empty `_OVERLAPPED()` here because `ReadFile` below
-            // only reads non-seekable files, aka pipes.
-            var overlapped = _OVERLAPPED()
-            let succeed = resultBuffer.withUnsafeMutableBufferPointer { bufferPointer in
-                // Get a pointer to the memory at the specified offset
-                // Windows ReadFile uses DWORD for target count, which means we can only
-                // read up to DWORD (aka UInt32) max.
-                let targetCount: DWORD = self.calculateRemainingCount(
-                    totalCount: bufferPointer.count,
-                    readCount: readLength
-                )
+        // We use an empty `_OVERLAPPED()` here because `ReadFile` below
+        // only reads non-seekable files, aka pipes.
+        var overlapped = _OVERLAPPED()
+        let succeed = resultBuffer.withUnsafeMutableBufferPointer { bufferPointer in
+            // Get a pointer to the memory at the specified offset
+            // Windows ReadFile uses DWORD for target count, which means we can only
+            // read up to DWORD (aka UInt32) max.
+            let targetCount: DWORD = self.calculateRemainingCount(
+                totalCount: bufferPointer.count,
+                readCount: 0
+            )
 
-                let offsetAddress = bufferPointer.baseAddress!.advanced(by: readLength)
-                // Read directly into the buffer at the offset
-                return ReadFile(
-                    handle,
-                    offsetAddress,
-                    targetCount,
-                    nil,
-                    &overlapped
-                )
-            }
-
-            if !succeed {
-                // It is expected `ReadFile` to return `false` in async mode.
-                // Make sure we only get `ERROR_IO_PENDING` or `ERROR_BROKEN_PIPE`
-                let lastError = GetLastError()
-                if lastError == ERROR_BROKEN_PIPE {
-                    // We reached EOF. Return whatever's left
-                    guard readLength > 0 else {
-                        return nil
-                    }
-                    resultBuffer.removeLast(resultBuffer.count - readLength)
-                    return resultBuffer
-                }
-                guard lastError == ERROR_IO_PENDING else {
-                    let error: SubprocessError = .failedToReadFromProcess(
-                        withUnderlyingError: SubprocessError.WindowsError(rawValue: lastError)
-                    )
-                    throw error
-                }
-
-            }
-            // Now wait for read to finish
-            let bytesRead: DWORD
-            do {
-                bytesRead = try await signalStream.next() ?? 0
-            } catch {
-                if let subprocessError = error as? SubprocessError {
-                    throw subprocessError
-                }
-                throw SubprocessError.failedToReadFromProcess(
-                    withUnderlyingError: error as? SubprocessError.UnderlyingError
-                )
-            }
-
-            if bytesRead == 0 {
-                // We reached EOF. Return whatever's left
-                guard readLength > 0 else {
-                    return nil
-                }
-                resultBuffer.removeLast(resultBuffer.count - readLength)
-                return resultBuffer
-            } else {
-                // Read some data
-                readLength += Int(truncatingIfNeeded: bytesRead)
-                if maxLength == .max {
-                    // Grow resultBuffer if needed
-                    guard Double(readLength) > 0.8 * Double(resultBuffer.count) else {
-                        continue
-                    }
-                    resultBuffer.append(
-                        contentsOf: Array(repeating: 0, count: resultBuffer.count)
-                    )
-                } else if readLength >= maxLength {
-                    // When we reached maxLength, return!
-                    return resultBuffer
-                }
-            }
+            // Read directly into the buffer at the offset
+            return ReadFile(
+                handle,
+                bufferPointer.baseAddress!,
+                targetCount,
+                nil,
+                &overlapped
+            )
         }
+
+        if !succeed {
+            // It is expected `ReadFile` to return `false` in async mode.
+            // Make sure we only get `ERROR_IO_PENDING` or `ERROR_BROKEN_PIPE`
+            let lastError = GetLastError()
+            if lastError == ERROR_BROKEN_PIPE {
+                // We reached EOF before any data was read
+                return nil
+            }
+            guard lastError == ERROR_IO_PENDING else {
+                let error: SubprocessError = .failedToReadFromProcess(
+                    withUnderlyingError: SubprocessError.WindowsError(rawValue: lastError)
+                )
+                throw error
+            }
+
+        }
+        // Now wait for read to finish
+        let bytesRead: DWORD
+        do {
+            bytesRead = try await signalStream.next() ?? 0
+        } catch {
+            if let subprocessError = error as? SubprocessError {
+                throw subprocessError
+            }
+            throw SubprocessError.failedToReadFromProcess(
+                withUnderlyingError: error as? SubprocessError.UnderlyingError
+            )
+        }
+
+        if bytesRead == 0 {
+            // EOF
+            return nil
+        }
+
+        // Got data — return immediately so the caller can process it
+        // without waiting for the buffer to fill.
+        resultBuffer.removeLast(resultBuffer.count - Int(truncatingIfNeeded: bytesRead))
+        return resultBuffer
     }
 
     func write(
         _ array: [UInt8],
-        to diskIO: borrowing IOChannel
+        to diskIO: borrowing IODescriptor
     ) async throws(SubprocessError) -> Int {
         return try await self._write(array, to: diskIO)
     }
 
     func write(
         _ span: borrowing RawSpan,
-        to diskIO: borrowing IOChannel
+        to diskIO: borrowing IODescriptor
     ) async throws(SubprocessError) -> Int {
         guard span.byteCount > 0 else {
             return 0
         }
-        let handle = diskIO.channel
-        var signalStream = self.registerHandle(diskIO.channel).makeAsyncIterator()
+        let handle = diskIO.descriptor()
+        var signalStream = self.registerHandle(handle).makeAsyncIterator()
         var writtenLength: Int = 0
         while true {
             // We use an empty `_OVERLAPPED()` here because `WriteFile` below
@@ -422,13 +404,13 @@ final class AsyncIO: @unchecked Sendable {
 
     func _write<Bytes: _ContiguousBytes>(
         _ bytes: Bytes,
-        to diskIO: borrowing IOChannel
+        to diskIO: borrowing IODescriptor
     ) async throws(SubprocessError) -> Int {
         guard bytes.count > 0 else {
             return 0
         }
-        let handle = diskIO.channel
-        var signalStream = self.registerHandle(diskIO.channel).makeAsyncIterator()
+        let handle = diskIO.descriptor()
+        var signalStream = self.registerHandle(diskIO.descriptor()).makeAsyncIterator()
         var writtenLength: Int = 0
         while true {
             // We use an empty `_OVERLAPPED()` here because `WriteFile` below
@@ -492,6 +474,12 @@ final class AsyncIO: @unchecked Sendable {
             // On 64 bit systems we need to cap the count at DWORD max
             return DWORD(truncatingIfNeeded: min(totalCount - readCount, Int(DWORD.max)))
         }
+    }
+
+    static func queryPipeBufferSize(for fileDescriptor: IODescriptor.Descriptor) -> Int {
+        // Windows does not provide an API to query pipe buffer size.
+        // Node `getDefaultHighWaterMark` uses 16k
+        return 16 * 1024
     }
 }
 

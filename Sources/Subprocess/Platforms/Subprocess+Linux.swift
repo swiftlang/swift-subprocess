@@ -9,29 +9,20 @@
 //
 //===----------------------------------------------------------------------===//
 
-#if canImport(Glibc)
-import Glibc
-let _subprocess_read = Glibc.read
-let _subprocess_write = Glibc.write
-let _subprocess_close = Glibc.close
-#elseif canImport(Android)
-import Android
-let _subprocess_read = Android.read
-let _subprocess_write = Android.write
-let _subprocess_close = Android.close
-#elseif canImport(Musl)
-import Musl
-let _subprocess_read = Musl.read
-let _subprocess_write = Musl.write
-let _subprocess_close = Musl.close
-#endif
-
 #if os(Linux) || os(Android)
 
 #if canImport(System)
 import System
 #else
 import SystemPackage
+#endif
+
+#if canImport(Glibc)
+import Glibc
+#elseif canImport(Android)
+import Android
+#elseif canImport(Musl)
+import Musl
 #endif
 
 internal import Dispatch

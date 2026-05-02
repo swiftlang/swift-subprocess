@@ -31,7 +31,6 @@ import Musl
 import _SubprocessCShims
 import Synchronization
 
-private typealias SignalStream = AsyncThrowingStream<Bool, any Error>
 private let _epollEventSize = 256
 private let _registration:
     Mutex<
@@ -53,11 +52,6 @@ final class AsyncIO: Sendable {
             self.epollFileDescriptor = epollFileDescriptor
             self.shutdownFileDescriptor = shutdownFileDescriptor
         }
-    }
-
-    private enum Event {
-        case read
-        case write
     }
 
     private struct State {
@@ -119,7 +113,7 @@ final class AsyncIO: Sendable {
             shutdownFileDescriptor: shutdownFileDescriptor
         )
         let thread: pthread_t
-        do {
+        do throws(Errno) {
             thread = try pthread_create {
                 func reportError(_ error: SubprocessError) {
                     _registration.withLock { store in
@@ -224,7 +218,7 @@ final class AsyncIO: Sendable {
         }
     }
 
-    private func registerFileDescriptor(
+    internal func registerFileDescriptor(
         _ fileDescriptor: FileDescriptor,
         for event: Event
     ) -> SignalStream {
@@ -233,21 +227,8 @@ final class AsyncIO: Sendable {
             switch self.state {
             case .success(let state):
                 // Set file descriptor to be non blocking
-                let flags = fcntl(fileDescriptor.rawValue, F_GETFD)
-                guard flags != -1 else {
-                    let error: SubprocessError = .asyncIOFailed(
-                        reason: "failed to get flags for \(fileDescriptor.rawValue)",
-                        underlyingError: Errno(rawValue: errno)
-                    )
-                    continuation.finish(throwing: error)
-                    return
-                }
-                guard fcntl(fileDescriptor.rawValue, F_SETFL, flags | O_NONBLOCK) != -1 else {
-                    let error: SubprocessError = .asyncIOFailed(
-                        reason: "failed to set \(fileDescriptor.rawValue) to be non-blocking",
-                        underlyingError: Errno(rawValue: errno)
-                    )
-                    continuation.finish(throwing: error)
+                if let nonBlockingFdError = self.setNonblocking(for: fileDescriptor) {
+                    continuation.finish(throwing: nonBlockingFdError)
                     return
                 }
                 // Register event
@@ -294,9 +275,16 @@ final class AsyncIO: Sendable {
         }
     }
 
-    private func removeRegistration(for fileDescriptor: FileDescriptor) throws(SubprocessError) {
+    internal func removeRegistration(for fileDescriptor: FileDescriptor) throws(SubprocessError) {
         switch self.state {
         case .success(let state):
+            let registration = _registration.withLock { store in
+                return store.removeValue(forKey: fileDescriptor.rawValue)
+            }
+            guard let registration else {
+                return
+            }
+            registration.finish()
             let rc = epoll_ctl(
                 state.epollFileDescriptor,
                 EPOLL_CTL_DEL,
@@ -309,255 +297,10 @@ final class AsyncIO: Sendable {
                     underlyingError: Errno(rawValue: errno)
                 )
             }
-            _registration.withLock { store in
-                _ = store.removeValue(forKey: fileDescriptor.rawValue)
-            }
         case .failure(let setupFailure):
             throw setupFailure
         }
     }
 }
-
-extension AsyncIO {
-
-    protocol _ContiguousBytes {
-        var count: Int { get }
-
-        func withUnsafeBytes<ResultType>(
-            _ body: (UnsafeRawBufferPointer) throws -> ResultType
-        ) rethrows -> ResultType
-    }
-
-    func read(
-        from diskIO: borrowing IOChannel,
-        upTo maxLength: Int
-    ) async throws(SubprocessError) -> [UInt8]? {
-        return try await self.read(from: diskIO.channel, upTo: maxLength)
-    }
-
-    func read(
-        from fileDescriptor: FileDescriptor,
-        upTo maxLength: Int
-    ) async throws(SubprocessError) -> [UInt8]? {
-        guard maxLength > 0 else {
-            return nil
-        }
-        // If we are reading until EOF, start with readBufferSize
-        // and gradually increase buffer size
-        let bufferLength = maxLength == .max ? readBufferSize : maxLength
-
-        var resultBuffer: [UInt8] = Array(
-            repeating: 0, count: bufferLength
-        )
-        var readLength: Int = 0
-        let signalStream = self.registerFileDescriptor(fileDescriptor, for: .read)
-
-        do {
-            /// Outer loop: every iteration signals we are ready to read more data
-            for try await _ in signalStream {
-                /// Inner loop: repeatedly call `.read()` and read more data until:
-                /// 1. We reached EOF (read length is 0), in which case return the result
-                /// 2. We read `maxLength` bytes, in which case return the result
-                /// 3. `read()` returns -1 and sets `errno` to `EAGAIN` or `EWOULDBLOCK`. In
-                ///     this case we `break` out of the inner loop and wait `.read()` to be
-                ///     ready by `await`ing the next signal in the outer loop.
-                while true {
-                    let bytesRead = resultBuffer.withUnsafeMutableBufferPointer { bufferPointer in
-                        // Get a pointer to the memory at the specified offset
-                        let targetCount = bufferPointer.count - readLength
-
-                        let offsetAddress = bufferPointer.baseAddress!.advanced(by: readLength)
-
-                        // Read directly into the buffer at the offset
-                        return _subprocess_read(fileDescriptor.rawValue, offsetAddress, targetCount)
-                    }
-                    let capturedErrno = errno
-                    if bytesRead > 0 {
-                        // Read some data
-                        readLength += bytesRead
-                        if maxLength == .max {
-                            // Grow resultBuffer if needed
-                            guard Double(readLength) > 0.8 * Double(resultBuffer.count) else {
-                                continue
-                            }
-                            resultBuffer.append(
-                                contentsOf: Array(repeating: 0, count: resultBuffer.count)
-                            )
-                        } else if readLength >= maxLength {
-                            // When we reached maxLength, return!
-                            try self.removeRegistration(for: fileDescriptor)
-                            return resultBuffer
-                        }
-                    } else if bytesRead == 0 {
-                        // We reached EOF. Return whatever's left
-                        try self.removeRegistration(for: fileDescriptor)
-                        guard readLength > 0 else {
-                            return nil
-                        }
-                        resultBuffer.removeLast(resultBuffer.count - readLength)
-                        return resultBuffer
-                    } else {
-                        if self.shouldWaitForNextSignal(with: capturedErrno) {
-                            // No more data for now wait for the next signal
-                            break
-                        } else {
-                            // Throw all other errors
-                            try self.removeRegistration(for: fileDescriptor)
-                            throw SubprocessError.failedToReadFromProcess(
-                                withUnderlyingError: Errno(rawValue: capturedErrno)
-                            )
-                        }
-                    }
-                }
-            }
-        } catch {
-            // Reset error code to .failedToRead to match other platforms
-            guard let originalError = error as? SubprocessError else {
-                throw SubprocessError.failedToReadFromProcess(
-                    withUnderlyingError: nil
-                )
-            }
-            throw SubprocessError.failedToReadFromProcess(
-                withUnderlyingError: originalError.underlyingError
-            )
-        }
-        resultBuffer.removeLast(resultBuffer.count - readLength)
-        return resultBuffer
-    }
-
-    func write(
-        _ array: [UInt8],
-        to diskIO: borrowing IOChannel
-    ) async throws(SubprocessError) -> Int {
-        return try await self._write(array, to: diskIO)
-    }
-
-    func _write<Bytes: _ContiguousBytes>(
-        _ bytes: Bytes,
-        to diskIO: borrowing IOChannel
-    ) async throws(SubprocessError) -> Int {
-        guard bytes.count > 0 else {
-            return 0
-        }
-        let fileDescriptor = diskIO.channel
-        let signalStream = self.registerFileDescriptor(fileDescriptor, for: .write)
-        var writtenLength: Int = 0
-        do {
-            /// Outer loop: every iteration signals we are ready to read more data
-            for try await _ in signalStream {
-                /// Inner loop: repeatedly call `.write()` and write more data until:
-                /// 1. We've written bytes.count bytes.
-                /// 3. `.write()` returns -1 and sets `errno` to `EAGAIN` or `EWOULDBLOCK`. In
-                ///     this case we `break` out of the inner loop and wait `.write()` to be
-                ///     ready by `await`ing the next signal in the outer loop.
-                while true {
-                    let written = bytes.withUnsafeBytes { ptr in
-                        let remainingLength = ptr.count - writtenLength
-                        let startPtr = ptr.baseAddress!.advanced(by: writtenLength)
-                        return _subprocess_write(fileDescriptor.rawValue, startPtr, remainingLength)
-                    }
-                    let capturedErrno = errno
-                    if written > 0 {
-                        writtenLength += written
-                        if writtenLength >= bytes.count {
-                            // Wrote all data
-                            try self.removeRegistration(for: fileDescriptor)
-                            return writtenLength
-                        }
-                    } else {
-                        if self.shouldWaitForNextSignal(with: capturedErrno) {
-                            // No more data for now wait for the next signal
-                            break
-                        } else {
-                            // Throw all other errors
-                            try self.removeRegistration(for: fileDescriptor)
-                            throw SubprocessError.failedToWriteToProcess(
-                                withUnderlyingError: Errno(rawValue: capturedErrno)
-                            )
-                        }
-                    }
-                }
-            }
-        } catch {
-            // Reset error code to .failedToWrite to match other platforms
-            guard let originalError = error as? SubprocessError else {
-                throw SubprocessError.failedToWriteToProcess(
-                    withUnderlyingError: error as? SubprocessError.UnderlyingError
-                )
-            }
-            throw SubprocessError.failedToWriteToProcess(
-                withUnderlyingError: originalError.underlyingError
-            )
-        }
-        return 0
-    }
-
-    func write(
-        _ span: borrowing RawSpan,
-        to diskIO: borrowing IOChannel
-    ) async throws(SubprocessError) -> Int {
-        guard span.byteCount > 0 else {
-            return 0
-        }
-        let fileDescriptor = diskIO.channel
-        let signalStream = self.registerFileDescriptor(fileDescriptor, for: .write)
-        var writtenLength: Int = 0
-        do {
-            /// Outer loop: every iteration signals we are ready to read more data
-            for try await _ in signalStream {
-                /// Inner loop: repeatedly call `.write()` and write more data until:
-                /// 1. We've written bytes.count bytes.
-                /// 3. `.write()` returns -1 and sets `errno` to `EAGAIN` or `EWOULDBLOCK`. In
-                ///     this case we `break` out of the inner loop and wait `.write()` to be
-                ///     ready by `await`ing the next signal in the outer loop.
-                while true {
-                    let written = span.withUnsafeBytes { ptr in
-                        let remainingLength = ptr.count - writtenLength
-                        let startPtr = ptr.baseAddress!.advanced(by: writtenLength)
-                        return _subprocess_write(fileDescriptor.rawValue, startPtr, remainingLength)
-                    }
-                    let capturedErrno = errno
-                    if written > 0 {
-                        writtenLength += written
-                        if writtenLength >= span.byteCount {
-                            // Wrote all data
-                            try self.removeRegistration(for: fileDescriptor)
-                            return writtenLength
-                        }
-                    } else {
-                        if self.shouldWaitForNextSignal(with: capturedErrno) {
-                            // No more data for now wait for the next signal
-                            break
-                        } else {
-                            // Throw all other errors
-                            try self.removeRegistration(for: fileDescriptor)
-                            throw SubprocessError.failedToWriteToProcess(
-                                withUnderlyingError: Errno(rawValue: capturedErrno)
-                            )
-                        }
-                    }
-                }
-            }
-        } catch {
-            // Reset error code to .failedToWrite to match other platforms
-            guard let originalError = error as? SubprocessError else {
-                throw SubprocessError.failedToWriteToProcess(
-                    withUnderlyingError: error as? SubprocessError.UnderlyingError
-                )
-            }
-            throw SubprocessError.failedToWriteToProcess(
-                withUnderlyingError: originalError.underlyingError
-            )
-        }
-        return 0
-    }
-
-    @inline(__always)
-    private func shouldWaitForNextSignal(with error: CInt) -> Bool {
-        return error == EAGAIN || error == EWOULDBLOCK || error == EINTR
-    }
-}
-
-extension Array: AsyncIO._ContiguousBytes where Element == UInt8 {}
 
 #endif // canImport(Glibc) || canImport(Android) || canImport(Musl)

@@ -478,9 +478,9 @@ extension Configuration {
                 )
                 return SpawnResult(
                     execution: execution,
-                    inputWriteEnd: inputWriteFileDescriptor?.createIOChannel(),
-                    outputReadEnd: outputReadFileDescriptor?.createIOChannel(),
-                    errorReadEnd: errorReadFileDescriptor?.createIOChannel()
+                    inputWriteEnd: inputWriteFileDescriptor,
+                    outputReadEnd: outputReadFileDescriptor,
+                    errorReadEnd: errorReadFileDescriptor
                 )
             }
 

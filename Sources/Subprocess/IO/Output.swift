@@ -19,8 +19,6 @@ public import SystemPackage
 @preconcurrency import WinSDK
 #endif
 
-internal import Dispatch
-
 // MARK: - Output
 
 /// A type that serves as the output target for a subprocess.
@@ -127,35 +125,42 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
     public let maxSize: Int
 
     internal func captureOutput(
-        from diskIO: consuming IOChannel
+        from diskIO: consuming IODescriptor
     ) async throws(SubprocessError) -> [UInt8] {
-        #if SUBPROCESS_ASYNCIO_DISPATCH
-        var result: DispatchData? = nil
-        #else
-        var result: [UInt8]? = nil
-        #endif
+        var result: [UInt8] = []
         do {
             var maxLength = self.maxSize
             if maxLength != .max {
                 // If we actually have a max length, attempt to read one
                 // more byte to determine whether output exceeds the limit
                 maxLength += 1
+                // We can also reserve capacity
+                result.reserveCapacity(maxLength)
             }
-            result = try await AsyncIO.shared.read(from: diskIO, upTo: maxLength)
+            let bufferSize = AsyncIO.queryPipeBufferSize(for: diskIO.descriptor())
+
+            while result.count < maxLength {
+                let remaining = maxLength - result.count
+                guard
+                    let chunk = try await AsyncIO.shared.read(
+                        from: diskIO,
+                        upTo: min(bufferSize, remaining)
+                    )
+                else {
+                    break
+                }
+                result.append(contentsOf: chunk)
+            }
         } catch {
             try diskIO.safelyClose()
             throw error
         }
         try diskIO.safelyClose()
 
-        if let result, result.count > self.maxSize {
+        if result.count > self.maxSize {
             throw .outputLimitExceeded(limit: self.maxSize)
         }
-        #if SUBPROCESS_ASYNCIO_DISPATCH
-        return result?.array() ?? []
-        #else
-        return result ?? []
-        #endif
+        return result
     }
 
     /// Creates an array from a ``RawSpan``.
@@ -317,7 +322,7 @@ extension OutputProtocol {
     /// Capture the output from the subprocess up to maxSize
     @_disfavoredOverload
     internal func captureOutput(
-        from diskIO: consuming IOChannel?
+        from diskIO: consuming IODescriptor?
     ) async throws -> OutputType {
         if OutputType.self == Void.self {
             try diskIO?.safelyClose()
@@ -337,39 +342,45 @@ extension OutputProtocol {
             return try await bytesOutput.captureOutput(from: diskIO) as! Self.OutputType
         }
 
-        #if SUBPROCESS_ASYNCIO_DISPATCH
-        var result: DispatchData? = nil
-        #else
-        var result: [UInt8]? = nil
-        #endif
+        var result: [UInt8] = []
         do {
             var maxLength = self.maxSize
             if maxLength != .max {
                 // If we actually have a max length, attempt to read one
                 // more byte to determine whether output exceeds the limit
                 maxLength += 1
+                result.reserveCapacity(maxLength)
             }
-            result = try await AsyncIO.shared.read(from: diskIO, upTo: maxLength)
+            let bufferSize = AsyncIO.queryPipeBufferSize(for: diskIO.descriptor())
+
+            while result.count < maxLength {
+                let remaining = maxLength - result.count
+                guard
+                    let chunk = try await AsyncIO.shared.read(
+                        from: diskIO,
+                        upTo: min(bufferSize, remaining)
+                    )
+                else {
+                    break
+                }
+                result.append(contentsOf: chunk)
+            }
         } catch {
             try diskIO.safelyClose()
             throw error
         }
 
         try diskIO.safelyClose()
-        if let result, result.count > self.maxSize {
+        if result.count > self.maxSize {
             throw SubprocessError.outputLimitExceeded(limit: self.maxSize)
         }
 
-        #if SUBPROCESS_ASYNCIO_DISPATCH
-        return try self.output(from: result ?? .empty)
-        #else
-        return try self.output(from: result ?? [])
-        #endif
+        return try self.output(from: result)
     }
 }
 
 extension OutputProtocol where OutputType == Void {
-    internal func captureOutput(from fileDescriptor: consuming IOChannel?) async throws {}
+    internal func captureOutput(from fileDescriptor: consuming IODescriptor?) async throws {}
 
     /// Converts the output from a raw span to the expected output type.
     public func output(from span: RawSpan) throws {
@@ -379,21 +390,6 @@ extension OutputProtocol where OutputType == Void {
 }
 
 extension OutputProtocol {
-    #if SUBPROCESS_ASYNCIO_DISPATCH
-    internal func output(from data: DispatchData) throws -> OutputType {
-        guard !data.isEmpty else {
-            let empty = UnsafeRawBufferPointer(start: nil, count: 0)
-            let span = RawSpan(_unsafeBytes: empty)
-            return try self.output(from: span)
-        }
-
-        return try data.withUnsafeBytes { ptr in
-            let bufferPtr = UnsafeRawBufferPointer(start: ptr, count: data.count)
-            let span = RawSpan(_unsafeBytes: bufferPtr)
-            return try self.output(from: span)
-        }
-    }
-    #else
     internal func output(from data: [UInt8]) throws -> OutputType {
         guard !data.isEmpty else {
             let empty = UnsafeRawBufferPointer(start: nil, count: 0)
@@ -405,22 +401,6 @@ extension OutputProtocol {
             let span = RawSpan(_unsafeBytes: UnsafeRawBufferPointer(ptr))
             return try self.output(from: span)
         }
-    }
-    #endif // SUBPROCESS_ASYNCIO_DISPATCH
-}
-
-extension DispatchData {
-    internal func array() -> [UInt8] {
-        var result: [UInt8]?
-        self.enumerateBytes { buffer, byteIndex, stop in
-            let currentChunk = Array(UnsafeRawBufferPointer(buffer))
-            if result == nil {
-                result = currentChunk
-            } else {
-                result?.append(contentsOf: currentChunk)
-            }
-        }
-        return result ?? []
     }
 }
 
