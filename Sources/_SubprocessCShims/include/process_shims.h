@@ -116,6 +116,10 @@ int _pidfd_open(pid_t pid);
 #define P_PIDFD 3
 #endif
 
+/// Install a SIGCHLD handler that writes a byte to the given file descriptor.
+/// Returns 0 on success, or errno on failure.
+int _subprocess_install_sigchld_handler(int writeFd);
+
 #endif
 
 #ifdef __cplusplus

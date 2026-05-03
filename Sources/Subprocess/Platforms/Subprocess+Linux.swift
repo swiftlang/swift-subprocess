@@ -93,7 +93,7 @@ internal func monitorProcessTermination(
                     // pidfd is only supported on Linux kernel 5.4 and above
                     // On older releases, use signalfd so we do not need
                     // to register anything with epoll
-                    if processIdentifier.processDescriptor > 0 {
+                    if _waitProcessDescriptorSupported && processIdentifier.processDescriptor > 0 {
                         // Register processDescriptor with epoll
                         var event = epoll_event(
                             events: EPOLLIN.rawValue,
@@ -203,28 +203,20 @@ private func shutdown() {
     pthread_join(storage.monitorThread, nil)
 }
 
-/// See the following page for the complete list of `async-signal-safe` functions
-/// https://man7.org/linux/man-pages/man7/signal-safety.7.html
-/// Only these functions can be used in the signal handler below
-private func signalHandler(
-    _ signalNumber: CInt,
-    _ signalInfo: UnsafeMutablePointer<siginfo_t>?,
-    _ context: UnsafeMutableRawPointer?
-) {
-    let savedErrno = errno
-    var one: UInt8 = 1
-    _ = _subprocess_write(_signalPipe.writeEnd, &one, 1)
-    errno = savedErrno
-}
-
 private func monitorThreadFunc(context: MonitorThreadContext) {
     var events: [epoll_event] = Array(
         repeating: epoll_event(events: 0, data: epoll_data(fd: 0)),
         count: 256
     )
+    // When using pidfd, block SIGCHLD during the wait since we rely on
+    // fd events instead. When using the signal handler fallback, use an
+    // empty mask so SIGCHLD can be delivered during the wait, triggering
+    // the handler that writes to the self-pipe.
     var waitMask = sigset_t()
     sigemptyset(&waitMask)
-    sigaddset(&waitMask, SIGCHLD)
+    if _waitProcessDescriptorSupported {
+        sigaddset(&waitMask, SIGCHLD)
+    }
     // Enter the monitor loop
     monitorLoop: while true {
         let eventCount = epoll_pwait(
@@ -357,6 +349,12 @@ private let setup: () = {
         )
         guard rc == 0 else {
             _reportFailureWithErrno(errno)
+            return
+        }
+        // Install SIGCHLD handler that writes to the self-pipe
+        let sigactionRc = _subprocess_install_sigchld_handler(_signalPipe.writeEnd)
+        guard sigactionRc == 0 else {
+            _reportFailureWithErrno(sigactionRc)
             return
         }
     } else {
@@ -496,6 +494,11 @@ private func _reapAllKnownChildProcesses(_ signalFd: CInt, context: MonitorThrea
 }
 
 internal func _isWaitprocessDescriptorSupported() -> Bool {
+    #if os(Android)
+    // pidfd monitoring via epoll is unreliable on Android emulators;
+    // always use the SIGCHLD signal handler fallback.
+    return false
+    #else
     // waitid(P_PIDFD) is only supported on Linux kernel 5.4 and above
     // Prob whether the current system supports it by calling it with self pidfd
     // and checking for EINVAL (waitid sets errno to EINVAL if it does not
@@ -514,6 +517,7 @@ internal func _isWaitprocessDescriptorSupported() -> Bool {
     errno = 0
     waitid(idtype_t(UInt32(P_PIDFD)), id_t(selfPidfd), &siginfo, WEXITED | WNOWAIT)
     return errno == ECHILD
+    #endif
 }
 
 #endif // canImport(Glibc) || canImport(Android) || canImport(Musl)
