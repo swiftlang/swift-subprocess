@@ -406,6 +406,142 @@ internal typealias PlatformFileDescriptor = CInt
 
 // MARK: - Spawning
 
+extension Configuration {
+    internal func spawnPTY(
+        withOptions ptyOptions: PseudoterminalOptions,
+        preferredBufferSize: Int?
+    ) async throws -> SpawnPTYResult {
+        var termiosConfig = termios()
+        switch ptyOptions.terminalMode.storage {
+        case .cooked:
+            // Cooked mode: standard terminal behavior
+            // From ttydefaults.h
+            let _TTYDEF_CFLAG_VALUE = tcflag_t(CREAD | CS8 | HUPCL)
+            let _TTYDEF_LFLAG_VALUE = tcflag_t(ECHO | ICANON | ISIG | IEXTEN | ECHOE | ECHOKE | ECHOCTL)
+            let _TTYDEF_IFLAG_VALUE = tcflag_t(BRKINT | ICRNL | IMAXBEL | IXON | IXANY)
+            let _TTYDEF_OFLAG_VALUE = tcflag_t(OPOST | ONLCR)
+            termiosConfig.c_cflag = _TTYDEF_CFLAG_VALUE
+            termiosConfig.c_lflag = _TTYDEF_LFLAG_VALUE
+            termiosConfig.c_iflag = _TTYDEF_IFLAG_VALUE
+            termiosConfig.c_oflag = _TTYDEF_OFLAG_VALUE
+        case .raw:
+            cfmakeraw(&termiosConfig)
+        case .custom(let config):
+            termiosConfig = config
+        }
+        var windowSize = winsize(
+            ws_row: ptyOptions.initialWindowSize.rows,
+            ws_col: ptyOptions.initialWindowSize.columns,
+            ws_xpixel: 0,
+            ws_ypixel: 0
+        )
+
+        var parentRawFD: CInt = -1
+        var childRawFD: CInt = -1
+        guard openpty(&parentRawFD, &childRawFD, nil, &termiosConfig, &windowSize) == 0 else {
+            throw SubprocessError.spawnFailed(
+                withUnderlyingError: .init(rawValue: errno),
+                reason: "openpty failed"
+            )
+        }
+        var parentDescriptor = IODescriptor(FileDescriptor(rawValue: parentRawFD), closeWhenDone: true)
+        var childDescriptor = IODescriptor(FileDescriptor(rawValue: childRawFD), closeWhenDone: true)
+
+        let execution: Execution
+        do {
+            execution = try await spawnCore { fileAttr in
+                #if canImport(Darwin)
+                // Darwin: use posix_spawn
+                // Input
+                var result: Int32 = posix_spawn_file_actions_adddup2(
+                    &fileAttr, childDescriptor.platformDescriptor(), 0
+                )
+                guard result == 0 else {
+                    throw SubprocessError.spawnFailed(
+                        withUnderlyingError: Errno(rawValue: result)
+                    )
+                }
+                // Output
+                result = posix_spawn_file_actions_adddup2(
+                    &fileAttr, childDescriptor.platformDescriptor(), 1
+                )
+                guard result == 0 else {
+                    throw SubprocessError.spawnFailed(
+                        withUnderlyingError: Errno(rawValue: result)
+                    )
+                }
+                // Error
+                result = posix_spawn_file_actions_adddup2(
+                    &fileAttr, childDescriptor.platformDescriptor(), 2
+                )
+                guard result == 0 else {
+                    throw SubprocessError.spawnFailed(
+                        withUnderlyingError: Errno(rawValue: result)
+                    )
+                }
+                // Close original parent and childID
+                result = posix_spawn_file_actions_addclose(
+                    &fileAttr, parentDescriptor.platformDescriptor()
+                )
+                guard result == 0 else {
+                    throw SubprocessError.spawnFailed(
+                        withUnderlyingError: Errno(rawValue: result)
+                    )
+                }
+                result = posix_spawn_file_actions_addclose(
+                    &fileAttr, childDescriptor.platformDescriptor()
+                )
+                guard result == 0 else {
+                    throw SubprocessError.spawnFailed(
+                        withUnderlyingError: Errno(rawValue: result)
+                    )
+                }
+                #else
+                // Other Unix-like system: use fork/exec
+                // Bind child descriptor to standard input, output, and error
+                fileAttr = [
+                    childDescriptor.platformDescriptor(), // Input Read
+                    -1, // Input Write (unused)
+                    childDescriptor.platformDescriptor(), // Output Write
+                    -1, // Output Read (unused)
+                    childDescriptor.platformDescriptor(), // Error Write
+                    -1, // Error Read (unused)
+                ]
+                #endif
+            }
+        } catch {
+            // Close parentFD and childFD
+            try? parentDescriptor.safelyClose()
+            try? childDescriptor.safelyClose()
+
+            throw error
+        }
+        // After spawn finishes, close childFD
+        try childDescriptor.safelyClose()
+        // Duplicate parent descriptor for read/write
+        let readDescriptor = try parentDescriptor.duplicate()
+        let writeDescriptor = try parentDescriptor.duplicate()
+
+        let inputWriter = StandardInputWriter(
+            diskIO: writeDescriptor.createIOChannel()
+        )
+        let outputSequence = AsyncBufferSequence(
+            diskIO: readDescriptor.createIOChannel().consumeIOChannel(),
+            preferredBufferSize: preferredBufferSize
+        )
+        return SpawnPTYResult(
+            execution: execution,
+            pseudoterminal: Pseudoterminal(
+                parentDescriptor: parentRawFD,
+                terminalType: ptyOptions.terminalType
+            ),
+            inputWriter: inputWriter,
+            combinedOutputStream: outputSequence,
+            parentDescriptor: parentDescriptor
+        )
+    }
+}
+
 #if !canImport(Darwin)
 
 #if canImport(Android)
@@ -436,11 +572,9 @@ extension Configuration {
         let processGroupIDPtr: UnsafeMutablePointer<gid_t>?
     }
 
-    internal func spawn(
-        withInput inputPipe: consuming CreatedPipe,
-        outputPipe: consuming CreatedPipe,
-        errorPipe: consuming CreatedPipe
-    ) async throws -> SpawnResult {
+    internal func spawnCore(
+        fileActionConfig: (inout [CInt]) throws -> Void
+    ) async throws -> Execution {
         // Ensure the waiter thread is running.
         #if os(Linux) || os(Android)
         _setupMonitorSignalHandler()
@@ -451,23 +585,9 @@ extension Configuration {
         let possiblePaths = self.executable.possibleExecutablePaths(
             withPathValue: self.environment.pathValue()
         )
-        var inputPipeBox: CreatedPipe? = consume inputPipe
-        var outputPipeBox: CreatedPipe? = consume outputPipe
-        var errorPipeBox: CreatedPipe? = consume errorPipe
 
-        return try await self.preSpawn { args throws -> SpawnResult in
+        return try await self.preSpawn { args throws -> Execution in
             let (env, uidPtr, gidPtr, supplementaryGroups) = args
-
-            var _inputPipe = inputPipeBox.take()!
-            var _outputPipe = outputPipeBox.take()!
-            var _errorPipe = errorPipeBox.take()!
-
-            let inputReadFileDescriptor: IODescriptor? = _inputPipe.readFileDescriptor()
-            let inputWriteFileDescriptor: IODescriptor? = _inputPipe.writeFileDescriptor()
-            let outputReadFileDescriptor: IODescriptor? = _outputPipe.readFileDescriptor()
-            let outputWriteFileDescriptor: IODescriptor? = _outputPipe.writeFileDescriptor()
-            let errorReadFileDescriptor: IODescriptor? = _errorPipe.readFileDescriptor()
-            let errorWriteFileDescriptor: IODescriptor? = _errorPipe.writeFileDescriptor()
 
             for possibleExecutablePath in possiblePaths {
                 var processGroupIDPtr: UnsafeMutablePointer<gid_t>? = nil
@@ -483,14 +603,9 @@ extension Configuration {
                     for ptr in argv { ptr?.deallocate() }
                 }
                 // Setup input
-                let fileDescriptors: [CInt] = [
-                    inputReadFileDescriptor?.platformDescriptor() ?? -1,
-                    inputWriteFileDescriptor?.platformDescriptor() ?? -1,
-                    outputWriteFileDescriptor?.platformDescriptor() ?? -1,
-                    outputReadFileDescriptor?.platformDescriptor() ?? -1,
-                    errorWriteFileDescriptor?.platformDescriptor() ?? -1,
-                    errorReadFileDescriptor?.platformDescriptor() ?? -1,
-                ]
+                var _fileDescriptors: [CInt] = Array<CInt>(repeating: -1, count: 6)
+                try fileActionConfig(&_fileDescriptors)
+                let fileDescriptors = _fileDescriptors
 
                 // Spawn
                 let spawnContext = SpawnContext(
@@ -532,37 +647,15 @@ extension Configuration {
                         continue
                     }
                     // Throw all other errors
-                    try self.safelyCloseMultiple(
-                        inputRead: inputReadFileDescriptor,
-                        inputWrite: inputWriteFileDescriptor,
-                        outputRead: outputReadFileDescriptor,
-                        outputWrite: outputWriteFileDescriptor,
-                        errorRead: errorReadFileDescriptor,
-                        errorWrite: errorWriteFileDescriptor
-                    )
                     throw SubprocessError.spawnFailed(withUnderlyingError: Errno(rawValue: spawnError))
                 }
-                // After spawn finishes, close all child side fds
-                try self.safelyCloseMultiple(
-                    inputRead: inputReadFileDescriptor,
-                    inputWrite: nil,
-                    outputRead: nil,
-                    outputWrite: outputWriteFileDescriptor,
-                    errorRead: nil,
-                    errorWrite: errorWriteFileDescriptor
-                )
                 let execution = Execution(
                     processIdentifier: .init(
                         value: pid,
                         processDescriptor: processDescriptor
                     )
                 )
-                return SpawnResult(
-                    execution: execution,
-                    inputWriteEnd: inputWriteFileDescriptor?.createIOChannel(),
-                    outputReadEnd: outputReadFileDescriptor?.createIOChannel(),
-                    errorReadEnd: errorReadFileDescriptor?.createIOChannel()
-                )
+                return execution
             }
 
             // If we reach this point, it means either the executable path
@@ -570,14 +663,6 @@ extension Configuration {
             // provide which one is not valid, here we make a best effort guess
             // by checking whether the working directory is valid. This technically
             // still causes TOUTOC issue, but it's the best we can do for error recovery.
-            try self.safelyCloseMultiple(
-                inputRead: inputReadFileDescriptor,
-                inputWrite: inputWriteFileDescriptor,
-                outputRead: outputReadFileDescriptor,
-                outputWrite: outputWriteFileDescriptor,
-                errorRead: errorReadFileDescriptor,
-                errorWrite: errorWriteFileDescriptor
-            )
             if let workingDirectory = self.workingDirectory?.string {
                 guard Configuration.pathAccessible(workingDirectory, mode: F_OK) else {
                     throw SubprocessError.failedToChangeWorkingDirectory(
@@ -591,6 +676,69 @@ extension Configuration {
                 underlyingError: Errno(rawValue: ENOENT)
             )
         }
+    }
+
+    internal func spawn(
+        withInput inputPipe: consuming CreatedPipe,
+        outputPipe: consuming CreatedPipe,
+        errorPipe: consuming CreatedPipe
+    ) async throws -> SpawnResult {
+
+        var inputPipeBox: CreatedPipe? = consume inputPipe
+        var outputPipeBox: CreatedPipe? = consume outputPipe
+        var errorPipeBox: CreatedPipe? = consume errorPipe
+
+        var _inputPipe = inputPipeBox.take()!
+        var _outputPipe = outputPipeBox.take()!
+        var _errorPipe = errorPipeBox.take()!
+
+        let inputReadFileDescriptor: IODescriptor? = _inputPipe.readFileDescriptor()
+        let inputWriteFileDescriptor: IODescriptor? = _inputPipe.writeFileDescriptor()
+        let outputReadFileDescriptor: IODescriptor? = _outputPipe.readFileDescriptor()
+        let outputWriteFileDescriptor: IODescriptor? = _outputPipe.writeFileDescriptor()
+        let errorReadFileDescriptor: IODescriptor? = _errorPipe.readFileDescriptor()
+        let errorWriteFileDescriptor: IODescriptor? = _errorPipe.writeFileDescriptor()
+
+        let execution: Execution
+        do {
+            execution = try await self.spawnCore { fds in
+                // Setup input
+                fds = [
+                    inputReadFileDescriptor?.platformDescriptor() ?? -1,
+                    inputWriteFileDescriptor?.platformDescriptor() ?? -1,
+                    outputWriteFileDescriptor?.platformDescriptor() ?? -1,
+                    outputReadFileDescriptor?.platformDescriptor() ?? -1,
+                    errorWriteFileDescriptor?.platformDescriptor() ?? -1,
+                    errorReadFileDescriptor?.platformDescriptor() ?? -1,
+                ]
+            }
+        } catch {
+            try? self.safelyCloseMultiple(
+                inputRead: inputReadFileDescriptor,
+                inputWrite: inputWriteFileDescriptor,
+                outputRead: outputReadFileDescriptor,
+                outputWrite: outputWriteFileDescriptor,
+                errorRead: errorReadFileDescriptor,
+                errorWrite: errorWriteFileDescriptor
+            )
+            throw error
+        }
+
+        // After spawn finishes, close all child side fds
+        try self.safelyCloseMultiple(
+            inputRead: inputReadFileDescriptor,
+            inputWrite: nil,
+            outputRead: nil,
+            outputWrite: outputWriteFileDescriptor,
+            errorRead: nil,
+            errorWrite: errorWriteFileDescriptor
+        )
+        return SpawnResult(
+            execution: execution,
+            inputWriteEnd: inputWriteFileDescriptor?.createIOChannel(),
+            outputReadEnd: outputReadFileDescriptor?.createIOChannel(),
+            errorReadEnd: errorReadFileDescriptor?.createIOChannel()
+        )
     }
 }
 

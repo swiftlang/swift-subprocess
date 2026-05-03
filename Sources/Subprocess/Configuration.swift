@@ -148,6 +148,70 @@ public struct Configuration: Sendable {
             )
         }
     }
+
+    #if !os(Windows)
+    internal mutating func runPTY<Result>(
+        pseudoterminalOptions: PseudoterminalOptions,
+        preferredBufferSize: Int?,
+        isolation: isolated (any Actor)? = #isolation,
+        body: (Execution, Pseudoterminal, StandardInputWriter, AsyncBufferSequence) async throws -> Result
+    ) async throws -> ExecutionOutcome<Result> {
+        // PTY requires a new session
+        self.platformOptions.createSession = true
+        // Update environment and insert TERM
+        self.environment = self.environment.updating(
+            ["TERM": pseudoterminalOptions.terminalType]
+        )
+        // Spawn!
+        var spawnResults = try await self.spawnPTY(
+            withOptions: pseudoterminalOptions,
+            preferredBufferSize: preferredBufferSize
+        )
+
+        let execution = spawnResults.execution
+        defer {
+            execution.processIdentifier.close()
+        }
+
+        let teardownSequence = self.platformOptions.teardownSequence
+        return try await withAsyncTaskCleanupHandler {
+            let result: Swift.Result<Result, any Error>
+            do {
+                let bodyResult = try await body(
+                    execution,
+                    spawnResults.pseudoterminal,
+                    spawnResults.inputWriter,
+                    spawnResults.combinedOutputStream
+                )
+                result = .success(bodyResult)
+            } catch {
+                result = .failure(error)
+            }
+
+            // Ensure that we begin monitoring process termination after `body` runs
+            // and regardless of whether `body` throws, so that the pid gets reaped
+            // even if `body` throws, and we are not leaving zombie processes in the
+            // process table which will cause the process termination monitoring thread
+            // to effectively hang due to the pid never being awaited
+            let terminationStatus = try await monitorProcessTermination(
+                for: execution.processIdentifier
+            )
+
+            // Process has exited. We can/must close parentDescriptor now
+            try spawnResults.parentDescriptor.safelyClose()
+
+            return ExecutionOutcome(
+                terminationStatus: terminationStatus,
+                value: try result.get()
+            )
+        } onCleanup: {
+            // Attempt to terminate the child process
+            await execution.runTeardownSequence(
+                teardownSequence
+            )
+        }
+    }
+    #endif
 }
 
 extension Configuration: CustomStringConvertible, CustomDebugStringConvertible {
@@ -651,6 +715,140 @@ extension TerminationStatus: CustomStringConvertible, CustomDebugStringConvertib
     }
 }
 
+// MARK: - PTY
+
+#if !os(Windows)
+/// Settings to configure the pseudoterminal (PTY) when
+/// spawning in PTY mode.
+public struct PseudoterminalOptions: Sendable {
+    /// Terminal mode configuration.
+    ///
+    /// On Darwin/Linux, this controls the initial `termios` settings applied to the
+    /// PTY replica fd at spawn time via `openpty()`.
+    ///
+    /// On Windows (ConPTY), terminal mode is managed internally by the pseudo console.
+    /// The child process controls its own mode via `SetConsoleMode()`. Therefore only
+    /// `.cooked` mode is available on Windows
+    public struct TerminalMode: Sendable {
+        internal enum Storage: Sendable {
+            case cooked
+            case raw
+            #if !os(Windows)
+            case custom(termios)
+            #endif
+        }
+
+        internal let storage: Storage
+
+        private init(_ storage: Storage) {
+            self.storage = storage
+        }
+
+        /// Default cooked mode with kernel line editing, echo, and signal processing.
+        /// - Darwin/Linux: `TTYDEF_IFLAG`, `TTYDEF_OFLAG`, `TTYDEF_LFLAG`, `TTYDEF_CFLAG`
+        /// - Windows: ConPTY default (equivalent to `ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT |
+        ///   ENABLE_PROCESSED_INPUT`)
+        public static var cooked: Self { .init(.cooked) }
+
+        #if !os(Windows)
+        /// Raw mode — all bytes passed through unmodified. Applies `cfmakeraw()` to the PTY.
+        public static var raw: Self { .init(.raw) }
+
+        /// Custom termios configuration
+        public static func custom(_ info: termios) -> Self {
+            return .init(.custom(info))
+        }
+        #endif
+    }
+
+    /// The initial termianl window size to set to.
+    public let initialWindowSize: Pseudoterminal.WindowSize
+    /// The type of this terminal as defined in `terminfo`, used to
+    /// update TERM environment variable. Terminal type communicates
+    /// the capabilities, instruction set, and control sequences of a terminal.
+    public let terminalType: String
+    /// The initial terminal line discipline mode.
+    ///
+    /// - `.cooked` (default): Standard terminal behavior with kernel
+    ///   line editing, echo, and signal generation. Use when spawning
+    ///   shells or general-purpose command-line tools.
+    /// - `.raw`: Passes all bytes through unmodified. Use when the
+    ///   child process manages its own input handling, or when the
+    ///   parent process implements line editing.
+    ///
+    /// The child process may change this at any time via `tcsetattr`.
+    /// This setting only controls the initial state at spawn time.
+    ///
+    /// For more informationm see `cfmakeraw(3)` and `termios(4)`.
+    public let terminalMode: TerminalMode
+
+    public init(
+        initialWindowSize: Pseudoterminal.WindowSize,
+        terminalType: String,
+        terminalMode: TerminalMode = .cooked
+    ) {
+        self.initialWindowSize = initialWindowSize
+        self.terminalType = terminalType
+        self.terminalMode = terminalMode
+    }
+}
+
+/// `Pseudoterminal` is used to get and update terminal information
+/// such as window size and terminal type while the child process
+/// is running.
+public struct Pseudoterminal: Sendable {
+    /// `WindowSize` defines the dimensions of a terminal window
+    public struct WindowSize: Sendable {
+        public let rows: UInt16
+        public let columns: UInt16
+
+        public init(rows: UInt16, columns: UInt16) {
+            self.rows = rows
+            self.columns = columns
+        }
+    }
+    /// The dimension of this terminal window
+    public var windowSize: WindowSize {
+        get throws {
+            var result = winsize()
+            guard ioctl(self.parentDescriptor, UInt(TIOCGWINSZ), &result) == 0 else {
+                throw SubprocessError.spawnFailed(
+                    withUnderlyingError: .init(rawValue: errno),
+                    reason: "Failed to get window size"
+                )
+            }
+            return WindowSize(rows: result.ws_row, columns: result.ws_col)
+        }
+    }
+    /// The type of this terminal as defined in `terminfo`
+    public let terminalType: String
+
+    private let parentDescriptor: CInt
+
+    /// Update the dimension of this terminal window
+    public func update(windowSize: WindowSize) throws(SubprocessError) {
+        var winsize = winsize(
+            ws_row: windowSize.rows,
+            ws_col: windowSize.columns,
+            ws_xpixel: 0,
+            ws_ypixel: 0
+        )
+        guard ioctl(self.parentDescriptor, UInt(TIOCSWINSZ), &winsize) == 0 else {
+            throw SubprocessError.spawnFailed(
+                withUnderlyingError: .init(rawValue: errno),
+                reason: "Failed to set window size"
+            )
+        }
+    }
+
+    internal init(parentDescriptor: CInt, terminalType: String) {
+        self.parentDescriptor = parentDescriptor
+        self.terminalType = terminalType
+    }
+}
+
+#endif
+
 // MARK: - Internal
 
 extension Configuration {
@@ -688,6 +886,16 @@ extension Configuration {
             return self._errorReadEnd.take()
         }
     }
+
+    #if !os(Windows)
+    internal struct SpawnPTYResult: ~Copyable {
+        let execution: Execution
+        let pseudoterminal: Pseudoterminal
+        let inputWriter: StandardInputWriter
+        let combinedOutputStream: AsyncBufferSequence
+        var parentDescriptor: IODescriptor
+    }
+    #endif
 }
 
 internal enum StringOrRawBytes: Sendable, Hashable {
