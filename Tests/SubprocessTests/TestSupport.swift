@@ -89,8 +89,10 @@ extension Trait where Self == ConditionTrait {
     /// This test requires bash to run (instead of sh)
     static var requiresBash: Self {
         enabled(
-            if: (try? Executable.name("bash").resolveExecutablePath(in: .inherit)) != nil,
-            "This test requires bash (install `bash` package on Linux/BSD)"
+            "This test requires bash (install `bash` package on Linux/BSD)",
+            {
+                (try? await Executable.name("bash").resolveExecutablePath(in: .inherit)) != nil
+            }
         )
     }
 }
