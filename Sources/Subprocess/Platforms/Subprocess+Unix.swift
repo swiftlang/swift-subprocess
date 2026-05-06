@@ -559,9 +559,9 @@ extension Configuration {
                 )
                 return SpawnResult(
                     execution: execution,
-                    inputWriteEnd: inputWriteFileDescriptor?.createIOChannel(),
-                    outputReadEnd: outputReadFileDescriptor?.createIOChannel(),
-                    errorReadEnd: errorReadFileDescriptor?.createIOChannel()
+                    inputWriteEnd: inputWriteFileDescriptor,
+                    outputReadEnd: outputReadFileDescriptor,
+                    errorReadEnd: errorReadFileDescriptor
                 )
             }
 
@@ -615,7 +615,7 @@ public struct ProcessIdentifier: Sendable, Hashable {
 
     internal func close() {
         if self.processDescriptor > 0 {
-            _ = _subprocess_close(self.processDescriptor)
+            try? FileDescriptor(rawValue: self.processDescriptor).close()
         }
     }
 }

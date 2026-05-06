@@ -9,29 +9,20 @@
 //
 //===----------------------------------------------------------------------===//
 
-#if canImport(Glibc)
-import Glibc
-let _subprocess_read = Glibc.read
-let _subprocess_write = Glibc.write
-let _subprocess_close = Glibc.close
-#elseif canImport(Android)
-import Android
-let _subprocess_read = Android.read
-let _subprocess_write = Android.write
-let _subprocess_close = Android.close
-#elseif canImport(Musl)
-import Musl
-let _subprocess_read = Musl.read
-let _subprocess_write = Musl.write
-let _subprocess_close = Musl.close
-#endif
-
 #if os(Linux) || os(Android)
 
 #if canImport(System)
 import System
 #else
 import SystemPackage
+#endif
+
+#if canImport(Glibc)
+import Glibc
+#elseif canImport(Android)
+import Android
+#elseif canImport(Musl)
+import Musl
 #endif
 
 internal import Dispatch
@@ -198,7 +189,10 @@ private func shutdown() {
 
     var one: UInt64 = 1
     // Wake up the thread for shutdown
-    _ = _subprocess_write(storage.shutdownFileDescriptor, &one, MemoryLayout<UInt64>.size)
+    withUnsafeBytes(of: &one) { ptr in
+        _ = try? FileDescriptor(rawValue: storage.shutdownFileDescriptor)
+            .write(ptr, retryOnInterrupt: true)
+    }
     // Cleanup the monitor thread
     pthread_join(storage.monitorThread, nil)
 }
@@ -213,7 +207,10 @@ private func signalHandler(
 ) {
     let savedErrno = errno
     var one: UInt8 = 1
-    _ = _subprocess_write(_signalPipe.writeEnd, &one, 1)
+    withUnsafeBytes(of: &one) { ptr in
+        _ = try? FileDescriptor(rawValue: _signalPipe.writeEnd)
+            .write(ptr, retryOnInterrupt: true)
+    }
     errno = savedErrno
 }
 
@@ -268,7 +265,11 @@ private func monitorThreadFunc(context: MonitorThreadContext) {
             // from the shutdownFD
             if targetFileDescriptor == context.shutdownFileDescriptor {
                 var buf: UInt64 = 0
-                _ = _subprocess_read(context.shutdownFileDescriptor, &buf, MemoryLayout<UInt64>.size)
+                withUnsafeMutableBytes(of: &buf) { ptr in
+                    _ = try? FileDescriptor(
+                        rawValue: context.shutdownFileDescriptor
+                    ).read(into: ptr, retryOnInterrupt: true)
+                }
                 break monitorLoop
             }
 
@@ -456,7 +457,11 @@ private func _reapAllKnownChildProcesses(_ signalFd: CInt, context: MonitorThrea
 
     // Drain the signalFd
     var buffer: UInt8 = 0
-    while _subprocess_read(signalFd, &buffer, 1) > 0 { /* noop, drain the pipe  */  }
+    withUnsafeMutableBytes(of: &buffer) { ptr in
+        while (try? FileDescriptor(rawValue: signalFd).read(into: ptr) > 0) ?? false {
+            /* noop, drain the pipe  */
+        }
+    }
 
     let resumingContinuations: [ResultContinuation] = _processMonitorState.withLock { state in
         guard case .started(let storage) = state else {

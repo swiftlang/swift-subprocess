@@ -22,7 +22,7 @@ dep.append(
 let defaultTraits: Set<String> = ["SubprocessFoundation"]
 
 let packageSwiftSettings: [SwiftSetting] = [
-    .define("SUBPROCESS_ASYNCIO_DISPATCH", .when(platforms: [.macOS, .custom("freebsd"), .openbsd])),
+    .define("SUBPROCESS_ASYNCIO_KQUEUE", .when(platforms: [.macOS, .custom("freebsd"), .openbsd])),
     .enableUpcomingFeature("ExistentialAny"),
     .enableUpcomingFeature("MemberImportVisibility"),
     .enableUpcomingFeature("InternalImportsByDefault"),

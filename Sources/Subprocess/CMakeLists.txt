@@ -18,9 +18,10 @@ add_library(Subprocess
   Result.swift
   IO/Output.swift
   IO/Input.swift
-  IO/AsyncIO+Dispatch.swift
+  IO/AsyncIO+KQueue.swift
   IO/AsyncIO+Linux.swift
   IO/AsyncIO+Windows.swift
+  IO/AsyncIO+Unix.swift
   Span+Subprocess.swift
   AsyncBufferSequence.swift
   API.swift
@@ -41,13 +42,13 @@ elseif(APPLE)
     Platforms/Subprocess+Darwin.swift
     Platforms/Subprocess+Unix.swift)
   target_compile_options(Subprocess PRIVATE
-    "$<$<COMPILE_LANGUAGE:Swift>:-DSUBPROCESS_ASYNCIO_DISPATCH>")
+    "$<$<COMPILE_LANGUAGE:Swift>:-DSUBPROCESS_ASYNCIO_KQUEUE>")
 elseif(FREEBSD OR OPENBSD)
   target_sources(Subprocess PRIVATE
     Platforms/Subprocess+BSD.swift
     Platforms/Subprocess+Unix.swift)
   target_compile_options(Subprocess PRIVATE
-    "$<$<COMPILE_LANGUAGE:Swift>:-DSUBPROCESS_ASYNCIO_DISPATCH>")
+    "$<$<COMPILE_LANGUAGE:Swift>:-DSUBPROCESS_ASYNCIO_KQUEUE>")
 endif()
 
 target_compile_options(Subprocess PRIVATE
