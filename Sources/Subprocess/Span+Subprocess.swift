@@ -48,26 +48,16 @@ extension Span where Element: BitwiseCopyable {
     }
 }
 
-#if canImport(Glibc) || canImport(Bionic) || canImport(Musl)
-internal import Dispatch
-
-extension DispatchData {
-    var bytes: RawSpan {
-        _read {
-            if self.count == 0 {
-                let empty = UnsafeRawBufferPointer(start: nil, count: 0)
-                let span = RawSpan(_unsafeBytes: empty)
-                yield _overrideLifetime(of: span, to: self)
-            } else {
-                // FIXME: We cannot get a stable ptr out of DispatchData.
-                // For now revert back to copy
-                let array = Array(self)
-                let ptr = array.withUnsafeBytes { return $0 }
-                let span = RawSpan(_unsafeBytes: ptr)
-                yield _overrideLifetime(of: span, to: self)
-            }
+extension Array where Element: BitwiseCopyable {
+    // swift-format-ignore
+    // Access the storage backing this Buffer
+    internal var _bytes: RawSpan {
+        @_lifetime(borrow self)
+        borrowing get {
+            let ptr = self.withUnsafeBytes { $0 }
+            let bytes = RawSpan(_unsafeBytes: ptr)
+            return _overrideLifetime(of: bytes, to: self)
         }
     }
 }
-#endif  // canImport(Glibc) || canImport(Bionic) || canImport(Musl)
 

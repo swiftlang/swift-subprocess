@@ -46,7 +46,11 @@ int _subprocess_pthread_create(
 #else
     pthread_t * _Nonnull ptr,
 #endif
-    pthread_attr_t const * _Nullable attr,
+#if defined(__FreeBSD__) || defined(__OpenBSD__)
+    const pthread_attr_t _Nullable * _Nullable attr,
+#else
+    const pthread_attr_t * _Nullable attr,
+#endif
     void * _Nullable (* _Nonnull start)(void * _Nullable),
     void * _Nullable context
 );

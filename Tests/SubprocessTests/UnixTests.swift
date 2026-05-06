@@ -328,8 +328,7 @@ extension SubprocessUnixTests {
                             """,
                         ],
                         platformOptions: platformOptions,
-                        error: .fileDescriptor(.standardError, closeAfterSpawningProcess: false),
-                        preferredBufferSize: 1
+                        error: .fileDescriptor(.standardError, closeAfterSpawningProcess: false)
                     ) { execution, standardOutput in
                         // Read stdout incrementally. Once we see the PID line,
                         // we know the trap is set up and it's safe to send SIGINT.
@@ -414,8 +413,7 @@ extension SubprocessUnixTests {
                             """,
                         ],
                         platformOptions: platformOptions,
-                        error: .fileDescriptor(.standardError, closeAfterSpawningProcess: false),
-                        preferredBufferSize: 1
+                        error: .fileDescriptor(.standardError, closeAfterSpawningProcess: false)
                     ) { _, standardOutput in
                         var grandChildPid: pid_t?
                         for try await line in standardOutput.strings() {
