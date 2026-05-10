@@ -52,35 +52,41 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
         private let diskIO: DiskIO
         private let preferredBufferSize: Int
         private var buffer: [Buffer]
+        private let executionContext: ExecutionContext?
 
-        internal init(diskIO: DiskIO) {
+        internal init(diskIO: DiskIO, executionContext: ExecutionContext?) {
             self.diskIO = diskIO
             self.buffer = []
             // Only need to query it once at beginning of stream
             self.preferredBufferSize = AsyncIO.queryPipeBufferSize(for: diskIO)
+            self.executionContext = executionContext
         }
 
         /// Retrieves the next buffer in the sequence, or `nil` if the sequence ended.
         public mutating func next(isolation actor: isolated (any Actor)?) async throws -> Buffer? {
-            // If we have more left in buffer, use that
-            guard self.buffer.isEmpty else {
-                return self.buffer.removeFirst()
+            do {
+                // If we have more left in buffer, use that
+                guard self.buffer.isEmpty else {
+                    return self.buffer.removeFirst()
+                }
+                // Read more data
+                let data = try await AsyncIO.shared.read(
+                    from: self.diskIO,
+                    upTo: self.preferredBufferSize
+                )
+                guard let data else {
+                    // We finished reading. Close the file descriptor now
+                    #if canImport(WinSDK)
+                    try _safelyClose(.handle(self.diskIO))
+                    #else
+                    try _safelyClose(.fileDescriptor(self.diskIO))
+                    #endif
+                    return nil
+                }
+                return Buffer(data: data)
+            } catch {
+                throw error.withExecutionContext(self.executionContext)
             }
-            // Read more data
-            let data = try await AsyncIO.shared.read(
-                from: self.diskIO,
-                upTo: self.preferredBufferSize
-            )
-            guard let data else {
-                // We finished reading. Close the file descriptor now
-                #if canImport(WinSDK)
-                try _safelyClose(.handle(self.diskIO))
-                #else
-                try _safelyClose(.fileDescriptor(self.diskIO))
-                #endif
-                return nil
-            }
-            return Buffer(data: data)
         }
 
         /// Retrieves the next buffer in the sequence, or `nil` if the sequence ended.
@@ -90,14 +96,16 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
     }
 
     private let diskIO: DiskIO
+    private let executionContext: ExecutionContext?
 
-    internal init(diskIO: DiskIO) {
+    internal init(diskIO: DiskIO, executionContext: ExecutionContext?) {
         self.diskIO = diskIO
+        self.executionContext = executionContext
     }
 
     /// Creates an iterator for this asynchronous sequence.
     public func makeAsyncIterator() -> Iterator {
-        return Iterator(diskIO: self.diskIO)
+        return Iterator(diskIO: self.diskIO, executionContext: self.executionContext)
     }
 
     /// Splits the buffer into strings using the specified separator.
@@ -118,7 +126,8 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
             underlying: self,
             encoding: UTF8.self,
             bufferingPolicy: bufferingPolicy,
-            separator: separator
+            separator: separator,
+            executionContext: self.executionContext
         )
     }
 
@@ -143,7 +152,8 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
             underlying: self,
             encoding: encoding,
             bufferingPolicy: bufferingPolicy,
-            separator: separator
+            separator: separator,
+            executionContext: self.executionContext
         )
     }
 }
@@ -187,6 +197,7 @@ extension AsyncBufferSequence {
         private let base: AsyncBufferSequence
         private let bufferingPolicy: BufferingPolicy
         private let separator: Separator
+        private let executionContext: ExecutionContext?
 
         /// An iterator for ``StringSequence``.
         public struct AsyncIterator: AsyncIteratorProtocol {
@@ -202,11 +213,13 @@ extension AsyncBufferSequence {
             private let bufferingPolicy: BufferingPolicy
             private let separator: Separator
             private let separatorCodeUnits: [Encoding.CodeUnit]
+            private let executionContext: ExecutionContext?
 
             internal init(
                 underlyingIterator: AsyncBufferSequence.AsyncIterator,
                 bufferingPolicy: BufferingPolicy,
-                separator: Separator
+                separator: Separator,
+                executionContext: ExecutionContext?
             ) {
                 self.source = underlyingIterator
                 self.buffer = []
@@ -216,6 +229,7 @@ extension AsyncBufferSequence {
                 self.eofReached = false
                 self.bufferingPolicy = bufferingPolicy
                 self.separator = separator
+                self.executionContext = executionContext
                 // Pre-compute separator code unit sequences for
                 // .unicodeScalarSequence cases.
                 // Both use the same buffer-tail matching algorithm:
@@ -242,186 +256,189 @@ extension AsyncBufferSequence {
 
             /// Retrieves the next line, or `nil` if the sequence ended.
             public mutating func next(isolation actor: isolated (any Actor)?) async throws -> String? {
-
-                func loadBuffer() async throws -> [Encoding.CodeUnit]? {
-                    guard !self.eofReached else {
-                        return nil
-                    }
-
-                    guard let buffer = try await self.source.next(isolation: actor) else {
-                        self.eofReached = true
-                        return nil
-                    }
-                    // Cast data to CodeUnit type
-                    let result = buffer.withUnsafeBytes { ptr in
-                        return ptr.withMemoryRebound(to: Encoding.CodeUnit.self) { codeUnitPtr in
-                            return Array(codeUnitPtr)
-                        }
-                    }
-                    return result.isEmpty ? nil : result
-                }
-
-                func yield() -> String? {
-                    defer {
-                        self.buffer.removeAll(keepingCapacity: true)
-                    }
-                    if self.buffer.isEmpty {
-                        return ""
-                    }
-                    return String(decoding: self.buffer, as: Encoding.self)
-                }
-
-                func nextFromSource() async throws -> Encoding.CodeUnit? {
-                    if underlyingBufferIndex >= underlyingBuffer.count {
-                        guard let buf = try await loadBuffer() else {
+                do {
+                    func loadBuffer() async throws -> [Encoding.CodeUnit]? {
+                        guard !self.eofReached else {
                             return nil
                         }
-                        underlyingBuffer = buf
-                        underlyingBufferIndex = buf.startIndex
-                    }
-                    let result = underlyingBuffer[underlyingBufferIndex]
-                    underlyingBufferIndex = underlyingBufferIndex.advanced(by: 1)
-                    return result
-                }
 
-                func nextCodeUnit() async throws -> Encoding.CodeUnit? {
-                    defer { leftover = nil }
-                    if let leftover = leftover {
-                        return leftover
-                    }
-                    return try await nextFromSource()
-                }
-
-                // https://en.wikipedia.org/wiki/Newline#Unicode
-                let lineFeed = Encoding.CodeUnit(0x0A)
-                /// let verticalTab     = Encoding.CodeUnit(0x0B)
-                /// let formFeed        = Encoding.CodeUnit(0x0C)
-                let carriageReturn = Encoding.CodeUnit(0x0D)
-                // carriageReturn + lineFeed
-                let newLine1: Encoding.CodeUnit
-                let newLine2: Encoding.CodeUnit
-                let lineSeparator1: Encoding.CodeUnit
-                let lineSeparator2: Encoding.CodeUnit
-                let lineSeparator3: Encoding.CodeUnit
-                let paragraphSeparator1: Encoding.CodeUnit
-                let paragraphSeparator2: Encoding.CodeUnit
-                let paragraphSeparator3: Encoding.CodeUnit
-                switch Encoding.CodeUnit.self {
-                case is UInt8.Type:
-                    newLine1 = Encoding.CodeUnit(0xC2)
-                    newLine2 = Encoding.CodeUnit(0x85)
-
-                    lineSeparator1 = Encoding.CodeUnit(0xE2)
-                    lineSeparator2 = Encoding.CodeUnit(0x80)
-                    lineSeparator3 = Encoding.CodeUnit(0xA8)
-
-                    paragraphSeparator1 = Encoding.CodeUnit(0xE2)
-                    paragraphSeparator2 = Encoding.CodeUnit(0x80)
-                    paragraphSeparator3 = Encoding.CodeUnit(0xA9)
-                case is UInt16.Type, is UInt32.Type:
-                    // UTF16 and UTF32 use one byte for all
-                    newLine1 = Encoding.CodeUnit(0x0085)
-                    newLine2 = Encoding.CodeUnit(0x0085)
-
-                    lineSeparator1 = Encoding.CodeUnit(0x2028)
-                    lineSeparator2 = Encoding.CodeUnit(0x2028)
-                    lineSeparator3 = Encoding.CodeUnit(0x2028)
-
-                    paragraphSeparator1 = Encoding.CodeUnit(0x2029)
-                    paragraphSeparator2 = Encoding.CodeUnit(0x2029)
-                    paragraphSeparator3 = Encoding.CodeUnit(0x2029)
-                default:
-                    fatalError("Unknown encoding type \(Encoding.self)")
-                }
-
-                while let first = try await nextCodeUnit() {
-                    // Throw if we exceed max line length
-                    if case .maxLineLength(let maxLength) = self.bufferingPolicy, buffer.count >= maxLength {
-                        throw SubprocessError.outputLimitExceeded(limit: maxLength)
+                        guard let buffer = try await self.source.next(isolation: actor) else {
+                            self.eofReached = true
+                            return nil
+                        }
+                        // Cast data to CodeUnit type
+                        let result = buffer.withUnsafeBytes { ptr in
+                            return ptr.withMemoryRebound(to: Encoding.CodeUnit.self) { codeUnitPtr in
+                                return Array(codeUnitPtr)
+                            }
+                        }
+                        return result.isEmpty ? nil : result
                     }
 
-                    switch self.separator.storage {
-                    case .lineBreaks:
-                        switch first {
-                        case carriageReturn:
-                            // Swallow up any subsequent LF
-                            guard let next = try await nextFromSource() else {
-                                return yield() // if we ran out of bytes, the last byte was a CR
+                    func yield() -> String? {
+                        defer {
+                            self.buffer.removeAll(keepingCapacity: true)
+                        }
+                        if self.buffer.isEmpty {
+                            return ""
+                        }
+                        return String(decoding: self.buffer, as: Encoding.self)
+                    }
+
+                    func nextFromSource() async throws -> Encoding.CodeUnit? {
+                        if underlyingBufferIndex >= underlyingBuffer.count {
+                            guard let buf = try await loadBuffer() else {
+                                return nil
                             }
-                            guard next == lineFeed else {
-                                // if the next character was not an LF, save it for the next iteration and still return a line
-                                leftover = next
+                            underlyingBuffer = buf
+                            underlyingBufferIndex = buf.startIndex
+                        }
+                        let result = underlyingBuffer[underlyingBufferIndex]
+                        underlyingBufferIndex = underlyingBufferIndex.advanced(by: 1)
+                        return result
+                    }
+
+                    func nextCodeUnit() async throws -> Encoding.CodeUnit? {
+                        defer { leftover = nil }
+                        if let leftover = leftover {
+                            return leftover
+                        }
+                        return try await nextFromSource()
+                    }
+
+                    // https://en.wikipedia.org/wiki/Newline#Unicode
+                    let lineFeed = Encoding.CodeUnit(0x0A)
+                    /// let verticalTab     = Encoding.CodeUnit(0x0B)
+                    /// let formFeed        = Encoding.CodeUnit(0x0C)
+                    let carriageReturn = Encoding.CodeUnit(0x0D)
+                    // carriageReturn + lineFeed
+                    let newLine1: Encoding.CodeUnit
+                    let newLine2: Encoding.CodeUnit
+                    let lineSeparator1: Encoding.CodeUnit
+                    let lineSeparator2: Encoding.CodeUnit
+                    let lineSeparator3: Encoding.CodeUnit
+                    let paragraphSeparator1: Encoding.CodeUnit
+                    let paragraphSeparator2: Encoding.CodeUnit
+                    let paragraphSeparator3: Encoding.CodeUnit
+                    switch Encoding.CodeUnit.self {
+                    case is UInt8.Type:
+                        newLine1 = Encoding.CodeUnit(0xC2)
+                        newLine2 = Encoding.CodeUnit(0x85)
+
+                        lineSeparator1 = Encoding.CodeUnit(0xE2)
+                        lineSeparator2 = Encoding.CodeUnit(0x80)
+                        lineSeparator3 = Encoding.CodeUnit(0xA8)
+
+                        paragraphSeparator1 = Encoding.CodeUnit(0xE2)
+                        paragraphSeparator2 = Encoding.CodeUnit(0x80)
+                        paragraphSeparator3 = Encoding.CodeUnit(0xA9)
+                    case is UInt16.Type, is UInt32.Type:
+                        // UTF16 and UTF32 use one byte for all
+                        newLine1 = Encoding.CodeUnit(0x0085)
+                        newLine2 = Encoding.CodeUnit(0x0085)
+
+                        lineSeparator1 = Encoding.CodeUnit(0x2028)
+                        lineSeparator2 = Encoding.CodeUnit(0x2028)
+                        lineSeparator3 = Encoding.CodeUnit(0x2028)
+
+                        paragraphSeparator1 = Encoding.CodeUnit(0x2029)
+                        paragraphSeparator2 = Encoding.CodeUnit(0x2029)
+                        paragraphSeparator3 = Encoding.CodeUnit(0x2029)
+                    default:
+                        fatalError("Unknown encoding type \(Encoding.self)")
+                    }
+
+                    while let first = try await nextCodeUnit() {
+                        // Throw if we exceed max line length
+                        if case .maxLineLength(let maxLength) = self.bufferingPolicy, buffer.count >= maxLength {
+                            throw SubprocessError.outputLimitExceeded(limit: maxLength)
+                        }
+
+                        switch self.separator.storage {
+                        case .lineBreaks:
+                            switch first {
+                            case carriageReturn:
+                                // Swallow up any subsequent LF
+                                guard let next = try await nextFromSource() else {
+                                    return yield() // if we ran out of bytes, the last byte was a CR
+                                }
+                                guard next == lineFeed else {
+                                    // if the next character was not an LF, save it for the next iteration and still return a line
+                                    leftover = next
+                                    return yield()
+                                }
                                 return yield()
-                            }
-                            return yield()
-                        case newLine1 where Encoding.CodeUnit.self is UInt8.Type: // this may be used to compose other UTF8 characters
-                            guard let next = try await nextFromSource() else {
-                                // technically invalid UTF8 but it should be repaired to "\u{FFFD}"
-                                buffer.append(first)
+                            case newLine1 where Encoding.CodeUnit.self is UInt8.Type: // this may be used to compose other UTF8 characters
+                                guard let next = try await nextFromSource() else {
+                                    // technically invalid UTF8 but it should be repaired to "\u{FFFD}"
+                                    buffer.append(first)
+                                    return yield()
+                                }
+                                guard next == newLine2 else {
+                                    // This character is not a valid newLine. Treat it as normal character
+                                    buffer.append(first)
+                                    buffer.append(next)
+                                    continue
+                                }
                                 return yield()
-                            }
-                            guard next == newLine2 else {
-                                // This character is not a valid newLine. Treat it as normal character
+                            case lineSeparator1 where Encoding.CodeUnit.self is UInt8.Type,
+                                paragraphSeparator1 where Encoding.CodeUnit.self is UInt8.Type:
+                                // Try to read: 80 [A8 | A9].
+                                // If we can't, then we put the byte in the buffer for error correction
+                                guard let next = try await nextFromSource() else {
+                                    buffer.append(first)
+                                    return yield()
+                                }
+                                guard next == lineSeparator2 || next == paragraphSeparator2 else {
+                                    // Invalid lineSeparator. Treat it as normal charcter.
+                                    buffer.append(first)
+                                    buffer.append(next)
+                                    continue
+                                }
+                                guard let fin = try await nextFromSource() else {
+                                    // Invalid lineSeparator. Treat it as normal charcter.
+                                    buffer.append(first)
+                                    buffer.append(next)
+                                    return yield()
+                                }
+                                guard fin == lineSeparator3 || fin == paragraphSeparator3 else {
+                                    // Invalid lineSeparator. Treat it as normal charcter.
+                                    buffer.append(first)
+                                    buffer.append(next)
+                                    buffer.append(fin)
+                                    continue
+                                }
+                                return yield()
+                            case lineFeed..<carriageReturn, newLine1, lineSeparator1, paragraphSeparator1:
+                                return yield()
+                            default:
                                 buffer.append(first)
-                                buffer.append(next)
                                 continue
                             }
-                            return yield()
-                        case lineSeparator1 where Encoding.CodeUnit.self is UInt8.Type,
-                            paragraphSeparator1 where Encoding.CodeUnit.self is UInt8.Type:
-                            // Try to read: 80 [A8 | A9].
-                            // If we can't, then we put the byte in the buffer for error correction
-                            guard let next = try await nextFromSource() else {
-                                buffer.append(first)
-                                return yield()
-                            }
-                            guard next == lineSeparator2 || next == paragraphSeparator2 else {
-                                // Invalid lineSeparator. Treat it as normal charcter.
-                                buffer.append(first)
-                                buffer.append(next)
-                                continue
-                            }
-                            guard let fin = try await nextFromSource() else {
-                                // Invalid lineSeparator. Treat it as normal charcter.
-                                buffer.append(first)
-                                buffer.append(next)
-                                return yield()
-                            }
-                            guard fin == lineSeparator3 || fin == paragraphSeparator3 else {
-                                // Invalid lineSeparator. Treat it as normal charcter.
-                                buffer.append(first)
-                                buffer.append(next)
-                                buffer.append(fin)
-                                continue
-                            }
-                            return yield()
-                        case lineFeed..<carriageReturn, newLine1, lineSeparator1, paragraphSeparator1:
-                            return yield()
-                        default:
+                        case .unicodeScalarSequence:
+                            // Suffix match against the precomputed separator code units
                             buffer.append(first)
+                            guard buffer.count >= self.separatorCodeUnits.count else {
+                                continue
+                            }
+                            if buffer.suffix(
+                                self.separatorCodeUnits.count
+                            ).elementsEqual(self.separatorCodeUnits) {
+                                buffer.removeLast(self.separatorCodeUnits.count)
+                                return yield()
+                            }
                             continue
                         }
-                    case .unicodeScalarSequence:
-                        // Suffix match against the precomputed separator code units
-                        buffer.append(first)
-                        guard buffer.count >= self.separatorCodeUnits.count else {
-                            continue
-                        }
-                        if buffer.suffix(
-                            self.separatorCodeUnits.count
-                        ).elementsEqual(self.separatorCodeUnits) {
-                            buffer.removeLast(self.separatorCodeUnits.count)
-                            return yield()
-                        }
-                        continue
                     }
-                }
 
-                // Don't emit an empty newline when there is no more content (e.g. end of file)
-                if !buffer.isEmpty {
-                    return yield()
+                    // Don't emit an empty newline when there is no more content (e.g. end of file)
+                    if !buffer.isEmpty {
+                        return yield()
+                    }
+                    return nil
+                } catch let error as SubprocessError {
+                    throw error.withExecutionContext(self.executionContext)
                 }
-                return nil
             }
 
             /// Retrieves the next line, or `nil` if the sequence ended.
@@ -435,7 +452,8 @@ extension AsyncBufferSequence {
             return AsyncIterator(
                 underlyingIterator: self.base.makeAsyncIterator(),
                 bufferingPolicy: self.bufferingPolicy,
-                separator: self.separator
+                separator: self.separator,
+                executionContext: self.executionContext
             )
         }
 
@@ -443,11 +461,13 @@ extension AsyncBufferSequence {
             underlying: AsyncBufferSequence,
             encoding: Encoding.Type,
             bufferingPolicy: BufferingPolicy,
-            separator: Separator
+            separator: Separator,
+            executionContext: ExecutionContext?
         ) {
             self.base = underlying
             self.bufferingPolicy = bufferingPolicy
             self.separator = separator
+            self.executionContext = executionContext
         }
     }
 }

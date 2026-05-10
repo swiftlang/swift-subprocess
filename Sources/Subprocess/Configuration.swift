@@ -95,51 +95,61 @@ public struct Configuration: Sendable {
             ) async throws -> Result
         )
     ) async throws -> ExecutionOutcome<Result> {
-        var spawnResults = try await self.spawn(
-            withInput: input,
-            outputPipe: output,
-            errorPipe: error
-        )
+        do {
+            var spawnResults = try await self.spawn(
+                withInput: input,
+                outputPipe: output,
+                errorPipe: error
+            )
 
-        let execution = spawnResults.execution
-        defer {
-            // Close process file descriptor now we finished monitoring
-            execution.processIdentifier.close()
-        }
-
-        return try await withAsyncTaskCleanupHandler { () throws -> ExecutionOutcome<Result> in
-            let inputIO = spawnResults.inputWriteEnd()
-            let outputIO = spawnResults.outputReadEnd()
-            let errorIO = spawnResults.errorReadEnd()
-
-            let result: Swift.Result<Result, any Error>
-            do {
-                // Body runs in the same isolation
-                let bodyResult = try await body(execution, inputIO, outputIO, errorIO)
-
-                result = .success(bodyResult)
-            } catch {
-                result = .failure(error)
+            let execution = spawnResults.execution
+            defer {
+                // Close process file descriptor now we finished monitoring
+                execution.processIdentifier.close()
             }
 
-            // Ensure that we begin monitoring process termination after `body` runs
-            // and regardless of whether `body` throws, so that the pid gets reaped
-            // even if `body` throws, and we are not leaving zombie processes in the
-            // process table which will cause the process termination monitoring thread
-            // to effectively hang due to the pid never being awaited
-            let terminationStatus = try await monitorProcessTermination(
-                for: execution.processIdentifier
-            )
+            return try await withAsyncTaskCleanupHandler { () throws -> ExecutionOutcome<Result> in
+                let inputIO = spawnResults.inputWriteEnd()
+                let outputIO = spawnResults.outputReadEnd()
+                let errorIO = spawnResults.errorReadEnd()
 
-            return ExecutionOutcome(
-                terminationStatus: terminationStatus,
-                value: try result.get()
-            )
-        } onCleanup: {
-            // Attempt to terminate the child process
-            await execution.runTeardownSequence(
-                self.platformOptions.teardownSequence
-            )
+                let result: Swift.Result<Result, any Error>
+                do {
+                    // Body runs in the same isolation
+                    let bodyResult = try await body(execution, inputIO, outputIO, errorIO)
+
+                    result = .success(bodyResult)
+                } catch {
+                    result = .failure(error)
+                }
+
+                // Ensure that we begin monitoring process termination after `body` runs
+                // and regardless of whether `body` throws, so that the pid gets reaped
+                // even if `body` throws, and we are not leaving zombie processes in the
+                // process table which will cause the process termination monitoring thread
+                // to effectively hang due to the pid never being awaited
+                let terminationStatus = try await monitorProcessTermination(
+                    for: execution.processIdentifier
+                )
+
+                return ExecutionOutcome(
+                    terminationStatus: terminationStatus,
+                    value: try result.get()
+                )
+            } onCleanup: {
+                // Attempt to terminate the child process
+                await execution.runTeardownSequence(
+                    self.platformOptions.teardownSequence
+                )
+            }
+        } catch let error as SubprocessError {
+            // Attach `ExecutionContext` to every thrown `SubprocessError`.
+            // The idempotency guard in `withExecutionContext(_:)` ensures
+            // inner I/O layers that already attached context are not
+            // overwritten here. Non-`Subprocess` errors (e.g., anything thrown
+            // from the `body` closure) propagate unchanged, since the
+            // execution context is only meaningful for Subprocess's own errors.
+            throw error.withExecutionContext(.init(self))
         }
     }
 }
