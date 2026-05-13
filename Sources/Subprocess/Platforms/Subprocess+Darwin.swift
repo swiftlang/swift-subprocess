@@ -473,11 +473,8 @@ extension Configuration {
                     errorWrite: errorWriteFileDescriptor
                 )
 
-                let execution = Execution(
-                    processIdentifier: .init(value: pid)
-                )
                 return SpawnResult(
-                    execution: execution,
+                    processIdentifier: .init(value: pid),
                     inputWriteEnd: inputWriteFileDescriptor,
                     outputReadEnd: outputReadFileDescriptor,
                     errorReadEnd: errorReadFileDescriptor

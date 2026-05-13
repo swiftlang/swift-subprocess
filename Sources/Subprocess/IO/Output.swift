@@ -173,11 +173,14 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
     }
 }
 
-/// A concrete `Output` type for subprocesses that redirects the child output to
-/// the `.currentStandardOutput` (a sequence) or `.currentStandardError` property of
-/// `Execution`. This output type is only applicable to the `run()` family that
-/// takes a custom closure.
-internal struct SequenceOutput: OutputProtocol {
+/// An output type that streams the subprocess's output through the body
+/// closure as an asynchronous sequence of buffers.
+///
+/// Use ``OutputProtocol/sequence`` to create a value of this type when you
+/// call a `run` function that takes a body closure. The closure reads the
+/// output by iterating ``Execution/standardOutput`` or
+/// ``Execution/standardError``.
+public struct SequenceOutput: OutputProtocol, ErrorOutputProtocol {
     /// The output type for this output option.
     public typealias OutputType = Void
 
@@ -257,6 +260,16 @@ extension OutputProtocol where Self == BytesOutput {
     }
 }
 
+extension OutputProtocol where Self == SequenceOutput {
+    /// Creates a subprocess output that the body closure reads from
+    /// ``Execution/standardOutput`` or ``Execution/standardError``.
+    ///
+    /// Use this output with a `run` overload that takes a body closure.
+    public static var sequence: Self {
+        return SequenceOutput()
+    }
+}
+
 // MARK: - ErrorOutputProtocol
 
 /// A type that serves as the standard error output target for a subprocess.
@@ -276,7 +289,10 @@ public protocol ErrorOutputProtocol: OutputProtocol {}
 /// streams together, making it possible to process all subprocess output as a unified
 /// stream rather than handling standard output and standard error separately.
 public struct CombinedErrorOutput: ErrorOutputProtocol {
+    /// The output type for this output option.
     public typealias OutputType = Void
+
+    internal init() {}
 }
 
 extension ErrorOutputProtocol {

@@ -68,8 +68,10 @@ struct SubprocessLinuxTests {
             // This will intentionally hang
             .path("/usr/bin/sleep"),
             arguments: ["infinity"],
+            input: .none,
+            output: .discarded,
             error: .discarded
-        ) { subprocess, standardOutput in
+        ) { subprocess in
             // First suspend the process
             try subprocess.send(signal: .suspend)
             var thread1: pthread_t? = nil
@@ -93,7 +95,6 @@ struct SubprocessLinuxTests {
 
             // Now kill the process
             try subprocess.send(signal: .terminate)
-            for try await _ in standardOutput {}
 
             if let thread1 {
                 pthread_join(thread1, nil)
@@ -107,6 +108,7 @@ struct SubprocessLinuxTests {
     @Test func testUniqueProcessIdentifier() async throws {
         _ = try await Subprocess.run(
             .path("/bin/echo"),
+            input: .none,
             output: .discarded,
             error: .discarded
         ) { subprocess in

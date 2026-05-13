@@ -146,15 +146,21 @@ public struct ArrayInput: InputProtocol {
     }
 }
 
-/// A concrete input type that the run closure uses to write custom input
-/// into the subprocess.
-internal struct CustomWriteInput: InputProtocol {
-    /// Asynchronously write the input to the subprocess using the
-    /// write file descriptor.
+/// An input type that lets the body closure write to the subprocess's
+/// standard input through ``Execution/standardInputWriter``.
+///
+/// Use ``InputProtocol/inputWriter`` to create a value of this type when you
+/// call a `run` function that takes a body closure. The closure writes the
+/// input through ``Execution/standardInputWriter`` and calls
+/// ``StandardInputWriter/finish()`` to signal end-of-file.
+public struct CustomWriteInput: InputProtocol {
+    /// Writes the input to the subprocess asynchronously.
+    ///
+    /// This method is a no-op. ``CustomWriteInput`` exposes the
+    /// ``StandardInputWriter`` directly to the body closure, which writes
+    /// to the subprocess.
     public func write(with writer: StandardInputWriter) async throws {
-        // Intentional no-op
-        // CustomWriteInput exposes the StandardInputWriter directly
-        // to the caller's closure, so writing is handled there instead.
+        // Intentional no-op.
     }
 
     internal init() {}
@@ -217,6 +223,16 @@ extension InputProtocol {
         using encoding: Encoding.Type
     ) -> Self where Self == StringInput<InputString, Encoding> {
         return .init(string: string, encoding: encoding)
+    }
+}
+
+extension InputProtocol where Self == CustomWriteInput {
+    /// Creates a subprocess input that the body closure writes to through
+    /// ``Execution/standardInputWriter``.
+    ///
+    /// Use this input with a `run` overload that takes a body closure.
+    public static var inputWriter: Self {
+        return CustomWriteInput()
     }
 }
 

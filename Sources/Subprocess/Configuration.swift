@@ -82,13 +82,16 @@ public struct Configuration: Sendable {
         )
     }
 
-    internal func run<Result>(
+    internal func run<Result, Input: InputProtocol, Output: OutputProtocol, Error: OutputProtocol>(
         input: consuming CreatedPipe,
+        as inputType: Input.Type,
         output: consuming CreatedPipe,
+        as outputType: Output.Type,
         error: consuming CreatedPipe,
+        as errorType: Error.Type,
         _ body: (
             (
-                Execution,
+                ProcessIdentifier,
                 consuming IODescriptor?,
                 consuming IODescriptor?,
                 consuming IODescriptor?
@@ -101,10 +104,11 @@ public struct Configuration: Sendable {
             errorPipe: error
         )
 
-        let execution = spawnResults.execution
+        let processIdentifier = spawnResults.processIdentifier
+
         defer {
             // Close process file descriptor now we finished monitoring
-            execution.processIdentifier.close()
+            processIdentifier.close()
         }
 
         return try await withAsyncTaskCleanupHandler { () throws -> ExecutionOutcome<Result> in
@@ -112,10 +116,10 @@ public struct Configuration: Sendable {
             let outputIO = spawnResults.outputReadEnd()
             let errorIO = spawnResults.errorReadEnd()
 
-            let result: Swift.Result<Result, any Error>
+            let result: Swift.Result<Result, any Swift.Error>
             do {
                 // Body runs in the same isolation
-                let bodyResult = try await body(execution, inputIO, outputIO, errorIO)
+                let bodyResult = try await body(processIdentifier, inputIO, outputIO, errorIO)
 
                 result = .success(bodyResult)
             } catch {
@@ -128,7 +132,7 @@ public struct Configuration: Sendable {
             // process table which will cause the process termination monitoring thread
             // to effectively hang due to the pid never being awaited
             let terminationStatus = try await monitorProcessTermination(
-                for: execution.processIdentifier
+                for: processIdentifier
             )
 
             return ExecutionOutcome(
@@ -136,6 +140,12 @@ public struct Configuration: Sendable {
                 value: try result.get()
             )
         } onCleanup: {
+            let execution = Execution<Input, Output, Error>(
+                processIdentifier: processIdentifier,
+                inputWriter: nil,
+                outputStream: nil,
+                errorStream: nil
+            )
             // Attempt to terminate the child process
             await execution.runTeardownSequence(
                 self.platformOptions.teardownSequence
@@ -655,18 +665,18 @@ extension Configuration {
     /// by `spawn()`. It returns the parent side file descriptors
     /// via `SpawnResult` to perform actual reads
     internal struct SpawnResult: ~Copyable {
-        let execution: Execution
+        let processIdentifier: ProcessIdentifier
         var _inputWriteEnd: IODescriptor?
         var _outputReadEnd: IODescriptor?
         var _errorReadEnd: IODescriptor?
 
         init(
-            execution: Execution,
+            processIdentifier: ProcessIdentifier,
             inputWriteEnd: consuming IODescriptor?,
             outputReadEnd: consuming IODescriptor?,
             errorReadEnd: consuming IODescriptor?
         ) {
-            self.execution = execution
+            self.processIdentifier = processIdentifier
             self._inputWriteEnd = consume inputWriteEnd
             self._outputReadEnd = consume outputReadEnd
             self._errorReadEnd = consume errorReadEnd
@@ -925,7 +935,7 @@ internal enum PipeNameCounter {
 }
 #endif
 
-internal struct CreatedPipe: ~Copyable {
+internal struct CreatedPipe: ~Copyable, Sendable {
     internal enum Purpose: CustomStringConvertible {
         /// This pipe is used for standard input. This option maps to
         /// `PIPE_ACCESS_OUTBOUND` on Windows where child only reads,

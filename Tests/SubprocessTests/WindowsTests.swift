@@ -214,11 +214,12 @@ extension SubprocessWindowsTests {
             self.cmdExe,
             // This command will intentionally hang
             arguments: ["/c", "type con"],
+            input: .none,
+            output: .discarded,
             error: .discarded
-        ) { subprocess, standardOutput in
+        ) { subprocess in
             // Make sure we can kill the hung process
             try subprocess.terminate(withExitCode: 42)
-            for try await _ in standardOutput {}
         }
         // If we got here, the process was terminated
         guard case .exited(let exitCode) = stuckProcess.terminationStatus else {
@@ -233,8 +234,10 @@ extension SubprocessWindowsTests {
             self.cmdExe,
             // This command will intentionally hang
             arguments: ["/c", "type con"],
+            input: .none,
+            output: .discarded,
             error: .discarded
-        ) { subprocess, standardOutput in
+        ) { subprocess in
             try subprocess.suspend()
             // Now check the to make sure the process is actually suspended
             // Why not spawn another process to do that?
@@ -272,7 +275,6 @@ extension SubprocessWindowsTests {
 
             // Now finally kill the process since it's intentionally hung
             try subprocess.terminate(withExitCode: 0)
-            for try await _ in standardOutput {}
         }
         #expect(stuckProcess.terminationStatus.isSuccess)
     }
@@ -295,8 +297,10 @@ extension SubprocessWindowsTests {
             self.cmdExe,
             arguments: ["/c", "echo"],
             platformOptions: platformOptions,
-            output: .discarded
-        ) { execution, _ in
+            input: .none,
+            output: .discarded,
+            error: .discarded
+        ) { execution in
             guard AssignProcessToJobObject(hJob, execution.processIdentifier.processDescriptor) else {
                 throw SubprocessError.WindowsError(rawValue: GetLastError())
             }

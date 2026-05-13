@@ -183,8 +183,9 @@ extension SubprocessUnixTests {
                 """,
             ],
             input: .none,
+            output: .sequence,
             error: .discarded
-        ) { subprocess, standardOutput in
+        ) { subprocess in
             return try await withThrowingTaskGroup(of: Void.self) { group in
                 group.addTask {
                     try await Task.sleep(for: .milliseconds(200))
@@ -197,7 +198,7 @@ extension SubprocessUnixTests {
                 }
                 group.addTask {
                     var outputs: [String] = []
-                    for try await line in standardOutput.strings() {
+                    for try await line in subprocess.standardOutput.strings() {
                         outputs.append(line.trimmingCharacters(in: .newlines))
                     }
                     #expect(outputs == ["saw SIGQUIT", "saw SIGTERM", "saw SIGINT"])
@@ -332,12 +333,14 @@ extension SubprocessUnixTests {
                             """,
                         ],
                         platformOptions: platformOptions,
+                        input: .none,
+                        output: .sequence,
                         error: .fileDescriptor(.standardError, closeAfterSpawningProcess: false)
-                    ) { execution, standardOutput in
+                    ) { execution in
                         // Read stdout incrementally. Once we see the PID line,
                         // we know the trap is set up and it's safe to send SIGINT.
                         var grandChildPid: pid_t?
-                        for try await line in standardOutput.strings() {
+                        for try await line in execution.standardOutput.strings() {
                             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
                             if let pid = pid_t(trimmed) {
                                 grandChildPid = pid
@@ -350,7 +353,7 @@ extension SubprocessUnixTests {
                     // Make sure the grand child `/usr/bin/yes` actually exited
                     // This is unfortunately racy because the pid isn't immediately invalided
                     // once `kill` returns. Allow a few failures and delay to counter this
-                    let grandChildPid = try #require(result.value)
+                    let grandChildPid = try #require(result.closureOutput)
                     for _ in 0..<10 {
                         let rc = kill(grandChildPid, 0)
                         if rc == 0 {
@@ -417,10 +420,12 @@ extension SubprocessUnixTests {
                             """,
                         ],
                         platformOptions: platformOptions,
+                        input: .none,
+                        output: .sequence,
                         error: .fileDescriptor(.standardError, closeAfterSpawningProcess: false)
-                    ) { _, standardOutput in
+                    ) { execution in
                         var grandChildPid: pid_t?
-                        for try await line in standardOutput.strings() {
+                        for try await line in execution.standardOutput.strings() {
                             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
                             if let pid = pid_t(trimmed) {
                                 grandChildPid = pid
@@ -430,7 +435,7 @@ extension SubprocessUnixTests {
                         return grandChildPid
                     }
                     #expect(result.terminationStatus == .signaled(SIGTERM))
-                    let grandChildPid = try #require(result.value)
+                    let grandChildPid = try #require(result.closureOutput)
                     // Grandchild should have been signalled via the process group.
                     // Allow a few iterations for signal propagation and reaping.
                     for _ in 0..<10 {
@@ -591,7 +596,8 @@ extension SubprocessUnixTests {
 }
 
 internal func assertNewSessionCreated<Output: OutputProtocol>(
-    with result: ExecutionRecord<
+    with result: ExecutionResult<
+        Void,
         StringOutput<UTF8>,
         Output
     >

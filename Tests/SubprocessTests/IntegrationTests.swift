@@ -994,24 +994,26 @@ extension SubprocessIntegrationTests {
         )
         let result = try await _run(
             setup,
+            input: .inputWriter,
+            output: .sequence,
             error: .discarded
-        ) { execution, standardInputWriter, standardOutput in
+        ) { execution in
             async let buffer = {
                 var _buffer = Data()
-                for try await chunk in standardOutput {
+                for try await chunk in execution.standardOutput {
                     let currentChunk = chunk.withUnsafeBytes { Data($0) }
                     _buffer += currentChunk
                 }
                 return _buffer
             }()
 
-            _ = try await standardInputWriter.write(Array(expected))
-            try await standardInputWriter.finish()
+            _ = try await execution.standardInputWriter.write(Array(expected))
+            try await execution.standardInputWriter.finish()
 
             return try await buffer
         }
         #expect(result.terminationStatus.isSuccess)
-        #expect(result.value == expected)
+        #expect(result.closureOutput == expected)
     }
 
     @Test func testNoInputTriggersEOF() async throws {
@@ -1690,24 +1692,26 @@ extension SubprocessIntegrationTests {
         )
         let result = try await _run(
             setup,
-            output: .discarded
-        ) { execution, standardInputWriter, standardError in
+            input: .inputWriter,
+            output: .discarded,
+            error: .sequence
+        ) { execution in
             async let buffer = {
                 var _buffer = Data()
-                for try await chunk in standardError {
+                for try await chunk in execution.standardError {
                     let currentChunk = chunk.withUnsafeBytes { Data($0) }
                     _buffer += currentChunk
                 }
                 return _buffer
             }()
 
-            _ = try await standardInputWriter.write(Array(expected))
-            try await standardInputWriter.finish()
+            _ = try await execution.standardInputWriter.write(Array(expected))
+            try await execution.standardInputWriter.finish()
 
             return try await buffer
         }
         #expect(result.terminationStatus.isSuccess)
-        #expect(result.value == expected)
+        #expect(result.closureOutput == expected)
     }
 
     @Test func stressTestWithLittleOutput() async throws {
@@ -1863,9 +1867,10 @@ extension SubprocessIntegrationTests {
         _ = try await _run(
             setup,
             input: .none,
+            output: .sequence,
             error: .discarded,
-        ) { execution, standardOutput in
-            for try await line in standardOutput.strings() {
+        ) { execution in
+            for try await line in execution.standardOutput.strings() {
                 // If we use default buffer size this test will hang
                 // because Subprocess is stuck on waiting 16k worth of
                 // output when there are only 3.
@@ -2031,10 +2036,11 @@ extension SubprocessIntegrationTests {
         _ = try await _run(
             setup,
             input: .none,
+            output: .sequence,
             error: .combinedWithOutput
-        ) { execution, standardOutput in
+        ) { execution in
             var output: String = ""
-            for try await line in standardOutput.strings() {
+            for try await line in execution.standardOutput.strings() {
                 output += line
             }
             #expect(output.contains("Hello Stdout"))
@@ -2057,12 +2063,14 @@ extension SubprocessIntegrationTests {
 
         _ = try await _run(
             setup,
-            input: .none
-        ) { execution, standardOutput, standardError in
+            input: .none,
+            output: .sequence,
+            error: .sequence
+        ) { execution in
             try await withThrowingTaskGroup { group in
                 group.addTask {
                     var stdout: String = ""
-                    for try await line in standardOutput.strings() {
+                    for try await line in execution.standardOutput.strings() {
                         stdout += line
                     }
                     #expect(stdout.contains("Hello Stdout"))
@@ -2070,7 +2078,7 @@ extension SubprocessIntegrationTests {
 
                 group.addTask {
                     var stderr: String = ""
-                    for try await line in standardError.strings() {
+                    for try await line in execution.standardError.strings() {
                         stderr += line
                     }
                     #expect(stderr.contains("Hello Stderr"))
@@ -2079,6 +2087,203 @@ extension SubprocessIntegrationTests {
                 try await group.waitForAll()
             }
         }
+    }
+}
+
+// MARK: - Unified run() Tests
+extension SubprocessIntegrationTests {
+    @Test func testBodyClosureReturnValue() async throws {
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: ["/c", "echo hello"]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/echo"),
+            arguments: ["hello"]
+        )
+        #endif
+        let result = try await _run(
+            setup,
+            input: .none,
+            output: .discarded,
+            error: .discarded
+        ) { _ in
+            return 42
+        }
+        #expect(result.terminationStatus.isSuccess)
+        #expect(result.closureOutput == 42)
+    }
+
+    @Test func testBodyClosureReturnValueWithCapturedOutput() async throws {
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: ["/c", "echo hello"]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/echo"),
+            arguments: ["hello"]
+        )
+        #endif
+        let result = try await _run(
+            setup,
+            input: .none,
+            output: .string(limit: 64),
+            error: .discarded
+        ) { _ in
+            return "closure-value"
+        }
+        #expect(result.terminationStatus.isSuccess)
+        #expect(result.closureOutput == "closure-value")
+        let output = try #require(result.standardOutput)
+        #expect(output.contains("hello"))
+    }
+
+    @Test func testBodyClosureThrows() async throws {
+        struct BodyError: Error, Equatable {}
+
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: ["/c", "echo hello"]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/echo"),
+            arguments: ["hello"]
+        )
+        #endif
+        await #expect(throws: BodyError.self) {
+            let _: ExecutionResult<Void, DiscardedOutput, DiscardedOutput> = try await _run(
+                setup,
+                input: .none,
+                output: .discarded,
+                error: .discarded
+            ) { _ in
+                throw BodyError()
+            }
+        }
+    }
+
+    @Test func testBodyClosureThrowsWithInputWriter() async throws {
+        // Regression test for the CustomWriteInput hang fix: when the body
+        // throws, run() must still finish() the input writer so the child
+        // process sees EOF on stdin and terminates. Otherwise this test hangs.
+        struct BodyError: Error, Equatable {}
+
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: ["/c", "findstr x*"]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/cat"),
+            arguments: []
+        )
+        #endif
+        await #expect(throws: BodyError.self) {
+            let _: ExecutionResult<Void, DiscardedOutput, DiscardedOutput> = try await _run(
+                setup,
+                input: .inputWriter,
+                output: .discarded,
+                error: .discarded
+            ) { _ in
+                throw BodyError()
+            }
+        }
+    }
+
+    @Test func testStreamingOutputWithCapturedError() async throws {
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: ["/c", "echo Hello Stdout & echo Hello Stderr 1>&2"]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "echo Hello Stdout; echo Hello Stderr 1>&2"]
+        )
+        #endif
+        let result = try await _run(
+            setup,
+            input: .none,
+            output: .sequence,
+            error: .string(limit: 64)
+        ) { execution in
+            var collected = ""
+            for try await line in execution.standardOutput.strings() {
+                collected += line
+            }
+            return collected
+        }
+        #expect(result.terminationStatus.isSuccess)
+        #expect(result.closureOutput.contains("Hello Stdout"))
+        let stderr = try #require(result.standardError)
+        #expect(stderr.contains("Hello Stderr"))
+    }
+
+    @Test func testStreamingErrorWithCapturedOutput() async throws {
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: ["/c", "echo Hello Stdout & echo Hello Stderr 1>&2"]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "echo Hello Stdout; echo Hello Stderr 1>&2"]
+        )
+        #endif
+        let result = try await _run(
+            setup,
+            input: .none,
+            output: .string(limit: 64),
+            error: .sequence
+        ) { execution in
+            var collected = ""
+            for try await line in execution.standardError.strings() {
+                collected += line
+            }
+            return collected
+        }
+        #expect(result.terminationStatus.isSuccess)
+        #expect(result.closureOutput.contains("Hello Stderr"))
+        let stdout = try #require(result.standardOutput)
+        #expect(stdout.contains("Hello Stdout"))
+    }
+
+    @Test func testInputWriterWithoutExplicitFinish() async throws {
+        // Verifies that run() finishes the input writer after the body returns
+        // when the caller forgot to. Without this, the child never sees EOF on
+        // stdin and this test hangs.
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: ["/c", "findstr x*"]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/cat"),
+            arguments: []
+        )
+        #endif
+        let result = try await _run(
+            setup,
+            input: .inputWriter,
+            output: .string(limit: 64),
+            error: .discarded
+        ) { execution in
+            _ = try await execution.standardInputWriter.write("hello\n")
+            // Intentionally don't call finish(); run() should do it.
+        }
+        #expect(result.terminationStatus.isSuccess)
+        let output = try #require(result.standardOutput)
+        #expect(output.contains("hello"))
     }
 }
 
@@ -2100,15 +2305,15 @@ extension SubprocessIntegrationTests {
             // This will intentionally hang
             setup,
             input: .none,
+            output: .discarded,
             error: .discarded
-        ) { subprocess, standardOutput in
+        ) { subprocess in
             // Make sure we can send signals to terminate the process
             #if os(Windows)
             try subprocess.terminate(withExitCode: 99)
             #else
             try subprocess.send(signal: .terminate)
             #endif
-            for try await _ in standardOutput {}
         }
 
         #if os(Windows)
@@ -2242,10 +2447,11 @@ extension SubprocessIntegrationTests {
         _ = try await _run(
             setup,
             input: .none,
+            output: .sequence,
             error: .discarded
-        ) { execution, standardOutput in
+        ) { execution in
             var index = 0
-            for try await line in standardOutput.strings(as: UTF8.self) {
+            for try await line in execution.standardOutput.strings(as: UTF8.self) {
                 defer { index += 1 }
                 try #require(index < testCases.count, "Received more lines than expected")
                 #expect(
@@ -2391,28 +2597,28 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        let result = try await _run(setup) { execution, standardInputWriter, standardOutput, standardError in
+        let result = try await _run(setup, input: .inputWriter, output: .sequence, error: .sequence) { execution in
             return try await withThrowingTaskGroup(of: OutputCaptureState?.self) { group in
                 group.addTask {
                     #if os(Windows)
-                    _ = try await standardInputWriter.write("echo off\n")
+                    _ = try await execution.standardInputWriter.write("echo off\n")
                     #endif
-                    _ = try await standardInputWriter.write("echo hello stdout\n")
-                    _ = try await standardInputWriter.write("echo >&2 hello stderr\n")
-                    _ = try await standardInputWriter.write("exit 0\n")
-                    try await standardInputWriter.finish()
+                    _ = try await execution.standardInputWriter.write("echo hello stdout\n")
+                    _ = try await execution.standardInputWriter.write("echo >&2 hello stderr\n")
+                    _ = try await execution.standardInputWriter.write("exit 0\n")
+                    try await execution.standardInputWriter.finish()
                     return nil
                 }
                 group.addTask {
                     var result = ""
-                    for try await line in standardOutput.strings() {
+                    for try await line in execution.standardOutput.strings() {
                         result += line
                     }
                     return .standardOutputCaptured(result.trimmingNewLineAndQuotes())
                 }
                 group.addTask {
                     var result = ""
-                    for try await line in standardError.strings() {
+                    for try await line in execution.standardError.strings() {
                         result += line
                     }
                     return .standardErrorCaptured(result.trimmingNewLineAndQuotes())
@@ -2438,11 +2644,11 @@ extension SubprocessIntegrationTests {
         #expect(result.terminationStatus.isSuccess)
         #if os(Windows)
         // cmd.exe interactive mode prints more info
-        #expect(result.value.output.contains("hello stdout"))
+        #expect(result.closureOutput.output.contains("hello stdout"))
         #else
-        #expect(result.value.output == "hello stdout")
+        #expect(result.closureOutput.output == "hello stdout")
         #endif
-        #expect(result.value.error == "hello stderr")
+        #expect(result.closureOutput.error == "hello stderr")
     }
 
     @Test func testSubprocessPipeChain() async throws {
@@ -2653,9 +2859,9 @@ extension SubprocessIntegrationTests {
             )
             #endif
 
-            _ = try await _run(setup) { execution, inputWriter, standardOutput, standardError in
+            _ = try await _run(setup, input: .none, output: .sequence, error: .discarded) { execution in
                 var output: [String] = []
-                for try await line in standardOutput.strings(separatedBy: .lineBreaks) {
+                for try await line in execution.standardOutput.strings(separatedBy: .lineBreaks) {
                     output.append(line)
                 }
 
@@ -2676,15 +2882,15 @@ extension SubprocessIntegrationTests {
             arguments: ["-c", "/bin/echo -n x; /bin/echo >&2 -n y"]
         )
         #endif
-        _ = try await _run(setup) { execution, inputWriter, standardOutput, standardError in
+        _ = try await _run(setup, input: .inputWriter, output: .sequence, error: .sequence) { execution in
             try await withThrowingTaskGroup { group in
                 group.addTask {
-                    try await inputWriter.finish()
+                    try await execution.standardInputWriter.finish()
                 }
 
                 group.addTask {
                     var result = ""
-                    for try await line in standardOutput.strings() {
+                    for try await line in execution.standardOutput.strings() {
                         result += line
                     }
                     #expect(result.trimmingCharacters(in: .whitespaces) == "x")
@@ -2692,7 +2898,7 @@ extension SubprocessIntegrationTests {
 
                 group.addTask {
                     var result = ""
-                    for try await line in standardError.strings() {
+                    for try await line in execution.standardError.strings() {
                         result += line
                     }
                     #expect(result.trimmingCharacters(in: .whitespaces) == "y")
@@ -2725,9 +2931,9 @@ extension SubprocessIntegrationTests {
             ]
         )
         #endif
-        _ = try await _run(setup) { execution, inputWriter, standardOutput, standardError in
+        _ = try await _run(setup, input: .none, output: .sequence, error: .discarded) { execution in
             var output: [String] = []
-            for try await line in standardOutput.strings(separatedBy: .unicodeScalarSequence(["\0"])) {
+            for try await line in execution.standardOutput.strings(separatedBy: .unicodeScalarSequence(["\0"])) {
                 output.append(line)
             }
 
@@ -2754,9 +2960,9 @@ extension SubprocessIntegrationTests {
             ]
         )
         #endif
-        _ = try await _run(setup) { execution, inputWriter, standardOutput, standardError in
+        _ = try await _run(setup, input: .none, output: .sequence, error: .discarded) { execution in
             var output: [String] = []
-            for try await line in standardOutput.strings(separatedBy: .unicodeScalarSequence(["?", ":"])) {
+            for try await line in execution.standardOutput.strings(separatedBy: .unicodeScalarSequence(["?", ":"])) {
                 output.append(line)
             }
 
@@ -2786,9 +2992,9 @@ extension SubprocessIntegrationTests {
             ]
         )
         #endif
-        _ = try await _run(setup) { execution, inputWriter, standardOutput, standardError in
+        _ = try await _run(setup, input: .none, output: .sequence, error: .discarded) { execution in
             var output: [String] = []
-            for try await line in standardOutput.strings(separatedBy: .unicodeScalarSequence(["\u{2022}"])) {
+            for try await line in execution.standardOutput.strings(separatedBy: .unicodeScalarSequence(["\u{2022}"])) {
                 output.append(line)
             }
 
@@ -2819,9 +3025,9 @@ extension SubprocessIntegrationTests {
             ]
         )
         #endif
-        _ = try await _run(setup) { execution, inputWriter, standardOutput, standardError in
+        _ = try await _run(setup, input: .none, output: .sequence, error: .discarded) { execution in
             var output: [String] = []
-            for try await line in standardOutput.strings(separatedBy: .unicodeScalarSequence(["|"])) {
+            for try await line in execution.standardOutput.strings(separatedBy: .unicodeScalarSequence(["|"])) {
                 output.append(line)
             }
 
@@ -2848,9 +3054,11 @@ extension SubprocessIntegrationTests {
             ]
         )
         #endif
-        _ = try await _run(setup) { execution, inputWriter, standardOutput, standardError in
+        _ = try await _run(setup, input: .none, output: .sequence, error: .discarded) { execution in
             var output: [String] = []
-            for try await line in standardOutput.strings(separatedBy: .unicodeScalarSequence(["|"])) {
+            for try await line in execution.standardOutput.strings(
+                separatedBy: .unicodeScalarSequence(["|"])
+            ) {
                 output.append(line)
             }
 
@@ -2897,9 +3105,9 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        _ = try await _run(setup) { execution, inputWriter, standardOutput, standardError in
+        _ = try await _run(setup, input: .none, output: .sequence, error: .sequence) { execution in
             var output: [String] = []
-            for try await line in standardOutput.strings() {
+            for try await line in execution.standardOutput.strings() {
                 output.append(line)
             }
             #expect(output == ["100°C", "32—x", "€5"])
@@ -2946,7 +3154,7 @@ func _run<
     input: Input,
     output: Output,
     error: Error
-) async throws -> ExecutionRecord<Output, Error> {
+) async throws -> ExecutionResult<Void, Output, Error> {
     return try await Subprocess.run(
         testSetup.executable,
         arguments: testSetup.arguments,
@@ -2968,7 +3176,7 @@ func _run<
     input: borrowing Span<InputElement>,
     output: Output,
     error: Error
-) async throws -> ExecutionRecord<Output, Error> {
+) async throws -> ExecutionResult<Void, Output, Error> {
     return try await Subprocess.run(
         testSetup.executable,
         arguments: testSetup.arguments,
@@ -2980,92 +3188,21 @@ func _run<
     )
 }
 
-func _run<
-    Result,
-    Input: InputProtocol,
-    Error: ErrorOutputProtocol
->(
+func _run<Result, Input: InputProtocol, Output: OutputProtocol, Error: ErrorOutputProtocol>(
     _ setup: TestSetup,
     input: Input,
-    error: Error,
-    body: ((Execution, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionOutcome<Result> where Error.OutputType == Void {
-    return try await Subprocess.run(
-        setup.executable,
-        arguments: setup.arguments,
-        environment: setup.environment,
-        workingDirectory: setup.workingDirectory,
-        input: input,
-        error: error,
-        body: body
-    )
-}
-
-func _run<
-    Result,
-    Input: InputProtocol
->(
-    _ setup: TestSetup,
-    input: Input,
-    preferredBufferSize: Int? = nil,
-    body: ((Execution, AsyncBufferSequence, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionOutcome<Result> {
-    return try await Subprocess.run(
-        setup.executable,
-        arguments: setup.arguments,
-        environment: setup.environment,
-        workingDirectory: setup.workingDirectory,
-        input: input,
-        preferredBufferSize: preferredBufferSize,
-        body: body
-    )
-}
-
-func _run<
-    Result,
-    Error: ErrorOutputProtocol
->(
-    _ setup: TestSetup,
-    error: Error,
-    body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionOutcome<Result> where Error.OutputType == Void {
-    return try await Subprocess.run(
-        setup.executable,
-        arguments: setup.arguments,
-        environment: setup.environment,
-        workingDirectory: setup.workingDirectory,
-        error: error,
-        body: body
-    )
-}
-
-func _run<
-    Result,
-    Output: OutputProtocol
->(
-    _ setup: TestSetup,
     output: Output,
-    body: ((Execution, StandardInputWriter, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionOutcome<Result> where Output.OutputType == Void {
+    error: Error,
+    body: ((Execution<Input, Output, Error>) async throws -> Result)
+) async throws -> ExecutionResult<Result, Output, Error> {
     return try await Subprocess.run(
         setup.executable,
         arguments: setup.arguments,
         environment: setup.environment,
         workingDirectory: setup.workingDirectory,
+        input: input,
         output: output,
-        body: body
-    )
-}
-
-func _run<Result>(
-    _ setup: TestSetup,
-    body: ((Execution, StandardInputWriter, AsyncBufferSequence, AsyncBufferSequence) async throws -> Result)
-) async throws -> ExecutionOutcome<Result> {
-    return try await Subprocess.run(
-        setup.executable,
-        arguments: setup.arguments,
-        environment: setup.environment,
-        workingDirectory: setup.workingDirectory,
+        error: error,
         body: body
     )
 }
