@@ -120,8 +120,10 @@ extension SubprocessUnixTests {
             "This test requires root privileges"
         ),
         .enabled(
-            if: (try? Executable.name("ps").resolveExecutablePath(in: .inherit)) != nil,
-            "This test requires ps (install procps package on Debian or RedHat Linux distros)"
+            "This test requires ps (install procps package on Debian or RedHat Linux distros)",
+            {
+                (try? await Executable.name("ps").resolveExecutablePath(in: .inherit)) != nil
+            }
         )
     )
     func testSubprocessPlatformOptionsProcessGroupID() async throws {
@@ -145,8 +147,10 @@ extension SubprocessUnixTests {
 
     @Test(
         .enabled(
-            if: (try? Executable.name("ps").resolveExecutablePath(in: .inherit)) != nil,
-            "This test requires ps (install procps package on Debian or RedHat Linux distros)"
+            "This test requires ps (install procps package on Debian or RedHat Linux distros)",
+            {
+                (try? await Executable.name("ps").resolveExecutablePath(in: .inherit)) != nil
+            }
         )
     )
     func testSubprocessPlatformOptionsCreateSession() async throws {

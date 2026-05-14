@@ -290,9 +290,11 @@ public struct Executable: Sendable, Hashable {
         return .init(_config: .path(filePath))
     }
     /// Resolves the full executable path using the given environment.
-    public func resolveExecutablePath(in environment: Environment) throws(SubprocessError) -> FilePath {
-        let path = try self.resolveExecutablePath(withPathValue: environment.pathValue())
-        return FilePath(path)
+    public func resolveExecutablePath(in environment: Environment) async throws(SubprocessError) -> FilePath {
+        try await runOnBackgroundThread { () throws(SubprocessError) -> FilePath in
+            let path = try self.resolveExecutablePath(withPathValue: environment.pathValue())
+            return FilePath(path)
+        }
     }
 }
 

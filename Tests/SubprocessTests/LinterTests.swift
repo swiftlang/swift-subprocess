@@ -18,14 +18,14 @@ import SystemPackage
 #endif
 @testable import Subprocess
 
-private func enableLintingTest() -> Bool {
+private func enableLintingTest() async -> Bool {
     guard CommandLine.arguments.first(where: { $0.contains("/.build/") }) != nil else {
         return false
     }
     #if os(macOS)
     // Use xcrun
     do {
-        _ = try Executable.path("/usr/bin/xcrun")
+        _ = try await Executable.path("/usr/bin/xcrun")
             .resolveExecutablePath(in: .inherit)
         return true
     } catch {
@@ -34,7 +34,7 @@ private func enableLintingTest() -> Bool {
     #else
     // Use swift-format directly
     do {
-        _ = try Executable.name("swift-format")
+        _ = try await Executable.name("swift-format")
             .resolveExecutablePath(in: .inherit)
         return true
     } catch {
