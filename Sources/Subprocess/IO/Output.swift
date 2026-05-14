@@ -125,7 +125,8 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
     public let maxSize: Int
 
     internal func captureOutput(
-        from diskIO: consuming IODescriptor
+        from diskIO: consuming IODescriptor,
+        executionContext: ExecutionContext? = nil
     ) async throws(SubprocessError) -> [UInt8] {
         var result: [UInt8] = []
         do {
@@ -153,12 +154,13 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
             }
         } catch {
             try diskIO.safelyClose()
-            throw error
+            throw error.withExecutionContext(executionContext)
         }
         try diskIO.safelyClose()
 
         if result.count > self.maxSize {
-            throw .outputLimitExceeded(limit: self.maxSize)
+            throw SubprocessError.outputLimitExceeded(limit: self.maxSize)
+                .withExecutionContext(executionContext)
         }
         return result
     }
@@ -322,7 +324,8 @@ extension OutputProtocol {
     /// Capture the output from the subprocess up to maxSize
     @_disfavoredOverload
     internal func captureOutput(
-        from diskIO: consuming IODescriptor?
+        from diskIO: consuming IODescriptor?,
+        executionContext: ExecutionContext? = nil
     ) async throws -> OutputType {
         if OutputType.self == Void.self {
             try diskIO?.safelyClose()
@@ -339,7 +342,10 @@ extension OutputProtocol {
         }
 
         if let bytesOutput = self as? BytesOutput {
-            return try await bytesOutput.captureOutput(from: diskIO) as! Self.OutputType
+            return try await bytesOutput.captureOutput(
+                from: diskIO,
+                executionContext: executionContext
+            ) as! Self.OutputType
         }
 
         var result: [UInt8] = []
@@ -367,12 +373,13 @@ extension OutputProtocol {
             }
         } catch {
             try diskIO.safelyClose()
-            throw error
+            throw error.withExecutionContext(executionContext)
         }
 
         try diskIO.safelyClose()
         if result.count > self.maxSize {
             throw SubprocessError.outputLimitExceeded(limit: self.maxSize)
+                .withExecutionContext(executionContext)
         }
 
         return try self.output(from: result)
@@ -380,7 +387,10 @@ extension OutputProtocol {
 }
 
 extension OutputProtocol where OutputType == Void {
-    internal func captureOutput(from fileDescriptor: consuming IODescriptor?) async throws {}
+    internal func captureOutput(
+        from fileDescriptor: consuming IODescriptor?,
+        executionContext: ExecutionContext? = nil
+    ) async throws {}
 
     /// Converts the output from a raw span to the expected output type.
     public func output(from span: RawSpan) throws {

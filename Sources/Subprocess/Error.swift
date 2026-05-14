@@ -44,6 +44,12 @@ public struct SubprocessError: Swift.Error, Sendable, Hashable {
     public let code: SubprocessError.Code
     /// The underlying error that caused this error.
     public let underlyingError: UnderlyingError?
+    /// A snapshot of the configured inputs (executable, arguments, environment,
+    /// working directory) at the time this error was thrown.
+    ///
+    /// This is populated for every error that propagates out of a `run()` call.
+    /// This may be `nil` for errors observed from outside of a `run()` call.
+    public let executionContext: ExecutionContext?
 
     /// Context associated with this error for better error message
     private let context: [Code: Context]
@@ -243,6 +249,7 @@ extension SubprocessError {
         return SubprocessError(
             code: .executableNotFound,
             underlyingError: underlyingError,
+            executionContext: nil,
             context: [.executableNotFound: .string(executable)]
         )
     }
@@ -251,6 +258,7 @@ extension SubprocessError {
         return SubprocessError(
             code: .failedToMonitorProcess,
             underlyingError: underlyingError,
+            executionContext: nil,
             context: [:]
         )
     }
@@ -259,6 +267,7 @@ extension SubprocessError {
         return SubprocessError(
             code: .processControlFailed,
             underlyingError: underlyingError,
+            executionContext: nil,
             context: [.processControlFailed: .processControlOperation(operation)]
         )
     }
@@ -267,6 +276,7 @@ extension SubprocessError {
         return SubprocessError(
             code: .spawnFailed,
             underlyingError: nil,
+            executionContext: nil,
             context: [:]
         )
     }
@@ -282,6 +292,7 @@ extension SubprocessError {
         return SubprocessError(
             code: .spawnFailed,
             underlyingError: underlyingError,
+            executionContext: nil,
             context: context
         )
     }
@@ -290,6 +301,7 @@ extension SubprocessError {
         return SubprocessError(
             code: .outputLimitExceeded,
             underlyingError: nil,
+            executionContext: nil,
             context: [
                 .outputLimitExceeded: .int(limit)
             ]
@@ -303,6 +315,7 @@ extension SubprocessError {
         return SubprocessError(
             code: .asyncIOFailed,
             underlyingError: underlyingError,
+            executionContext: nil,
             context: [.asyncIOFailed: .string(reason)]
         )
     }
@@ -313,6 +326,7 @@ extension SubprocessError {
         return SubprocessError(
             code: .failedToReadFromSubprocess,
             underlyingError: underlyingError,
+            executionContext: nil,
             context: [:]
         )
     }
@@ -323,6 +337,7 @@ extension SubprocessError {
         return SubprocessError(
             code: .failedToWriteToSubprocess,
             underlyingError: underlyingError,
+            executionContext: nil,
             context: [:]
         )
     }
@@ -338,7 +353,32 @@ extension SubprocessError {
         return SubprocessError(
             code: .failedToChangeWorkingDirectory,
             underlyingError: underlyingError,
+            executionContext: nil,
             context: context
+        )
+    }
+}
+
+// MARK: - withExecutionContext
+extension SubprocessError {
+    /// Returns a copy of this error with the given context attached, unless
+    /// this error already carries an `executionContext` or the given context
+    /// is `nil`.
+    ///
+    /// This guarantee allows attachment to happen safely at multiple layers.
+    /// The inner I/O layers attach context first (with the most specific
+    /// information they have), and the outer wrap in
+    /// `Configuration.run(input:output:error:_:)` is a no-op for
+    /// already-enriched errors.
+    internal func withExecutionContext(_ executionContext: ExecutionContext?) -> Self {
+        guard let executionContext, self.executionContext == nil else {
+            return self
+        }
+        return SubprocessError(
+            code: self.code,
+            underlyingError: self.underlyingError,
+            executionContext: executionContext,
+            context: self.context
         )
     }
 }

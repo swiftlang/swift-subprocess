@@ -238,9 +238,11 @@ extension InputProtocol {
 public final actor StandardInputWriter: Sendable {
 
     internal var diskIO: IODescriptor
+    internal let executionContext: ExecutionContext?
 
-    init(diskIO: consuming IODescriptor) {
+    init(diskIO: consuming IODescriptor, executionContext: ExecutionContext?) {
         self.diskIO = diskIO
+        self.executionContext = executionContext
     }
 
     /// Writes an array of bytes to the subprocess's standard input.
@@ -251,7 +253,11 @@ public final actor StandardInputWriter: Sendable {
     public func write(
         _ array: [UInt8]
     ) async throws(SubprocessError) -> Int {
-        return try await AsyncIO.shared.write(array, to: self.diskIO)
+        do {
+            return try await AsyncIO.shared.write(array, to: self.diskIO)
+        } catch {
+            throw error.withExecutionContext(self.executionContext)
+        }
     }
 
     /// Writes a raw span to the subprocess's standard input.
@@ -261,7 +267,11 @@ public final actor StandardInputWriter: Sendable {
     ///     See ``underlyingError`` for more details.
     /// - Returns: The number of bytes written.
     public func write(_ span: borrowing RawSpan) async throws(SubprocessError) -> Int {
-        return try await AsyncIO.shared.write(span, to: self.diskIO)
+        do {
+            return try await AsyncIO.shared.write(span, to: self.diskIO)
+        } catch {
+            throw error.withExecutionContext(self.executionContext)
+        }
     }
 
     /// Writes a string to the subprocess's standard input.
@@ -285,7 +295,11 @@ public final actor StandardInputWriter: Sendable {
     /// - Throws: `SubprocessError` with error code `.asyncIOFailed`.
     ///     See ``underlyingError`` for more details.
     public func finish() async throws(SubprocessError) {
-        try self.diskIO.safelyClose()
+        do {
+            try self.diskIO.safelyClose()
+        } catch {
+            throw error.withExecutionContext(self.executionContext)
+        }
     }
 }
 

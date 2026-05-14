@@ -74,18 +74,18 @@ extension SubprocessIntegrationTests {
 
     @Test func testExecutableNamedCannotResolve() async throws {
         #if os(Windows)
-        let underlying = SubprocessError.WindowsError(rawValue: DWORD(ERROR_FILE_NOT_FOUND))
+        let expectedUnderlying = SubprocessError.WindowsError(rawValue: DWORD(ERROR_FILE_NOT_FOUND))
         #else
-        let underlying = Errno(rawValue: ENOENT)
+        let expectedUnderlying = Errno(rawValue: ENOENT)
         #endif
 
-        let expectedError: SubprocessError = .executableNotFound(
-            "do-not-exist", underlyingError: underlying
-        )
-
-        await #expect(throws: expectedError) {
+        let error = try await #require(throws: SubprocessError.self) {
             _ = try await Subprocess.run(.name("do-not-exist"), output: .discarded)
         }
+
+        #expect(error.code == .executableNotFound)
+        #expect(error.underlyingError == expectedUnderlying)
+        #expect(error.description.contains("do-not-exist"))
     }
 
     @Test func testExecutableAtPath() async throws {
@@ -120,21 +120,21 @@ extension SubprocessIntegrationTests {
     @Test func testExecutableAtPathCannotResolve() async throws {
         #if os(Windows)
         let fakePath = FilePath("D:\\does\\not\\exist")
-        let underlying = SubprocessError.WindowsError(
+        let expectedUnderlying = SubprocessError.WindowsError(
             rawValue: DWORD(ERROR_FILE_NOT_FOUND)
         )
         #else
         let fakePath = FilePath("/usr/bin/do-not-exist")
-        let underlying = Errno(rawValue: ENOENT)
+        let expectedUnderlying = Errno(rawValue: ENOENT)
         #endif
 
-        let expectedError: SubprocessError = .executableNotFound(
-            fakePath.string, underlyingError: underlying
-        )
-
-        await #expect(throws: expectedError) {
+        let error = try await #require(throws: SubprocessError.self) {
             _ = try await Subprocess.run(.path(fakePath), output: .discarded)
         }
+
+        #expect(error.code == .executableNotFound)
+        #expect(error.underlyingError == expectedUnderlying)
+        #expect(error.description.contains(fakePath.string))
     }
 
     #if !os(Windows)
@@ -727,10 +727,7 @@ extension SubprocessIntegrationTests {
             arguments: ["/c", "cd"],
             workingDirectory: invalidPath
         )
-        let underlying = SubprocessError.WindowsError(rawValue: DWORD(ERROR_DIRECTORY))
-        let expectedError: SubprocessError = .failedToChangeWorkingDirectory(
-            #"X:\Does\Not\Exist"#, underlyingError: underlying
-        )
+        let expectedUnderlying = SubprocessError.WindowsError(rawValue: DWORD(ERROR_DIRECTORY))
         #else
         let invalidPath: FilePath = FilePath("/does/not/exist")
         let setup = TestSetup(
@@ -738,15 +735,16 @@ extension SubprocessIntegrationTests {
             arguments: [],
             workingDirectory: invalidPath
         )
-        let underlying = Errno(rawValue: ENOENT)
-        let expectedError: SubprocessError = .failedToChangeWorkingDirectory(
-            "/does/not/exist", underlyingError: underlying
-        )
+        let expectedUnderlying = Errno(rawValue: ENOENT)
         #endif
 
-        await #expect(throws: expectedError) {
+        let error = try await #require(throws: SubprocessError.self) {
             _ = try await _run(setup, input: .none, output: .string(limit: .max), error: .discarded)
         }
+
+        #expect(error.code == .failedToChangeWorkingDirectory)
+        #expect(error.underlyingError == expectedUnderlying)
+        #expect(error.description.contains(invalidPath.string))
     }
 }
 
@@ -1139,7 +1137,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
+        let error = try await #require(throws: SubprocessError.self) {
             _ = try await _run(
                 setup,
                 input: .none,
@@ -1147,6 +1145,9 @@ extension SubprocessIntegrationTests {
                 error: .discarded
             )
         }
+
+        #expect(error.code == .outputLimitExceeded)
+        #expect(error.description == "Child process output exceeded the limit of 16 bytes.")
     }
 
     #if SubprocessFoundation
@@ -1198,7 +1199,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
+        let error = try await #require(throws: SubprocessError.self) {
             _ = try await _run(
                 setup,
                 input: .none,
@@ -1206,6 +1207,9 @@ extension SubprocessIntegrationTests {
                 error: .discarded
             )
         }
+
+        #expect(error.code == .outputLimitExceeded)
+        #expect(error.description == "Child process output exceeded the limit of 16 bytes.")
     }
 
     @Test func testFileDescriptorOutput() async throws {
@@ -1343,7 +1347,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
+        let error = try await #require(throws: SubprocessError.self) {
             _ = try await _run(
                 setup,
                 input: .none,
@@ -1351,6 +1355,9 @@ extension SubprocessIntegrationTests {
                 error: .discarded
             )
         }
+
+        #expect(error.code == .outputLimitExceeded)
+        #expect(error.description == "Child process output exceeded the limit of 16 bytes.")
     }
     #endif
 
@@ -1409,7 +1416,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
+        let error = try await #require(throws: SubprocessError.self) {
             _ = try await _run(
                 setup,
                 input: .none,
@@ -1417,6 +1424,9 @@ extension SubprocessIntegrationTests {
                 error: .string(limit: 16)
             )
         }
+
+        #expect(error.code == .outputLimitExceeded)
+        #expect(error.description == "Child process output exceeded the limit of 16 bytes.")
     }
 
     #if SubprocessFoundation
@@ -1467,7 +1477,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
+        let error = try await #require(throws: SubprocessError.self) {
             _ = try await _run(
                 setup,
                 input: .none,
@@ -1475,6 +1485,9 @@ extension SubprocessIntegrationTests {
                 error: .bytes(limit: 16)
             )
         }
+
+        #expect(error.code == .outputLimitExceeded)
+        #expect(error.description == "Child process output exceeded the limit of 16 bytes.")
     }
 
     @Test func testFileDescriptorErrorOutput() async throws {
@@ -1659,7 +1672,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
+        let error = try await #require(throws: SubprocessError.self) {
             _ = try await _run(
                 setup,
                 input: .none,
@@ -1667,6 +1680,9 @@ extension SubprocessIntegrationTests {
                 error: .data(limit: 16)
             )
         }
+
+        #expect(error.code == .outputLimitExceeded)
+        #expect(error.description == "Child process output exceeded the limit of 16 bytes.")
     }
     #endif
 
@@ -2079,6 +2095,152 @@ extension SubprocessIntegrationTests {
                 try await group.waitForAll()
             }
         }
+    }
+}
+
+// MARK: - ExecutionContext Tests
+extension SubprocessIntegrationTests {
+    @Test func testExecutionContextAttachedOnExecutableNotFound() async throws {
+        let setup = TestSetup(
+            executable: .name("do-not-exist"),
+            arguments: ["arg1", "arg2"],
+            environment: .custom(["TEST_KEY": "test_value"]),
+            workingDirectory: FilePath(
+                FileManager.default.temporaryDirectory._fileSystemPath
+            )
+        )
+
+        let error = try await #require(throws: SubprocessError.self) {
+            _ = try await _run(
+                setup,
+                input: .none,
+                output: .discarded,
+                error: .discarded
+            )
+        }
+
+        #expect(error.code == .executableNotFound)
+
+        let context = try #require(error.executionContext)
+        #expect(context.executable == setup.executable)
+        #expect(context.arguments == setup.arguments)
+        #expect(context.environment == setup.environment)
+        #expect(context.workingDirectory == setup.workingDirectory)
+    }
+
+    @Test func testExecutionContextAttachedOnInvalidWorkingDirectory() async throws {
+        #if os(Windows)
+        let invalidPath: FilePath = FilePath(#"X:\Does\Not\Exist"#)
+        let setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: ["/c", "cd"],
+            workingDirectory: invalidPath
+        )
+        #else
+        let invalidPath: FilePath = FilePath("/does/not/exist")
+        let setup = TestSetup(
+            executable: .path("/bin/pwd"),
+            arguments: [],
+            workingDirectory: invalidPath
+        )
+        #endif
+
+        let error = try await #require(throws: SubprocessError.self) {
+            _ = try await _run(
+                setup,
+                input: .none,
+                output: .discarded,
+                error: .discarded
+            )
+        }
+
+        #expect(error.code == .failedToChangeWorkingDirectory)
+
+        let context = try #require(error.executionContext)
+        #expect(context.executable == setup.executable)
+        #expect(context.arguments == setup.arguments)
+        #expect(context.environment == setup.environment)
+        #expect(context.workingDirectory == setup.workingDirectory)
+    }
+
+    @Test func testExecutionContextAttachedOnOutputLimitExceeded() async throws {
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: [
+                "/c",
+                "findstr x*",
+                theMysteriousIsland.string,
+            ]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/cat"),
+            arguments: [theMysteriousIsland.string]
+        )
+        #endif
+
+        let error = try await #require(throws: SubprocessError.self) {
+            _ = try await _run(
+                setup,
+                input: .none,
+                output: .string(limit: 16),
+                error: .discarded
+            )
+        }
+
+        #expect(error.code == .outputLimitExceeded)
+
+        let context = try #require(error.executionContext)
+        #expect(context.executable == setup.executable)
+        #expect(context.arguments == setup.arguments)
+        #expect(context.environment == setup.environment)
+        #expect(context.workingDirectory == setup.workingDirectory)
+    }
+
+    @Test func testExecutionContextAttachedOnAsyncBufferSequenceLineLimitExceeded() async throws {
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("powershell.exe"),
+            arguments: [
+                "-NoProfile",
+                "-Command",
+                """
+                $b = [byte[]]::new(1000)
+                for ($i = 0; $i -lt 1000; $i++) { $b[$i] = 0x78 }
+                [Console]::OpenStandardOutput().Write($b, 0, $b.Length)
+                """,
+            ]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "yes x | tr -d '\\n' | head -c 1000"]
+        )
+        #endif
+
+        let error = try await #require(throws: SubprocessError.self) {
+            _ = try await _run(
+                setup,
+                input: .none,
+                error: .discarded
+            ) { execution, standardOutput in
+                for try await _ in standardOutput.strings(
+                    separatedBy: .lineBreaks,
+                    bufferingPolicy: .maxLineLength(64)
+                ) {
+                    // Drain until the iterator throws.
+                }
+            }
+        }
+
+        #expect(error.code == .outputLimitExceeded)
+
+        let context = try #require(error.executionContext)
+        #expect(context.executable == setup.executable)
+        #expect(context.arguments == setup.arguments)
+        #expect(context.environment == setup.environment)
+        #expect(context.workingDirectory == setup.workingDirectory)
     }
 }
 
