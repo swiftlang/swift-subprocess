@@ -121,10 +121,9 @@ extension SubprocessProcessMonitoringTests {
     @Test func testNormalExit() async throws {
         let config = self.immediateExitProcess(withExitCode: 0)
         try await withSpawnedExecution(config: config) { execution in
-            let monitorResult = try await monitorProcessTermination(
+            let (monitorResult, _) = try await monitorProcessTermination(
                 for: execution.processIdentifier
             )
-
             #expect(monitorResult.isSuccess)
         }
     }
@@ -132,10 +131,9 @@ extension SubprocessProcessMonitoringTests {
     @Test func testExitCode() async throws {
         let config = self.immediateExitProcess(withExitCode: 42)
         try await withSpawnedExecution(config: config) { execution in
-            let monitorResult = try await monitorProcessTermination(
+            let (monitorResult, _) = try await monitorProcessTermination(
                 for: execution.processIdentifier
             )
-
             #expect(monitorResult == .exited(42))
         }
     }
@@ -150,7 +148,7 @@ extension SubprocessProcessMonitoringTests {
             // Send signal to process
             try execution.send(signal: .terminate)
 
-            let result = try await monitorProcessTermination(
+            let (result, _) = try await monitorProcessTermination(
                 for: execution.processIdentifier
             )
             #expect(result == .signaled(SIGTERM))
@@ -180,7 +178,7 @@ extension SubprocessProcessMonitoringTests {
             )
             #endif
             // Now make sure monitorProcessTermination() can still get the correct result
-            let monitorResult = try await monitorProcessTermination(
+            let (monitorResult, _) = try await monitorProcessTermination(
                 for: execution.processIdentifier
             )
             #expect(monitorResult == TerminationStatus.exited(0))
@@ -190,10 +188,9 @@ extension SubprocessProcessMonitoringTests {
     @Test func testCanMonitorLongRunningProcess() async throws {
         let config = self.longRunningProcess(withTimeOutSeconds: 1)
         try await withSpawnedExecution(config: config) { execution in
-            let monitorResult = try await monitorProcessTermination(
+            let (monitorResult, _) = try await monitorProcessTermination(
                 for: execution.processIdentifier
             )
-
             #expect(monitorResult.isSuccess)
         }
     }
@@ -228,7 +225,7 @@ extension SubprocessProcessMonitoringTests {
         try await withSpawnedExecution(config: child1) { child1Execution in
             try await withSpawnedExecution(config: child2) { child2Execution in
                 // Monitor child2, but make sure we don't reap child1's status
-                let status = try await monitorProcessTermination(
+                let (status, _) = try await monitorProcessTermination(
                     for: child2Execution.processIdentifier
                 )
                 #expect(status.isSuccess)
@@ -276,7 +273,7 @@ extension SubprocessProcessMonitoringTests {
                     )
 
                     try await withSpawnedExecution(config: config) { execution in
-                        let monitorResult = try await monitorProcessTermination(
+                        let (monitorResult, _) = try await monitorProcessTermination(
                             for: execution.processIdentifier
                         )
                         #expect(monitorResult.isSuccess)
@@ -313,7 +310,7 @@ extension SubprocessProcessMonitoringTests {
         try await withThrowingTaskGroup { group in
             for pid in spawnedProcesses {
                 group.addTask {
-                    let status = try await monitorProcessTermination(for: pid)
+                    let (status, _) = try await monitorProcessTermination(for: pid)
                     #expect(status.isSuccess)
                 }
             }

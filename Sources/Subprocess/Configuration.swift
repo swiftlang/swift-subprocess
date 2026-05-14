@@ -127,12 +127,13 @@ public struct Configuration: Sendable {
             // even if `body` throws, and we are not leaving zombie processes in the
             // process table which will cause the process termination monitoring thread
             // to effectively hang due to the pid never being awaited
-            let terminationStatus = try await monitorProcessTermination(
+            let (terminationStatus, resourceUsage) = try await monitorProcessTermination(
                 for: execution.processIdentifier
             )
 
             return ExecutionOutcome(
                 terminationStatus: terminationStatus,
+                resourceUsage: resourceUsage,
                 value: try result.get()
             )
         } onCleanup: {

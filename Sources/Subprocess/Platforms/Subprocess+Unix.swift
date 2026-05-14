@@ -691,37 +691,63 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
 extension ProcessIdentifier {
     /// Reaps the zombie for the exited process. This function may block.
     @available(*, noasync)
-    internal func blockingReap() throws(Errno) -> TerminationStatus {
+    internal func blockingReap() throws(Errno) -> (TerminationStatus, ResourceUsage) {
         try _blockingReap(pid: value)
     }
 
     /// Reaps the zombie for the exited process, or returns `nil` if the process is still running. This function will not block.
-    internal func reap() throws(Errno) -> TerminationStatus? {
+    internal func reap() throws(Errno) -> (TerminationStatus, ResourceUsage)? {
         try _reap(pid: value)
     }
 }
 
 @available(*, noasync)
-internal func _blockingReap(pid: pid_t) throws(Errno) -> TerminationStatus {
-    let siginfo = try _waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED)
-    return TerminationStatus(siginfo)
-}
-
-internal func _reap(pid: pid_t) throws(Errno) -> TerminationStatus? {
-    let siginfo = try _waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED | WNOHANG)
-    // If si_pid and si_signo are both 0, the child is still running since we used WNOHANG
-    if siginfo.si_pid == 0 && siginfo.si_signo == 0 {
-        return nil
-    }
-    return TerminationStatus(siginfo)
-}
-
-internal func _waitid(idtype: idtype_t, id: id_t, flags: Int32) throws(Errno) -> siginfo_t {
+internal func _blockingReap(pid: pid_t) throws(Errno) -> (TerminationStatus, ResourceUsage) {
     while true {
+        var usage = rusage()
+        #if os(macOS) || os(FreeBSD) || os(OpenBSD)
+        var status: CInt = 0
+        let rc = wait4(pid, &status, 0, &usage)
+        #elseif os(Linux) || os(Android)
         var siginfo = siginfo_t()
-        if waitid(idtype, id, &siginfo, flags) != -1 {
-            return siginfo
+        let rc = linux_waitid(P_PID, id_t(pid), &siginfo, WEXITED, &usage)
+        #endif
+        if rc >= 0 {
+            #if os(macOS) || os(FreeBSD) || os(OpenBSD)
+            return (TerminationStatus(waitStatus: status), ResourceUsage(usage))
+            #elseif os(Linux) || os(Android)
+            return (TerminationStatus(siginfo), ResourceUsage(usage))
+            #endif
         } else if errno != EINTR {
+            throw Errno(rawValue: errno)
+        }
+    }
+}
+
+internal func _reap(pid: pid_t) throws(Errno) -> (TerminationStatus, ResourceUsage)? {
+    while true {
+        var usage = rusage()
+        #if os(macOS) || os(FreeBSD) || os(OpenBSD)
+        var status: CInt = 0
+        let rc = wait4(pid, &status, WNOHANG, &usage)
+        if rc > 0 {
+            return (TerminationStatus(waitStatus: status), ResourceUsage(usage))
+        } else if rc == 0 {
+            return nil // Child still running
+        }
+        #elseif os(Linux) || os(Android)
+        var siginfo = siginfo_t()
+        let rc = linux_waitid(P_PID, id_t(pid), &siginfo, WEXITED | WNOHANG, &usage)
+        if rc != -1 {
+            // If si_pid and si_signo are both 0, the child is still running since we used WNOHANG
+            if siginfo.si_pid == 0 && siginfo.si_signo == 0 {
+                return nil
+            }
+            return (TerminationStatus(siginfo), ResourceUsage(usage))
+        }
+        #endif
+        // rc == -1: either EINTR (retry) or a real error
+        if errno != EINTR {
             throw Errno(rawValue: errno)
         }
     }
@@ -739,6 +765,20 @@ internal extension TerminationStatus {
         }
     }
 }
+
+#if os(macOS) || os(FreeBSD) || os(OpenBSD)
+internal extension TerminationStatus {
+    init(waitStatus: CInt) {
+        if _was_process_exited(waitStatus) != 0 {
+            self = .exited(CInt(_get_exit_code(waitStatus)))
+        } else if _was_process_signaled(waitStatus) != 0 {
+            self = .signaled(CInt(_get_signal_code(waitStatus)))
+        } else {
+            fatalError("Unexpected wait status: \(waitStatus)")
+        }
+    }
+}
+#endif
 
 #if os(OpenBSD) || os(Linux) || os(Android)
 internal extension siginfo_t {

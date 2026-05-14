@@ -70,10 +70,10 @@ extension Int32 {
 @Sendable
 internal func monitorProcessTermination(
     for processIdentifier: ProcessIdentifier
-) async throws(SubprocessError) -> TerminationStatus {
+) async throws(SubprocessError) -> (TerminationStatus, ResourceUsage) {
     return try await _castError {
         return try await withCheckedThrowingContinuation { continuation in
-            let status = _processMonitorState.withLock { state -> Result<TerminationStatus, SubprocessError>? in
+            let status = _processMonitorState.withLock { state -> Result<(TerminationStatus, ResourceUsage), SubprocessError>? in
                 switch state {
                 case .notStarted:
                     let error: SubprocessError = .failedToMonitor(withUnderlyingError: nil)
@@ -114,9 +114,9 @@ internal func monitorProcessTermination(
                         // Since Linux coalesce signals, it's possible by the time we request
                         // monitoring the process has already exited. Check to make sure that
                         // is not the case and only save continuation then.
-                        switch Result(catching: { () throws(Errno) -> TerminationStatus? in try processIdentifier.reap() }) {
-                        case let .success(status?):
-                            return .success(status)
+                        switch Result(catching: { () throws(Errno) -> (TerminationStatus, ResourceUsage)? in try processIdentifier.reap() }) {
+                        case let .success(result?):
+                            return .success(result)
                         case .success(nil):
                             // Save this continuation to be called by signal handler
                             var newState = storage
@@ -149,7 +149,7 @@ private enum ProcessMonitorState {
         let epollFileDescriptor: CInt
         let shutdownFileDescriptor: CInt
         let monitorThread: pthread_t
-        var continuations: [PlatformFileDescriptor: CheckedContinuation<TerminationStatus, any Error>]
+        var continuations: [PlatformFileDescriptor: CheckedContinuation<(TerminationStatus, ResourceUsage), any Error>]
     }
 
     case notStarted
@@ -240,8 +240,8 @@ private func monitorThreadFunc(context: MonitorThreadContext) {
             let error: SubprocessError = .failedToMonitor(
                 withUnderlyingError: Errno(rawValue: pwaitErrno)
             )
-            let continuations = _processMonitorState.withLock { state -> [CheckedContinuation<TerminationStatus, any Error>] in
-                let result: [CheckedContinuation<TerminationStatus, any Error>]
+            let continuations = _processMonitorState.withLock { state -> [CheckedContinuation<(TerminationStatus, ResourceUsage), any Error>] in
+                let result: [CheckedContinuation<(TerminationStatus, ResourceUsage), any Error>]
                 if case .started(let storage) = state {
                     result = Array(storage.continuations.values)
                 } else {
@@ -408,8 +408,17 @@ internal func _setupMonitorSignalHandler() {
 }
 
 private func _blockAndWaitForProcessDescriptor(_ pidfd: CInt, context: MonitorThreadContext) {
-    var terminationStatus = Result(catching: { () throws(Errno) in
-        try TerminationStatus(_waitid(idtype: idtype_t(UInt32(P_PIDFD)), id: id_t(pidfd), flags: WEXITED))
+    var terminationResult = Result(catching: { () throws(Errno) -> (TerminationStatus, ResourceUsage) in
+        while true {
+            var siginfo = siginfo_t()
+            var usage = rusage()
+            let rc = linux_waitid(idtype_t(UInt32(P_PIDFD)), id_t(pidfd), &siginfo, WEXITED, &usage)
+            if rc != -1 {
+                return (TerminationStatus(siginfo), ResourceUsage(usage))
+            } else if errno != EINTR {
+                throw Errno(rawValue: errno)
+            }
+        }
     }).mapError { underlyingError in
         return SubprocessError.failedToMonitor(withUnderlyingError: underlyingError)
     }
@@ -423,14 +432,14 @@ private func _blockAndWaitForProcessDescriptor(_ pidfd: CInt, context: MonitorTh
     )
     if rc != 0 {
         let epollErrno = errno
-        terminationStatus = .failure(
+        terminationResult = .failure(
             SubprocessError.failedToMonitor(
                 withUnderlyingError: Errno(rawValue: epollErrno)
             )
         )
     }
     // Notify the continuation
-    let continuation = _processMonitorState.withLock { state -> CheckedContinuation<TerminationStatus, any Error>? in
+    let continuation = _processMonitorState.withLock { state -> CheckedContinuation<(TerminationStatus, ResourceUsage), any Error>? in
         guard case .started(let storage) = state,
             let continuation = storage.continuations[pidfd]
         else {
@@ -442,13 +451,13 @@ private func _blockAndWaitForProcessDescriptor(_ pidfd: CInt, context: MonitorTh
         state = .started(newStorage)
         return continuation
     }
-    continuation?.resume(with: terminationStatus)
+    continuation?.resume(with: terminationResult)
 }
 
 // On older kernels, fall back to using signal handlers
 private typealias ResultContinuation = (
-    result: Result<TerminationStatus, SubprocessError>,
-    continuation: CheckedContinuation<TerminationStatus, any Error>
+    result: Result<(TerminationStatus, ResourceUsage), SubprocessError>,
+    continuation: CheckedContinuation<(TerminationStatus, ResourceUsage), any Error>
 )
 private func _reapAllKnownChildProcesses(_ signalFd: CInt, context: MonitorThreadContext) {
     guard signalFd == _signalPipe.readEnd else {
@@ -472,19 +481,19 @@ private func _reapAllKnownChildProcesses(_ signalFd: CInt, context: MonitorThrea
         // Since Linux coalesce signals, we need to loop through all known child process
         // to check if they exited.
         loop: for (knownChildPID, continuation) in storage.continuations {
-            let terminationStatus: Result<TerminationStatus, SubprocessError>
-            switch Result(catching: { () throws(Errno) -> TerminationStatus? in try _reap(pid: knownChildPID) }) {
-            case let .success(status?):
-                terminationStatus = .success(status)
+            let terminationResult: Result<(TerminationStatus, ResourceUsage), SubprocessError>
+            switch Result(catching: { () throws(Errno) -> (TerminationStatus, ResourceUsage)? in try _reap(pid: knownChildPID) }) {
+            case let .success(result?):
+                terminationResult = .success(result)
             case .success(nil):
                 // Move on to the next child
                 continue loop
             case let .failure(error):
-                terminationStatus = .failure(
+                terminationResult = .failure(
                     SubprocessError.failedToMonitor(withUnderlyingError: error)
                 )
             }
-            results.append((result: terminationStatus, continuation: continuation))
+            results.append((result: terminationResult, continuation: continuation))
             // Now we have the exit code, remove saved continuations
             updatedContinuations.removeValue(forKey: knownChildPID)
         }
