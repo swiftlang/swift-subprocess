@@ -12,7 +12,6 @@
 #if canImport(Darwin)
 
 public import Darwin
-internal import Dispatch
 #if canImport(System)
 import System
 #else

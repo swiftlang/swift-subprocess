@@ -25,8 +25,6 @@ import Android
 import Musl
 #endif
 
-internal import Dispatch
-
 import Synchronization
 import _SubprocessCShims
 

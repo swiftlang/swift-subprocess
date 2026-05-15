@@ -28,7 +28,6 @@ import WinSDK
 #endif
 
 import Testing
-import Dispatch
 import Foundation
 import TestResources
 import _SubprocessCShims
@@ -283,7 +282,7 @@ extension SubprocessAsyncIOTests {
 
             try await group.waitForAll()
             // Keep both pipe endpoints alive until both tasks complete,
-            // preventing the DispatchIO cleanup handler from closing
+            // preventing the cleanup handler from closing
             // a pipe fd while the other task is still using it.
             withExtendedLifetime((readTestBed, writeTestBed)) {}
             // Teardown

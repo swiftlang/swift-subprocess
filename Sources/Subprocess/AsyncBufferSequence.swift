@@ -16,7 +16,6 @@ import SystemPackage
 #endif
 
 #if !os(Windows)
-internal import Dispatch
 
 #if SubprocessFoundation
 

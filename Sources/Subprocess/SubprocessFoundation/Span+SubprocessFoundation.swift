@@ -19,8 +19,6 @@ import Foundation
 import FoundationEssentials
 #endif // canImport(Darwin)
 
-internal import Dispatch
-
 extension Data {
     init(_ s: borrowing RawSpan) {
         self = s.withUnsafeBytes { Data($0) }

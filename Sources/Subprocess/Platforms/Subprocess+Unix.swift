@@ -29,8 +29,6 @@ public import Glibc
 public import Musl
 #endif
 
-@preconcurrency internal import Dispatch
-
 // MARK: - Signals
 
 /// Signals are standardized messages sent to a running program to

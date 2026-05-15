@@ -26,7 +26,6 @@ import Testing
 
 import TestResources
 
-import Dispatch
 #if canImport(System)
 import System
 #else

@@ -28,7 +28,6 @@ import WinSDK
 #endif
 
 import Testing
-import Dispatch
 import Foundation
 import TestResources
 import _SubprocessCShims
@@ -951,7 +950,7 @@ extension SubprocessIntegrationTests {
             contentsOf: URL(filePath: theMysteriousIsland.string)
         )
         let stream: AsyncStream<Data> = AsyncStream { continuation in
-            DispatchQueue.global().async {
+            Task<Void, Never>.detached {
                 var currentStart = 0
                 while currentStart + chunkSize < expected.count {
                     continuation.yield(expected[currentStart..<currentStart + chunkSize])
