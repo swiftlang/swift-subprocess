@@ -31,6 +31,14 @@ internal import FoundationEssentials
 #endif
 #endif
 
+#if canImport(Synchronization)
+import Synchronization
+#endif
+
+#if canImport(os)
+import os
+#endif
+
 /// An asynchronous sequence of buffers that streams output from a subprocess.
 public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
     /// The failure type for the asynchronous sequence.
@@ -90,13 +98,18 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
     }
 
     private let diskIO: DiskIO
+    private let state: State
 
     internal init(diskIO: DiskIO) {
         self.diskIO = diskIO
+        self.state = State()
     }
 
     /// Creates an iterator for this asynchronous sequence.
     public func makeAsyncIterator() -> Iterator {
+        guard self.state.initializedCount() == 1 else {
+            fatalError("AsyncBufferSequence is single pass. It can only be iterated once.")
+        }
         return Iterator(diskIO: self.diskIO)
     }
 
@@ -134,7 +147,7 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
     ///   - encoding: The Unicode encoding to decode with.
     /// - Returns: A ``StringSequence`` that iterates through
     ///   the buffer contents as strings.
-    public func strings<Encoding: _UnicodeEncoding>(
+    public func strings<Encoding: _UnicodeEncoding & Sendable>(
         separatedBy separator: StringSequence<Encoding>.Separator = .lineBreaks,
         bufferingPolicy: StringSequence<Encoding>.BufferingPolicy = .maxLineLength(128 * 1024),
         as encoding: Encoding.Type,
@@ -150,6 +163,35 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
 
 @available(*, unavailable)
 extension AsyncBufferSequence.Iterator: Sendable {}
+
+extension AsyncBufferSequence {
+    private final class State {
+        #if os(macOS)
+        private let value: OSAllocatedUnfairLock<Int>
+        #else
+        private let value: Atomic<Int>
+        #endif
+
+        init() {
+            #if os(macOS)
+            self.value = OSAllocatedUnfairLock(initialState: 0)
+            #else
+            self.value = Atomic(0)
+            #endif
+        }
+
+        func initializedCount() -> Int {
+            #if os(macOS)
+            return self.value.withLock { state in
+                state += 1
+                return state
+            }
+            #else
+            return self.value.add(1, ordering: .sequentiallyConsistent).newValue
+            #endif
+        }
+    }
+}
 
 // MARK: - StringSequence
 extension AsyncBufferSequence {
@@ -180,7 +222,7 @@ extension AsyncBufferSequence {
     /// ``Separator/unicodeScalarSequence(_:)``, the sequence performs a
     /// code-unit-level comparison without Unicode normalization.
     /// See ``Separator/unicodeScalarSequence(_:)`` for details.
-    public struct StringSequence<Encoding: _UnicodeEncoding>: AsyncSequence, Sendable {
+    public struct StringSequence<Encoding: _UnicodeEncoding & Sendable>: AsyncSequence, Sendable {
         /// The element type for the asynchronous sequence.
         public typealias Element = String
 
@@ -189,7 +231,7 @@ extension AsyncBufferSequence {
         private let separator: Separator
 
         /// An iterator for ``StringSequence``.
-        public struct AsyncIterator: AsyncIteratorProtocol {
+        public struct AsyncIterator: nonisolated AsyncIteratorProtocol {
             /// The element type for this Iterator.
             public typealias Element = String
 

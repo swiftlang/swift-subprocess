@@ -75,6 +75,7 @@ public struct DataAsyncSequenceInput<
 
     /// Asynchronously write the input to the subprocess using the
     /// write file descriptor.
+    @concurrent
     public func write(with writer: StandardInputWriter) async throws(SubprocessError) {
         do {
             for try await chunk in self.sequence {
@@ -111,7 +112,7 @@ extension InputProtocol {
     /// Creates a subprocess input from an asynchronous sequence of `Data` values.
     public static func sequence<InputSequence: AsyncSequence & Sendable>(
         _ asyncSequence: InputSequence
-    ) -> Self where Self == DataAsyncSequenceInput<InputSequence> {
+    ) -> Self where Self == DataAsyncSequenceInput<InputSequence>, InputSequence.Element == Data {
         return .init(underlying: asyncSequence)
     }
 }
@@ -129,6 +130,7 @@ extension StandardInputWriter {
     /// Writes an asynchronous sequence of `Data` to the subprocess's standard input.
     /// - Parameter asyncSequence: The sequence of data to write.
     /// - Returns: The number of bytes written.
+    @concurrent
     public func write<AsyncSendableSequence: AsyncSequence & Sendable>(
         _ asyncSequence: AsyncSendableSequence
     ) async throws(SubprocessError) -> Int where AsyncSendableSequence.Element == Data {

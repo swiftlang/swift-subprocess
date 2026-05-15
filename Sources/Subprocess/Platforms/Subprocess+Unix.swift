@@ -551,14 +551,12 @@ extension Configuration {
                     errorRead: nil,
                     errorWrite: errorWriteFileDescriptor
                 )
-                let execution = Execution(
-                    processIdentifier: .init(
-                        value: pid,
-                        processDescriptor: processDescriptor
-                    )
+                let processIdentifier: ProcessIdentifier = .init(
+                    value: pid,
+                    processDescriptor: processDescriptor
                 )
                 return SpawnResult(
-                    execution: execution,
+                    processIdentifier: processIdentifier,
                     inputWriteEnd: inputWriteFileDescriptor,
                     outputReadEnd: outputReadFileDescriptor,
                     errorReadEnd: errorReadFileDescriptor

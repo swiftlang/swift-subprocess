@@ -80,8 +80,10 @@ struct SubprocessDarwinTests {
         _ = try await Subprocess.run(
             // This will intentionally hang
             .path("/bin/cat"),
+            input: .none,
+            output: .discarded,
             error: .discarded
-        ) { subprocess, standardOutput in
+        ) { subprocess in
             // First suspend the process
             try subprocess.send(signal: .suspend)
             var suspendedStatus: Int32 = 0
@@ -95,7 +97,6 @@ struct SubprocessDarwinTests {
 
             // Now kill the process
             try subprocess.send(signal: .terminate)
-            for try await _ in standardOutput {}
         }
     }
 }

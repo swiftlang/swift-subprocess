@@ -102,7 +102,7 @@ struct SubprocessProcessMonitoringTests {
 
     private func withSpawnedExecution(
         config: Configuration,
-        _ body: (Execution) async throws -> Void
+        _ body: (Execution<NoInput, DiscardedOutput, DiscardedOutput>) async throws -> Void
     ) async throws {
         let spawnResult = try await config.spawn(
             withInput: self.devNullInputPipe(),
@@ -110,9 +110,15 @@ struct SubprocessProcessMonitoringTests {
             errorPipe: self.devNullOutputPipe()
         )
         defer {
-            spawnResult.execution.processIdentifier.close()
+            spawnResult.processIdentifier.close()
         }
-        try await body(spawnResult.execution)
+        let execution = Execution<NoInput, DiscardedOutput, DiscardedOutput>(
+            processIdentifier: spawnResult.processIdentifier,
+            inputWriter: nil,
+            outputStream: nil,
+            errorStream: nil
+        )
+        try await body(execution)
     }
 }
 
@@ -307,7 +313,7 @@ extension SubprocessProcessMonitoringTests {
                 outputPipe: self.devNullOutputPipe(),
                 errorPipe: self.devNullOutputPipe()
             )
-            spawnedProcesses.append(spawnResult.execution.processIdentifier)
+            spawnedProcesses.append(spawnResult.processIdentifier)
         }
 
         try await withThrowingTaskGroup { group in

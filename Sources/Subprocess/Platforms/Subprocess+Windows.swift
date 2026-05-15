@@ -197,9 +197,6 @@ extension Configuration {
                 processDescriptor: processInfo.hProcess,
                 threadHandle: processInfo.hThread
             )
-            let execution = Execution(
-                processIdentifier: pid
-            )
 
             do {
                 // After spawn finishes, close all child side fds
@@ -219,7 +216,7 @@ extension Configuration {
             }
 
             return SpawnResult(
-                execution: execution,
+                processIdentifier: pid,
                 inputWriteEnd: inputWriteFileDescriptor,
                 outputReadEnd: outputReadFileDescriptor,
                 errorReadEnd: errorReadFileDescriptor
@@ -407,9 +404,6 @@ extension Configuration {
                 processDescriptor: processInfo.hProcess,
                 threadHandle: processInfo.hThread
             )
-            let execution = Execution(
-                processIdentifier: pid
-            )
 
             do {
                 // After spawn finishes, close all child side fds
@@ -429,7 +423,7 @@ extension Configuration {
             }
 
             return SpawnResult(
-                execution: execution,
+                processIdentifier: pid,
                 inputWriteEnd: inputWriteFileDescriptor,
                 outputReadEnd: outputReadFileDescriptor,
                 errorReadEnd: errorReadFileDescriptor

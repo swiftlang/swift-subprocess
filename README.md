@@ -63,27 +63,37 @@ print(result.terminationStatus) // e.g. exited(0)
 print(result.standardOutput)    // e.g. Optional("LICENSE\nPackage.swift\n...")
 ```
 
-This returns an `ExecutionRecord` containing the process identifier, termination status, and collected standard output and standard error.
+This returns an `ExecutionResult` containing the process identifier, termination status, and collected standard output and standard error.
 
 
 ### Run with a Custom Closure
 
-For more control, pass a closure that runs while the child process is active. The closure receives an `Execution` handle and, depending on the variant, streams for standard output, standard error, and a writer for standard input.
+For more control, pass a closure that runs while the child process is active. The closure receives a single `Execution` value that you use to send signals, write to standard input, and stream standard output and standard error.
 
 > [!CAUTION]
-> All closure arguments,`Execution`, `AsyncBufferSequence`, and `StandardInputWriter`, are valid only for the duration of the closure's execution and must not be escaped.
+> The `Execution`, `AsyncBufferSequence`, and `StandardInputWriter` values are valid only for the duration of the closure. Don't let them escape the closure.
 
+You opt into each interactive stream by choosing the matching input or output type:
+
+| To do this... | Pass this... | Then read from... |
+| --- | --- | --- |
+| Write to standard input from the closure | `input: .inputWriter` | `execution.standardInputWriter` |
+| Stream standard output | `output: .sequence` | `execution.standardOutput` |
+| Stream standard error | `error: .sequence` | `execution.standardError` |
 
 Stream standard output line by line:
 
 ```swift
 import Subprocess
 
-let outcome = try await run(
+let result = try await run(
     .path("/usr/bin/tail"),
-    arguments: ["-f", "/path/to/nginx.log"]
-) { execution, outputSequence in
-    for try await line in outputSequence.lines() {
+    arguments: ["-f", "/path/to/nginx.log"],
+    input: .none,
+    output: .sequence,
+    error: .discarded
+) { execution in
+    for try await line in execution.standardOutput.strings() {
         if line.contains("500") {
             // Oh no, 500 error
         }
@@ -94,73 +104,65 @@ let outcome = try await run(
 Write to standard input and read from standard output:
 
 ```swift
-let outcome = try await run(.name("cat")) { execution, inputWriter, outputSequence in
-    try await inputWriter.write("Hello, Subprocess!\n")
-    try await inputWriter.finish()
-    for try await line in outputSequence.lines() {
-        print(line) // "Hello, Subprocess!"
-    }
-}
-```
-
-The closure-based `run` returns an `ExecutionOutcome` containing both the closure's return value and the termination status.
-
-`Subprocess` provides several closure variants depending on which streams you need:
-
-* Manage the runnning process without streaming
-```swift
-run(.path("/my/app")) { execution in
-    ...
-}
-```
-
-* Manage the running process and stream standard output or standard error
-```swift
-run(.path("/my/app"), error: .discarded) { execution, outputStream in
-    for try await item in outputStream { ... }
-}
-
-run(.path("/my/app"), output: .discarded) { execution, errorStream in
-    for try await item in errorStream { ... }
-}
-```
-
-
-* Write to standard input and stream standard output or standard error
-```swift
-run(.path("/my/app"), output: .discarded) { execution, inputWriter, outputStream in
-    try await withThrowingTaskGroup { group in
-        group.addTask { for try await item in outputStream { ... } }
-        group.addTask {
-            _ = try await inputWriter.write("Hello Subprocess")
-            try await inputWriter.finish()
+let result = try await run(
+    .name("cat"),
+    input: .inputWriter,
+    output: .sequence,
+    error: .discarded
+) { execution in
+    async let reading: Void = {
+        for try await line in execution.standardOutput.strings() {
+            print(line) // "Hello, Subprocess!"
         }
-        try await group.waitForAll()
-    }
-}
+    }()
 
-
-run(.path("/my/app"), error: .discarded) { execution, inputWriter, errorStream in
-    try await withThrowingTaskGroup { group in
-        group.addTask { for try await item in errorStream { ... } }
-        group.addTask {
-            _ = try await inputWriter.write("Hello Subprocess")
-            try await inputWriter.finish()
-        }
-        try await group.waitForAll()
-    }
+    try await execution.standardInputWriter.write("Hello, Subprocess!\n")
+    try await execution.standardInputWriter.finish()
+    try await reading
 }
 ```
 
-* Write to standard input and stream both standard output and standard error
+The closure-based `run` returns an `ExecutionResult`. Access the closure's return value with `result.closureOutput`, and the termination status with `result.terminationStatus`.
+
+Because `input`, `output`, and `error` are separate parameters, you can mix streaming and capturing in the same call. For example, stream standard output from the closure while collecting standard error as a string, and return the closure's own value through `closureOutput`:
+
 ```swift
-run(.path("/my/app")) { execution, inputWriter, outputStream, errorStream in
+let result = try await run(
+    .path("/my/app"),
+    input: .none,
+    output: .sequence,
+    error: .string(limit: 4096)
+) { execution in
+    var lineCount = 0
+    for try await _ in execution.standardOutput.lines() {
+        lineCount += 1
+    }
+    return lineCount
+}
+
+print(result.closureOutput)         // The line count returned from the closure.
+print(result.standardError ?? "")   // The captured standard error.
+```
+
+Stream both standard output and standard error, writing to standard input from the same closure:
+
+```swift
+try await run(
+    .path("/my/app"),
+    input: .inputWriter,
+    output: .sequence,
+    error: .sequence
+) { execution in
     try await withThrowingTaskGroup { group in
-        group.addTask { for try await item in outputStream { ... } }
-        group.addTask { for try await item in errorStream { ... } }
         group.addTask {
-            _ = try await inputWriter.write("Hello Subprocess")
-            try await inputWriter.finish()
+            for try await line in execution.standardOutput.lines() { /* ... */ }
+        }
+        group.addTask {
+            for try await line in execution.standardError.lines() { /* ... */ }
+        }
+        group.addTask {
+            _ = try await execution.standardInputWriter.write("Hello Subprocess")
+            try await execution.standardInputWriter.finish()
         }
         try await group.waitForAll()
     }
@@ -169,10 +171,10 @@ run(.path("/my/app")) { execution, inputWriter, outputStream, errorStream in
 
 In the closure-based API, output streams are delivered as an `AsyncBufferSequence` — an asynchronous sequence of `Buffer` values. Each `Buffer` provides access to its bytes via `withUnsafeBytes(_:)` or the `bytes` property (a `RawSpan`).
 
-The preferred method to convert `Buffer` to `String` is to read output line by line using `.lines()`. You can optionally specify an encoding and buffering policy:
+The preferred way to convert `Buffer` to `String` is to read output line by line using `.lines()`. You can optionally specify an encoding and buffering policy:
 
 ```swift
-for try await line in outputSequence.lines(
+for try await line in execution.standardOutput.lines(
     encoding: UTF16.self,
     bufferingPolicy: .maxLineLength(1024)
 ) {
@@ -213,7 +215,6 @@ let result = try await run(config, output: .string(limit: 4096))
 ```
 
 
-Use it by setting `.string(_:)` or `.string(_:using:)` for `input`.
 ### Input and Output Options
 
 By default, `Subprocess`:
@@ -232,6 +233,7 @@ For the collected-result API, you must specify how to capture standard output.
 | `.string(_:)` or `.string(_:using:)` | Read from a string with optional encoding |
 | `.array(_:)` | Read from a `[UInt8]` array |
 | `Span<BitwiseCopyable>` | Read from a span (passed directly as the `input` parameter) |
+| `.inputWriter` | Write from the closure via `execution.standardInputWriter` (closure-based `run` only) |
 | `.data(_:)` | Read from `Data` (requires `SubprocessFoundation`) |
 | `.sequence(_:)` | Read from a `Sequence<Data>` or `AsyncSequence<Data>` (requires `SubprocessFoundation`) |
 
@@ -245,6 +247,7 @@ For the collected-result API, you must specify how to capture standard output.
 | `.currentStandardOutput` or `.currentStandardError` | Write to the parent process's standard output or standard error |
 | `.string(limit:)` or `.string(limit:encoding:)` | Collect as `String?` |
 | `.bytes(limit:)` | Collect as `[UInt8]` |
+| `.sequence` | Stream to the closure via `execution.standardOutput` or `execution.standardError` (closure-based `run` only) |
 | `.data(limit:)` | Collect as `Data` (requires `SubprocessFoundation`) |
 | `.combinedWithOutput` | Merge standard error into the standard output stream (error parameter only) |
 
@@ -273,7 +276,7 @@ let serverTask = Task {
         .gracefulShutDown(allowedDurationToNextStep: .seconds(5))
     ]
 
-    let outcome = try await run(
+    let result = try await run(
         .name("server"),
         platformOptions: platformOptions,
         output: .string(limit: 1024)

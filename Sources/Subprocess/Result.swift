@@ -17,21 +17,19 @@ import SystemPackage
 
 // MARK: - Result
 
-/// The outcome of a subprocess execution, containing the closure's return value and the termination status of the child process.
-public struct ExecutionOutcome<Result: Sendable>: Sendable {
-    /// The termination status of the child process.
-    public let terminationStatus: TerminationStatus
-    /// The value returned by the closure passed to the `run` method.
-    public let value: Result
-
-    internal init(terminationStatus: TerminationStatus, value: Result) {
-        self.terminationStatus = terminationStatus
-        self.value = value
-    }
-}
-
-/// The result of running a subprocess, including collected standard output and standard error.
-public struct ExecutionRecord<
+/// The result of running a subprocess, including the closure's return value,
+/// collected standard output, and collected standard error.
+///
+/// The `ClosureResult` generic parameter is `Void` when you call a `run(...)`
+/// overload that doesn't take a `body` closure. It's the closure's return type
+/// otherwise. You access the closure's return value with ``closureOutput``.
+///
+/// The ``standardOutput`` and ``standardError`` properties are available when
+/// the corresponding output type produces a non-`Void` value. They're
+/// unavailable for output types such as ``DiscardedOutput``, ``SequenceOutput``,
+/// and ``FileDescriptorOutput``.
+public struct ExecutionResult<
+    ClosureResult: Sendable,
     Output: OutputProtocol,
     Error: OutputProtocol
 >: Sendable {
@@ -39,38 +37,44 @@ public struct ExecutionRecord<
     public let processIdentifier: ProcessIdentifier
     /// The termination status of the subprocess.
     public let terminationStatus: TerminationStatus
+
     /// The collected standard output of the subprocess.
     public let standardOutput: Output.OutputType
     /// The collected standard error of the subprocess.
     public let standardError: Error.OutputType
 
+    /// The value returned by the body closure passed to `run`.
+    public let closureOutput: ClosureResult
+
     internal init(
         processIdentifier: ProcessIdentifier,
         terminationStatus: TerminationStatus,
+        closureOutput: ClosureResult,
         standardOutput: Output.OutputType,
         standardError: Error.OutputType
     ) {
         self.processIdentifier = processIdentifier
         self.terminationStatus = terminationStatus
+        self.closureOutput = closureOutput
         self.standardOutput = standardOutput
         self.standardError = standardError
     }
 }
 
-// MARK: - ExecutionRecord Conformances
+// MARK: - ExecutionResult Conformances
 
-extension ExecutionRecord: Equatable where Output.OutputType: Equatable, Error.OutputType: Equatable {}
+extension ExecutionResult: Equatable where Output.OutputType: Equatable, Error.OutputType: Equatable, ClosureResult: Equatable {}
 
-extension ExecutionRecord: Hashable where Output.OutputType: Hashable, Error.OutputType: Hashable {}
+extension ExecutionResult: Hashable where Output.OutputType: Hashable, Error.OutputType: Hashable, ClosureResult: Hashable {}
 
-extension ExecutionRecord: CustomStringConvertible
-where Output.OutputType: CustomStringConvertible, Error.OutputType: CustomStringConvertible {
+extension ExecutionResult: CustomStringConvertible where Output.OutputType: CustomStringConvertible, Error.OutputType: CustomStringConvertible {
     /// A textual representation of the collected result.
     public var description: String {
         return """
-            ExecutionRecord(
+            ExecutionResult(
                 processIdentifier: \(self.processIdentifier),
                 terminationStatus: \(self.terminationStatus.description),
+                closureOutput: \(String(describing: self.closureOutput)),
                 standardOutput: \(self.standardOutput.description)
                 standardError: \(self.standardError.description)
             )
@@ -78,14 +82,15 @@ where Output.OutputType: CustomStringConvertible, Error.OutputType: CustomString
     }
 }
 
-extension ExecutionRecord: CustomDebugStringConvertible
+extension ExecutionResult: CustomDebugStringConvertible
 where Output.OutputType: CustomDebugStringConvertible, Error.OutputType: CustomDebugStringConvertible {
     /// A debug-oriented textual representation of the collected result.
     public var debugDescription: String {
         return """
-            ExecutionRecord(
+            ExecutionResult(
                 processIdentifier: \(self.processIdentifier),
-                terminationStatus: \(self.terminationStatus.description),
+                terminationStatus: \(self.terminationStatus.debugDescription),
+                closureOutput: \(String(describing: self.closureOutput)),
                 standardOutput: \(self.standardOutput.debugDescription)
                 standardError: \(self.standardError.debugDescription)
             )
@@ -93,14 +98,29 @@ where Output.OutputType: CustomDebugStringConvertible, Error.OutputType: CustomD
     }
 }
 
-// MARK: - ExecutionOutcome Conformances
+// MARK: - ExecutionOutcome
+
+/// The outcome of a subprocess execution, containing the closure's return
+/// value and the termination status of the child process.
+internal struct ExecutionOutcome<Result: Sendable>: Sendable {
+    /// The termination status of the child process.
+    internal let terminationStatus: TerminationStatus
+    /// The value returned by the closure passed to the `run` method.
+    internal let value: Result
+
+    internal init(terminationStatus: TerminationStatus, value: Result) {
+        self.terminationStatus = terminationStatus
+        self.value = value
+    }
+}
+
 extension ExecutionOutcome: Equatable where Result: Equatable {}
 
 extension ExecutionOutcome: Hashable where Result: Hashable {}
 
 extension ExecutionOutcome: CustomStringConvertible where Result: CustomStringConvertible {
     /// A textual representation of the execution result.
-    public var description: String {
+    var description: String {
         return """
             ExecutionOutcome(
                 terminationStatus: \(self.terminationStatus.description),
@@ -112,7 +132,7 @@ extension ExecutionOutcome: CustomStringConvertible where Result: CustomStringCo
 
 extension ExecutionOutcome: CustomDebugStringConvertible where Result: CustomDebugStringConvertible {
     /// A debug-oriented textual representation of this execution result.
-    public var debugDescription: String {
+    var debugDescription: String {
         return """
             ExecutionOutcome(
                 terminationStatus: \(self.terminationStatus.debugDescription),
@@ -121,18 +141,3 @@ extension ExecutionOutcome: CustomDebugStringConvertible where Result: CustomDeb
             """
     }
 }
-
-// MARK: - Deprecated
-@available(
-    *, deprecated,
-    renamed: "ExecutionOutcome",
-    message: "ExecutionResult has been renamed to ExecutionOutcome. ExecutionResult will be removed in 1.0"
-)
-public typealias ExecutionResult = ExecutionOutcome
-
-@available(
-    *, deprecated,
-    renamed: "ExecutionRecord",
-    message: "CollectedResult has been renamed to ExecutionRecord. CollectedResult will be removed in 1.0"
-)
-public typealias CollectedResult = ExecutionRecord
