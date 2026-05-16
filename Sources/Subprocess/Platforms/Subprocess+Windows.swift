@@ -66,6 +66,17 @@ extension Configuration {
         let errorReadFileDescriptor: IODescriptor? = errorPipe.readFileDescriptor()
         let errorWriteFileDescriptor: IODescriptor? = errorPipe.writeFileDescriptor()
 
+        // Create the Job Object up front. It persists across all candidate path
+        // attempts, and is owned by this function until ownership transfers to
+        // the `ProcessIdentifier` on the success path.
+        let jobHandle = try Self.createJobObject()
+        var jobHandleOwned = true
+        defer {
+            if jobHandleOwned {
+                _ = CloseHandle(jobHandle)
+            }
+        }
+
         // CreateProcessW supports using `lpApplicationName` as well as `lpCommandLine` to
         // specify executable path. However, only `lpCommandLine` supports PATH looking up,
         // whereas `lpApplicationName` does not. In general we should rely on `lpCommandLine`'s
@@ -115,52 +126,77 @@ extension Configuration {
 
             var createProcessFlags = self.generateCreateProcessFlag()
 
-            let (created, processInfo, windowsError) = try await self.withStartupInfoEx(
-                inputRead: inputReadFileDescriptor,
-                inputWrite: inputWriteFileDescriptor,
-                outputRead: outputReadFileDescriptor,
-                outputWrite: outputWriteFileDescriptor,
-                errorRead: errorReadFileDescriptor,
-                errorWrite: errorWriteFileDescriptor
-            ) { startupInfo throws(SubprocessError) in
-                // Give calling process a chance to modify flag and startup info
-                if let configurator = self.platformOptions.preSpawnProcessConfigurator {
-                    try configurator(&createProcessFlags, &startupInfo.pointer(to: \.StartupInfo)!.pointee)
-                }
+            let (created, processInfo, windowsError, userManagesResume): (Bool, PROCESS_INFORMATION, DWORD, Bool)
+            do {
+                (created, processInfo, windowsError, userManagesResume) = try await self.withStartupInfoEx(
+                    inputRead: inputReadFileDescriptor,
+                    inputWrite: inputWriteFileDescriptor,
+                    outputRead: outputReadFileDescriptor,
+                    outputWrite: outputWriteFileDescriptor,
+                    errorRead: errorReadFileDescriptor,
+                    errorWrite: errorWriteFileDescriptor
+                ) { startupInfo throws(SubprocessError) in
+                    // Give calling process a chance to modify flag and startup info
+                    if let configurator = self.platformOptions.preSpawnProcessConfigurator {
+                        try configurator(&createProcessFlags, &startupInfo.pointer(to: \.StartupInfo)!.pointee)
+                    }
 
-                // Spawn!
-                let spawnContext = SpawnContext(
-                    startupInfo: startupInfo,
-                    createProcessFlags: createProcessFlags
-                )
-                return try await runOnBackgroundThread { () throws(SubprocessError) in
-                    return try applicationName.withOptionalNTPathRepresentation { applicationNameW throws(SubprocessError) in
-                        try commandAndArgs._withCString(
-                            encodedAs: UTF16.self
-                        ) { commandAndArgsW throws(SubprocessError) in
-                            try environment._withCString(
+                    // If the configurator set `CREATE_SUSPENDED`, the user has
+                    // explicitly opted into managing the child's initial
+                    // resume themselves. Otherwise, Subprocess resumes the
+                    // child after assigning it to the Job Object.
+                    let userManagesResume = (createProcessFlags & DWORD(CREATE_SUSPENDED)) != 0
+
+                    // Subprocess assigns every spawned child to a Job Object
+                    // before any user code runs in the child. `CREATE_SUSPENDED`
+                    // makes the assignment atomic, so it is always set
+                    // regardless of what the configurator did.
+                    createProcessFlags |= DWORD(CREATE_SUSPENDED)
+
+                    // Spawn!
+                    let spawnContext = SpawnContext(
+                        startupInfo: startupInfo,
+                        createProcessFlags: createProcessFlags
+                    )
+                    return try await runOnBackgroundThread { () throws(SubprocessError) in
+                        return try applicationName.withOptionalNTPathRepresentation { applicationNameW throws(SubprocessError) in
+                            try commandAndArgs._withCString(
                                 encodedAs: UTF16.self
-                            ) { environmentW throws(SubprocessError) in
-                                try intendedWorkingDir.withOptionalNTPathRepresentation { intendedWorkingDirW throws(SubprocessError) in
-                                    var processInfo = PROCESS_INFORMATION()
-                                    let result = CreateProcessW(
-                                        applicationNameW,
-                                        UnsafeMutablePointer<WCHAR>(mutating: commandAndArgsW),
-                                        nil, // lpProcessAttributes
-                                        nil, // lpThreadAttributes
-                                        true, // bInheritHandles
-                                        spawnContext.createProcessFlags,
-                                        UnsafeMutableRawPointer(mutating: environmentW),
-                                        intendedWorkingDirW,
-                                        spawnContext.startupInfo.pointer(to: \.StartupInfo)!,
-                                        &processInfo
-                                    )
-                                    return (result, processInfo, GetLastError())
+                            ) { commandAndArgsW throws(SubprocessError) in
+                                try environment._withCString(
+                                    encodedAs: UTF16.self
+                                ) { environmentW throws(SubprocessError) in
+                                    try intendedWorkingDir.withOptionalNTPathRepresentation { intendedWorkingDirW throws(SubprocessError) in
+                                        var processInfo = PROCESS_INFORMATION()
+                                        let result = CreateProcessW(
+                                            applicationNameW,
+                                            UnsafeMutablePointer<WCHAR>(mutating: commandAndArgsW),
+                                            nil, // lpProcessAttributes
+                                            nil, // lpThreadAttributes
+                                            true, // bInheritHandles
+                                            spawnContext.createProcessFlags,
+                                            UnsafeMutableRawPointer(mutating: environmentW),
+                                            intendedWorkingDirW,
+                                            spawnContext.startupInfo.pointer(to: \.StartupInfo)!,
+                                            &processInfo
+                                        )
+                                        return (result, processInfo, GetLastError(), userManagesResume)
+                                    }
                                 }
                             }
                         }
                     }
                 }
+            } catch {
+                try self.safelyCloseMultiple(
+                    inputRead: inputReadFileDescriptor,
+                    inputWrite: inputWriteFileDescriptor,
+                    outputRead: outputReadFileDescriptor,
+                    outputWrite: outputWriteFileDescriptor,
+                    errorRead: errorReadFileDescriptor,
+                    errorWrite: errorWriteFileDescriptor
+                )
+                throw error
             }
 
             guard created else {
@@ -192,10 +228,32 @@ extension Configuration {
                 )
             }
 
+            do {
+                try Self.assignChildToJobObjectAndResume(
+                    jobHandle: jobHandle,
+                    processInfo: processInfo,
+                    resumeThread: !userManagesResume
+                )
+            } catch {
+                try self.safelyCloseMultiple(
+                    inputRead: inputReadFileDescriptor,
+                    inputWrite: inputWriteFileDescriptor,
+                    outputRead: outputReadFileDescriptor,
+                    outputWrite: outputWriteFileDescriptor,
+                    errorRead: errorReadFileDescriptor,
+                    errorWrite: errorWriteFileDescriptor
+                )
+                throw error
+            }
+
+            // Transfer ownership of the job handle to the `ProcessIdentifier`.
+            jobHandleOwned = false
+
             let pid = ProcessIdentifier(
                 value: processInfo.dwProcessId,
                 processDescriptor: processInfo.hProcess,
-                threadHandle: processInfo.hThread
+                threadHandle: processInfo.hThread,
+                jobHandle: jobHandle
             )
 
             do {
@@ -260,6 +318,17 @@ extension Configuration {
         let errorReadFileDescriptor: IODescriptor? = _errorPipe.readFileDescriptor()
         let errorWriteFileDescriptor: IODescriptor? = _errorPipe.writeFileDescriptor()
 
+        // Create the Job Object up front. It persists across all candidate path
+        // attempts, and is owned by this function until ownership transfers to
+        // the `ProcessIdentifier` on the success path.
+        let jobHandle = try Self.createJobObject()
+        var jobHandleOwned = true
+        defer {
+            if jobHandleOwned {
+                _ = CloseHandle(jobHandle)
+            }
+        }
+
         // CreateProcessW supports using `lpApplicationName` as well as `lpCommandLine` to
         // specify executable path. However, only `lpCommandLine` supports PATH looking up,
         // whereas `lpApplicationName` does not. In general we should rely on `lpCommandLine`'s
@@ -310,57 +379,72 @@ extension Configuration {
 
             var createProcessFlags = self.generateCreateProcessFlag()
 
-            let (created, processInfo, windowsError) = try await self.withStartupInfoEx(
-                inputRead: inputReadFileDescriptor,
-                inputWrite: inputWriteFileDescriptor,
-                outputRead: outputReadFileDescriptor,
-                outputWrite: outputWriteFileDescriptor,
-                errorRead: errorReadFileDescriptor,
-                errorWrite: errorWriteFileDescriptor
-            ) { startupInfo throws(SubprocessError) in
-                // Give calling process a chance to modify flag and startup info
-                if let configurator = self.platformOptions.preSpawnProcessConfigurator {
-                    try configurator(&createProcessFlags, &startupInfo.pointer(to: \.StartupInfo)!.pointee)
-                }
+            let (created, processInfo, windowsError, userManagesResume): (Bool, PROCESS_INFORMATION, DWORD, Bool)
+            do {
+                (created, processInfo, windowsError, userManagesResume) = try await self.withStartupInfoEx(
+                    inputRead: inputReadFileDescriptor,
+                    inputWrite: inputWriteFileDescriptor,
+                    outputRead: outputReadFileDescriptor,
+                    outputWrite: outputWriteFileDescriptor,
+                    errorRead: errorReadFileDescriptor,
+                    errorWrite: errorWriteFileDescriptor
+                ) { startupInfo throws(SubprocessError) in
+                    // Give calling process a chance to modify flag and startup info
+                    if let configurator = self.platformOptions.preSpawnProcessConfigurator {
+                        try configurator(&createProcessFlags, &startupInfo.pointer(to: \.StartupInfo)!.pointee)
+                    }
 
-                let spawnContext = SpawnContext(
-                    startupInfo: startupInfo,
-                    createProcessFlags: createProcessFlags
-                )
-                // Spawn (featuring pyramid!)
-                return try await runOnBackgroundThread { () throws(SubprocessError) in
-                    return try userCredentials.username._withCString(
-                        encodedAs: UTF16.self
-                    ) { usernameW throws(SubprocessError) in
-                        try userCredentials.password._withCString(
+                    // If the configurator set `CREATE_SUSPENDED`, the user has
+                    // explicitly opted into managing the child's initial
+                    // resume themselves. Otherwise, Subprocess resumes the
+                    // child after assigning it to the Job Object.
+                    let userManagesResume = (createProcessFlags & DWORD(CREATE_SUSPENDED)) != 0
+
+                    // Subprocess assigns every spawned child to a Job Object
+                    // before any user code runs in the child. `CREATE_SUSPENDED`
+                    // makes the assignment atomic, so it is always set
+                    // regardless of what the configurator did.
+                    createProcessFlags |= DWORD(CREATE_SUSPENDED)
+
+                    let spawnContext = SpawnContext(
+                        startupInfo: startupInfo,
+                        createProcessFlags: createProcessFlags
+                    )
+                    // Spawn (featuring pyramid!)
+                    return try await runOnBackgroundThread { () throws(SubprocessError) in
+                        return try userCredentials.username._withCString(
                             encodedAs: UTF16.self
-                        ) { passwordW throws(SubprocessError) in
-                            try userCredentials.domain.withOptionalCString(
+                        ) { usernameW throws(SubprocessError) in
+                            try userCredentials.password._withCString(
                                 encodedAs: UTF16.self
-                            ) { domainW throws(SubprocessError) in
-                                try applicationName.withOptionalNTPathRepresentation { applicationNameW throws(SubprocessError) in
-                                    try commandAndArgs._withCString(
-                                        encodedAs: UTF16.self
-                                    ) { commandAndArgsW throws(SubprocessError) in
-                                        try environment._withCString(
+                            ) { passwordW throws(SubprocessError) in
+                                try userCredentials.domain.withOptionalCString(
+                                    encodedAs: UTF16.self
+                                ) { domainW throws(SubprocessError) in
+                                    try applicationName.withOptionalNTPathRepresentation { applicationNameW throws(SubprocessError) in
+                                        try commandAndArgs._withCString(
                                             encodedAs: UTF16.self
-                                        ) { environmentW throws(SubprocessError) in
-                                            try intendedWorkingDir.withOptionalNTPathRepresentation { intendedWorkingDirW throws(SubprocessError) in
-                                                var processInfo = PROCESS_INFORMATION()
-                                                let created = CreateProcessWithLogonW(
-                                                    usernameW,
-                                                    domainW,
-                                                    passwordW,
-                                                    DWORD(LOGON_WITH_PROFILE),
-                                                    applicationNameW,
-                                                    UnsafeMutablePointer<WCHAR>(mutating: commandAndArgsW),
-                                                    spawnContext.createProcessFlags,
-                                                    UnsafeMutableRawPointer(mutating: environmentW),
-                                                    intendedWorkingDirW,
-                                                    spawnContext.startupInfo.pointer(to: \.StartupInfo)!,
-                                                    &processInfo
-                                                )
-                                                return (created, processInfo, GetLastError())
+                                        ) { commandAndArgsW throws(SubprocessError) in
+                                            try environment._withCString(
+                                                encodedAs: UTF16.self
+                                            ) { environmentW throws(SubprocessError) in
+                                                try intendedWorkingDir.withOptionalNTPathRepresentation { intendedWorkingDirW throws(SubprocessError) in
+                                                    var processInfo = PROCESS_INFORMATION()
+                                                    let created = CreateProcessWithLogonW(
+                                                        usernameW,
+                                                        domainW,
+                                                        passwordW,
+                                                        DWORD(LOGON_WITH_PROFILE),
+                                                        applicationNameW,
+                                                        UnsafeMutablePointer<WCHAR>(mutating: commandAndArgsW),
+                                                        spawnContext.createProcessFlags,
+                                                        UnsafeMutableRawPointer(mutating: environmentW),
+                                                        intendedWorkingDirW,
+                                                        spawnContext.startupInfo.pointer(to: \.StartupInfo)!,
+                                                        &processInfo
+                                                    )
+                                                    return (created, processInfo, GetLastError(), userManagesResume)
+                                                }
                                             }
                                         }
                                     }
@@ -369,6 +453,16 @@ extension Configuration {
                         }
                     }
                 }
+            } catch {
+                try self.safelyCloseMultiple(
+                    inputRead: inputReadFileDescriptor,
+                    inputWrite: inputWriteFileDescriptor,
+                    outputRead: outputReadFileDescriptor,
+                    outputWrite: outputWriteFileDescriptor,
+                    errorRead: errorReadFileDescriptor,
+                    errorWrite: errorWriteFileDescriptor
+                )
+                throw error
             }
 
             guard created else {
@@ -399,10 +493,32 @@ extension Configuration {
                 )
             }
 
+            do {
+                try Self.assignChildToJobObjectAndResume(
+                    jobHandle: jobHandle,
+                    processInfo: processInfo,
+                    resumeThread: !userManagesResume
+                )
+            } catch {
+                try self.safelyCloseMultiple(
+                    inputRead: inputReadFileDescriptor,
+                    inputWrite: inputWriteFileDescriptor,
+                    outputRead: outputReadFileDescriptor,
+                    outputWrite: outputWriteFileDescriptor,
+                    errorRead: errorReadFileDescriptor,
+                    errorWrite: errorWriteFileDescriptor
+                )
+                throw error
+            }
+
+            // Transfer ownership of the job handle to the `ProcessIdentifier`.
+            jobHandleOwned = false
+
             let pid = ProcessIdentifier(
                 value: processInfo.dwProcessId,
                 processDescriptor: processInfo.hProcess,
-                threadHandle: processInfo.hThread
+                threadHandle: processInfo.hThread,
+                jobHandle: jobHandle
             )
 
             do {
@@ -563,6 +679,24 @@ public struct PlatformOptions: Sendable {
     /// modification of the `dwCreationFlags` creation flag
     /// and startup info `STARTUPINFOW` before
     /// they are sent to `CreateProcessW()`.
+    ///
+    /// - Important: Subprocess assigns every spawned child to
+    /// an internal Job Object before any user code runs in the child,
+    /// so teardown sequences targeting the process group can terminate
+    /// the child and all of its descendants together. To make this
+    /// assignment atomic, Subprocess always spawns children with
+    /// `CREATE_SUSPENDED` set in `dwCreationFlags`, regardless of the
+    /// value the configurator leaves in `dwCreationFlags`. By default,
+    /// Subprocess resumes the child after the assignment completes.
+    /// If the configurator sets `CREATE_SUSPENDED` in `dwCreationFlags`,
+    /// Subprocess treats this as a signal that user code will resume
+    /// the child explicitly, and therefore skips the internal `ResumeThread`
+    /// call. In that case the caller is responsible for calling
+    /// `ResumeThread` on the thread handle exposed through
+    /// `Execution.processIdentifier.threadHandle`. Otherwise, the child
+    /// will remain suspended indefinitely. If user code separately
+    /// assigns the child to its own Job Object after spawn, that
+    /// user-supplied job is nested inside Subprocess's job.
     public var preSpawnProcessConfigurator:
         (
             @Sendable (
@@ -663,13 +797,31 @@ internal func monitorProcessTermination(
 
 extension Execution {
     /// Terminate the current subprocess with the given exit code
-    /// - Parameter exitCode: The exit code to use for the subprocess.
-    public func terminate(withExitCode exitCode: DWORD) throws(SubprocessError) {
-        guard TerminateProcess(self.processIdentifier.processDescriptor, exitCode) else {
-            throw SubprocessError.processControlFailed(
-                .terminate,
-                underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
-            )
+    /// - Parameters:
+    ///   - exitCode: The exit code to use for the subprocess.
+    ///   - toProcessGroup: When `true`, terminates the subprocess and any
+    ///   descendants by terminating the Job Object that contains them. The
+    ///   exit code is propagated to every process in the job. When `false`
+    ///   (the default), terminates only the immediate child process, leaving
+    ///   descendants unaffected.
+    public func terminate(
+        withExitCode exitCode: DWORD,
+        toProcessGroup: Bool = false
+    ) throws(SubprocessError) {
+        if toProcessGroup {
+            guard TerminateJobObject(self.processIdentifier.jobHandle, exitCode) else {
+                throw SubprocessError.processControlFailed(
+                    .terminate,
+                    underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
+                )
+            }
+        } else {
+            guard TerminateProcess(self.processIdentifier.processDescriptor, exitCode) else {
+                throw SubprocessError.processControlFailed(
+                    .terminate,
+                    underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
+                )
+            }
         }
     }
 
@@ -964,11 +1116,19 @@ public struct ProcessIdentifier: Sendable, Hashable {
     public nonisolated(unsafe) let processDescriptor: HANDLE
     /// The main thread handle for this execution.
     public nonisolated(unsafe) let threadHandle: HANDLE
+    /// The Job Object handle that contains this process and any descendants.
+    internal nonisolated(unsafe) let jobHandle: HANDLE
 
-    internal init(value: DWORD, processDescriptor: HANDLE, threadHandle: HANDLE) {
+    internal init(
+        value: DWORD,
+        processDescriptor: HANDLE,
+        threadHandle: HANDLE,
+        jobHandle: HANDLE
+    ) {
         self.value = value
         self.processDescriptor = processDescriptor
         self.threadHandle = threadHandle
+        self.jobHandle = jobHandle
     }
 
     internal func close() {
@@ -977,6 +1137,9 @@ public struct ProcessIdentifier: Sendable, Hashable {
         }
         guard CloseHandle(self.processDescriptor) else {
             fatalError("Failed to close process HANDLE: \(SubprocessError.WindowsError(rawValue: GetLastError()))")
+        }
+        guard CloseHandle(self.jobHandle) else {
+            fatalError("Failed to close job HANDLE: \(SubprocessError.WindowsError(rawValue: GetLastError()))")
         }
     }
 }
@@ -1188,6 +1351,79 @@ extension Configuration {
             info.lpAttributeList = attributeList
         }
         return try await body(&info)
+    }
+
+    /// Creates a Job Object that will contain a spawned child process and
+    /// any descendants.
+    ///
+    /// - Important: The handle is created with default security attributes,
+    /// which makes it non-inheritable. Descendants must not receive a duplicate
+    /// of the handle, so the parent can retain exclusive control over the job's
+    /// lifetime.
+    private static func createJobObject() throws(SubprocessError) -> HANDLE {
+        guard let jobHandle = CreateJobObjectW(nil, nil),
+            jobHandle != INVALID_HANDLE_VALUE
+        else {
+            throw SubprocessError.spawnFailed(
+                withUnderlyingError: SubprocessError.WindowsError(rawValue: GetLastError()),
+                reason: "Failed to create Job Object"
+            )
+        }
+        return jobHandle
+    }
+
+    /// Assigns the child process to the Job Object and, if requested, resumes
+    /// the child process thread.
+    ///
+    /// When `resumeThread` is `false`, the caller is responsible for resuming
+    /// the child using `ResumeThread` on the thread handle exposed through
+    /// `Execution.processIdentifier.threadHandle`. The child remains
+    /// suspended until then.
+    private static func assignChildToJobObjectAndResume(
+        jobHandle: HANDLE,
+        processInfo: PROCESS_INFORMATION,
+        resumeThread: Bool
+    ) throws(SubprocessError) {
+        // `CreateProcessW` succeeded. The child is suspended. Assign it to
+        // the Job Object before resuming, so it cannot run any user code
+        // outside the job.
+        guard AssignProcessToJobObject(jobHandle, processInfo.hProcess) else {
+            let assignError = SubprocessError.WindowsError(rawValue: GetLastError())
+            _ = TerminateProcess(processInfo.hProcess, 1)
+            _ = CloseHandle(processInfo.hThread)
+            _ = CloseHandle(processInfo.hProcess)
+
+            // Detect the most common cause of assignment failure: the parent
+            // process itself is in a non-nestable Job Object.
+            var isParentInJob: WindowsBool = false
+            var reason: String = "Failed to assign child process to Job Object"
+            if IsProcessInJob(GetCurrentProcess(), nil, &isParentInJob),
+                isParentInJob.boolValue
+            {
+                reason += " (likely because the parent process is in a Job Object that does not allow nesting)"
+            }
+
+            throw SubprocessError.spawnFailed(
+                withUnderlyingError: assignError,
+                reason: reason
+            )
+        }
+
+        guard resumeThread else {
+            // The user opted into managing the resume themselves.
+            return
+        }
+
+        guard ResumeThread(processInfo.hThread) != DWORD(bitPattern: -1) else {
+            let resumeError = SubprocessError.WindowsError(rawValue: GetLastError())
+            _ = TerminateProcess(processInfo.hProcess, 1)
+            _ = CloseHandle(processInfo.hThread)
+            _ = CloseHandle(processInfo.hProcess)
+            throw SubprocessError.spawnFailed(
+                withUnderlyingError: resumeError,
+                reason: "Failed to resume child process thread after Job Object assignment"
+            )
+        }
     }
 
     private func generateWindowsCommandAndArguments(

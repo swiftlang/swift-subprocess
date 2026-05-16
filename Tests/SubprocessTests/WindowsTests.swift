@@ -279,7 +279,9 @@ extension SubprocessWindowsTests {
         #expect(stuckProcess.terminationStatus.isSuccess)
     }
 
-    /// Tests a use case for Windows platform handles by assigning the newly created process to a Job Object
+    /// Tests a use case for Windows platform handles by assigning the newly
+    /// created process to a user-supplied Job Object, nested inside
+    /// Subprocess's internal job.
     /// - see: https://devblogs.microsoft.com/oldnewthing/20131209-00/
     @Test func testPlatformHandles() async throws {
         let hJob = CreateJobObjectW(nil, nil)
@@ -288,25 +290,148 @@ extension SubprocessWindowsTests {
         info.BasicLimitInformation.LimitFlags = DWORD(JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)
         #expect(SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &info, DWORD(MemoryLayout<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>.size)))
 
+        let result = try await Subprocess.run(
+            self.cmdExe,
+            arguments: ["/c", "echo"],
+            input: .none,
+            output: .discarded,
+            error: .discarded
+        ) { execution in
+            // Nest the child inside a user-supplied Job Object. Subprocess
+            // already assigned it to its internal job. This nests further.
+            guard AssignProcessToJobObject(hJob, execution.processIdentifier.processDescriptor) else {
+                throw SubprocessError.WindowsError(rawValue: GetLastError())
+            }
+        }
+        #expect(result.terminationStatus.isSuccess)
+    }
+}
+
+// MARK: - Job Object Termination Tests
+extension SubprocessWindowsTests {
+    @Test func testTerminateToProcessGroupKillsJobMembers() async throws {
+        _ = try await Subprocess.run(
+            self.cmdExe,
+            arguments: ["/c", "ping -n 60 127.0.0.1 > nul"],
+            input: .none,
+            output: .sequence,
+            error: .discarded
+        ) { execution in
+            let grandchildPid = try #require(
+                await Self.waitForChildPid(of: execution.processIdentifier.value, named: "ping.exe"),
+                "ping.exe did not appear as a child of cmd.exe"
+            )
+            let grandchildHandle = try #require(
+                OpenProcess(
+                    DWORD(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION),
+                    false,
+                    grandchildPid
+                ),
+                "Failed to open handle to grandchild process"
+            )
+            defer { _ = CloseHandle(grandchildHandle) }
+
+            #expect(Self.isProcessAlive(handle: grandchildHandle))
+
+            // Terminate the immediate child and any job members.
+            try execution.terminate(withExitCode: 0, toProcessGroup: true)
+
+            let exited = await Self.waitForProcessExit(handle: grandchildHandle)
+            #expect(exited, "Grandchild should have been terminated by TerminateJobObject")
+
+            for try await _ in execution.standardOutput {}
+        }
+    }
+
+    @Test func testTerminateWithoutProcessGroupLeavesJobMembers() async throws {
+        // The complement of `testTerminateToProcessGroupKillsJobMembers`.
+        // With `toProcessGroup: false`, `TerminateProcess` only affects the
+        // immediate child. Other job members, including grandchildren the
+        // child spawned, must survive and remain in the Job Object.
+        var grandchildHandleToCleanup: HANDLE?
+        defer {
+            if let handle = grandchildHandleToCleanup {
+                _ = TerminateProcess(handle, 0)
+                _ = CloseHandle(handle)
+            }
+        }
+
+        _ = try await Subprocess.run(
+            self.cmdExe,
+            arguments: ["/c", "ping -n 60 127.0.0.1 > nul"],
+            input: .none,
+            output: .sequence,
+            error: .discarded
+        ) { execution in
+            let grandchildPid = try #require(
+                await Self.waitForChildPid(of: execution.processIdentifier.value, named: "ping.exe"),
+                "ping.exe did not appear as a child of cmd.exe"
+            )
+            let grandchildHandle = try #require(
+                OpenProcess(
+                    DWORD(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE),
+                    false,
+                    grandchildPid
+                ),
+                "Failed to open handle to grandchild process"
+            )
+            grandchildHandleToCleanup = grandchildHandle
+
+            #expect(Self.isProcessAlive(handle: grandchildHandle))
+
+            // Terminate only the immediate child.
+            try execution.terminate(withExitCode: 0, toProcessGroup: false)
+
+            // Give Windows a moment, then verify the grandchild is still alive
+            // and still a member of a Job Object. Membership confirms that
+            // Subprocess's internal job survived the per-process termination
+            // and continues to track descendants.
+            try await Task.sleep(for: .milliseconds(250))
+            #expect(
+                Self.isProcessAlive(handle: grandchildHandle),
+                "Grandchild should remain alive after toProcessGroup: false termination"
+            )
+
+            var inJob: WindowsBool = false
+            #expect(
+                IsProcessInJob(grandchildHandle, nil, &inJob),
+                "IsProcessInJob failed"
+            )
+            #expect(
+                inJob.boolValue,
+                "Grandchild should still be a job member after toProcessGroup: false termination"
+            )
+
+            for try await _ in execution.standardOutput {}
+        }
+    }
+
+    @Test func testPreSpawnConfiguratorCanOptIntoManualResume() async throws {
+        // Setting `CREATE_SUSPENDED` from `preSpawnProcessConfigurator`
+        // signals that user code will resume the child explicitly.
+        // Subprocess itself must not call `ResumeThread` in that case.
+        //
+        // Verify this by calling `ResumeThread` from the body closure and
+        // check the previous suspend count it returns. `1` means the child
+        // was still suspended (correct), and `0` means Subprocess has already
+        // resumed it (incorrect).
         var platformOptions = PlatformOptions()
-        platformOptions.preSpawnProcessConfigurator = { (createProcessFlags, startupInfo) in
-            createProcessFlags |= DWORD(CREATE_SUSPENDED)
+        platformOptions.preSpawnProcessConfigurator = { creationFlags, _ in
+            creationFlags |= DWORD(CREATE_SUSPENDED)
         }
 
         let result = try await Subprocess.run(
             self.cmdExe,
-            arguments: ["/c", "echo"],
+            arguments: ["/c", "echo hello"],
             platformOptions: platformOptions,
             input: .none,
             output: .discarded,
             error: .discarded
         ) { execution in
-            guard AssignProcessToJobObject(hJob, execution.processIdentifier.processDescriptor) else {
-                throw SubprocessError.WindowsError(rawValue: GetLastError())
-            }
-            guard ResumeThread(execution.processIdentifier.threadHandle) != DWORD(bitPattern: -1) else {
-                throw SubprocessError.WindowsError(rawValue: GetLastError())
-            }
+            let previousSuspendCount = ResumeThread(execution.processIdentifier.threadHandle)
+            // Expect `1` since a greater suspend count means someone
+            // suspended the thread twice, and that should not happen.
+            #expect(previousSuspendCount == 1)
         }
         #expect(result.terminationStatus.isSuccess)
     }
@@ -410,6 +535,215 @@ extension SubprocessWindowsTests {
         // Okay the below is intentional because
         // `isAdmin` is a `WindowsBool` and we need `Bool`
         return isAdmin.boolValue
+    }
+
+    /// Finds the PID of a child of the given parent PID, optionally filtered
+    /// by executable name (case-insensitive), and returns the first match.
+    private static func findChildPid(
+        of parentPid: DWORD,
+        named name: String? = nil
+    ) throws -> DWORD? {
+        guard let snapshot = CreateToolhelp32Snapshot(DWORD(TH32CS_SNAPPROCESS), 0),
+            snapshot != INVALID_HANDLE_VALUE
+        else {
+            throw SubprocessError.WindowsError(rawValue: GetLastError())
+        }
+        defer { _ = CloseHandle(snapshot) }
+
+        var entry = PROCESSENTRY32W()
+        entry.dwSize = DWORD(MemoryLayout<PROCESSENTRY32W>.size)
+
+        guard Process32FirstW(snapshot, &entry) else {
+            return nil
+        }
+        repeat {
+            if entry.th32ParentProcessID == parentPid {
+                if let name = name {
+                    let exeName = withUnsafePointer(to: entry.szExeFile) {
+                        $0.withMemoryRebound(
+                            to: WCHAR.self,
+                            capacity: Int(MAX_PATH)
+                        ) { ptr in
+                            String(decodingCString: ptr, as: UTF16.self)
+                        }
+                    }
+                    if exeName.lowercased() == name.lowercased() {
+                        return entry.th32ProcessID
+                    }
+                } else {
+                    return entry.th32ProcessID
+                }
+            }
+        } while Process32NextW(snapshot, &entry)
+
+        return nil
+    }
+
+    /// Polls until a child of the given parent PID appears, or the timeout
+    /// elapses.
+    private static func waitForChildPid(
+        of parentPid: DWORD,
+        named name: String? = nil,
+        timeout: Duration = .seconds(5)
+    ) async throws -> DWORD? {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
+            if let pid = try findChildPid(of: parentPid, named: name) {
+                return pid
+            }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return nil
+    }
+
+    /// Returns `true` if `WaitForSingleObject` on the handle reports the
+    /// process as still running.
+    private static func isProcessAlive(handle: HANDLE) -> Bool {
+        return WaitForSingleObject(handle, 0) == WAIT_TIMEOUT
+    }
+
+    /// Asynchronously waits for the process referenced by the given handle
+    /// to exit, or for the given timeout to elapse. Returns `true` if the
+    /// process exited within the timeout.
+    private static func waitForProcessExit(
+        handle: HANDLE,
+        timeout: Duration = .seconds(5)
+    ) async -> Bool {
+        let handleBits = Int(bitPattern: handle)
+        return await withTaskGroup(of: Bool.self, returning: Bool.self) { group in
+            group.addTask {
+                let handle = HANDLE(bitPattern: handleBits)!
+                await waitForHandleSignal(handle: handle)
+                return true
+            }
+            group.addTask {
+                try? await Task.sleep(for: timeout)
+                return false
+            }
+            // First child task to finish wins. Cancel the other.
+            // `waitForHandleSignal` honors task cancellation and unwinds
+            // promptly so the group can return.
+            let first = await group.next()!
+            group.cancelAll()
+            return first
+        }
+    }
+
+    /// Asynchronously waits for the given handle to be signaled, using
+    /// `RegisterWaitForSingleObject`. Honors task cancellation by
+    /// unregistering the wait synchronously.
+    private static func waitForHandleSignal(handle: HANDLE) async {
+        // Shared mutable state between the registration scope, the C
+        // callback, and the cancellation handler. Access is serialized by
+        // a Win32 critical section since the callback runs on a thread-pool
+        // thread outside Swift Concurrency.
+        final class State: @unchecked Sendable {
+            var lock = SRWLOCK()
+            var waitHandle: HANDLE?
+            var continuation: CheckedContinuation<Void, Never>?
+            var contextRetained: UnsafeMutableRawPointer?
+
+            init() {
+                InitializeSRWLock(&lock)
+            }
+
+            /// Resumes the continuation if it hasn't been resumed yet, and
+            /// releases the retained `Unmanaged` continuation context.
+            /// Returns `true` if this call performed the resume.
+            func resumeOnce() -> Bool {
+                AcquireSRWLockExclusive(&lock)
+                defer { ReleaseSRWLockExclusive(&lock) }
+                guard let continuation = self.continuation else {
+                    return false
+                }
+                self.continuation = nil
+                if let context = self.contextRetained {
+                    Unmanaged<AnyObject>.fromOpaque(context).release()
+                    self.contextRetained = nil
+                }
+                continuation.resume()
+                return true
+            }
+        }
+
+        let state = State()
+
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                AcquireSRWLockExclusive(&state.lock)
+                state.continuation = continuation
+                ReleaseSRWLockExclusive(&state.lock)
+
+                // Retain a reference to `state` for the C callback. The
+                // callback releases this retain after resuming.
+                let context = Unmanaged.passRetained(state).toOpaque()
+                AcquireSRWLockExclusive(&state.lock)
+                state.contextRetained = context
+                ReleaseSRWLockExclusive(&state.lock)
+
+                let callback: WAITORTIMERCALLBACK = { context, _ in
+                    let state = Unmanaged<State>.fromOpaque(context!)
+                        .takeRetainedValue()
+                    // Clear `contextRetained` under lock since we just
+                    // released our own retain with `takeRetainedValue()`.
+                    AcquireSRWLockExclusive(&state.lock)
+                    state.contextRetained = nil
+                    let continuation = state.continuation
+                    state.continuation = nil
+                    ReleaseSRWLockExclusive(&state.lock)
+                    continuation?.resume()
+                }
+
+                var waitHandle: HANDLE?
+                let flags = ULONG(WT_EXECUTEONLYONCE | WT_EXECUTELONGFUNCTION)
+                guard
+                    RegisterWaitForSingleObject(
+                        &waitHandle,
+                        handle,
+                        callback,
+                        context,
+                        INFINITE,
+                        flags
+                    )
+                else {
+                    // Registration failed. Resume immediately. The caller's
+                    // timeout path handles the apparent non-exit.
+                    _ = state.resumeOnce()
+                    return
+                }
+
+                AcquireSRWLockExclusive(&state.lock)
+                state.waitHandle = waitHandle
+                ReleaseSRWLockExclusive(&state.lock)
+            }
+
+            // Successful exit path. The callback fired and resumed us.
+            // The wait handle still needs unregistering. `INVALID_HANDLE_VALUE`
+            // tells `UnregisterWaitEx` to wait synchronously for any
+            // in-flight callbacks (there are none at this point, but it's
+            // the safe form).
+            AcquireSRWLockExclusive(&state.lock)
+            let waitHandle = state.waitHandle
+            state.waitHandle = nil
+            ReleaseSRWLockExclusive(&state.lock)
+            if let waitHandle {
+                _ = UnregisterWaitEx(waitHandle, INVALID_HANDLE_VALUE)
+            }
+        } onCancel: {
+            // Cancellation path. Unregister the wait synchronously
+            // (`INVALID_HANDLE_VALUE` blocks until any in-flight callback
+            // completes), then resume the continuation if it wasn't already
+            // resumed by the callback racing us.
+            AcquireSRWLockExclusive(&state.lock)
+            let waitHandle = state.waitHandle
+            state.waitHandle = nil
+            ReleaseSRWLockExclusive(&state.lock)
+            if let waitHandle {
+                _ = UnregisterWaitEx(waitHandle, INVALID_HANDLE_VALUE)
+            }
+            _ = state.resumeOnce()
+        }
     }
 }
 

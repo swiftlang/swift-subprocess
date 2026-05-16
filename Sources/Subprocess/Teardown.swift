@@ -220,7 +220,8 @@ extension Execution {
             case .kill:
                 #if os(Windows)
                 try? self.terminate(
-                    withExitCode: 0
+                    withExitCode: 0,
+                    toProcessGroup: killProcessGroup
                 )
                 #else
                 try? self.send(signal: .kill, toProcessGroup: killProcessGroup)
