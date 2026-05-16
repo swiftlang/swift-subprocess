@@ -22,7 +22,6 @@ import Musl
 import WinSDK
 #endif
 
-internal import Dispatch
 import _SubprocessCShims
 
 #if canImport(Synchronization)

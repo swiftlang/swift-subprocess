@@ -25,8 +25,6 @@ import System
 import SystemPackage
 #endif
 
-internal import Dispatch
-
 /// An input type that reads from a `Data` value.
 public struct DataInput: InputProtocol {
     private let data: Data

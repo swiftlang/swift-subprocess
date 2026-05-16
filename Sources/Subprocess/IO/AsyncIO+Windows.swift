@@ -21,7 +21,6 @@ import SystemPackage
 
 import _SubprocessCShims
 import Synchronization
-internal import Dispatch
 @preconcurrency import WinSDK
 
 private typealias SignalStream = AsyncThrowingStream<DWORD, any Error>
