@@ -111,7 +111,8 @@ extension SubprocessError {
 
     private enum Context: Sendable, Hashable {
         case string(String)
-        case int(Int)
+        case byteCount(Int64)
+        case codeUnitCount(count: Int, encodingName: String)
         case processControlOperation(ProcessControlOperation)
     }
 
@@ -178,13 +179,17 @@ extension SubprocessError: CustomStringConvertible, CustomDebugStringConvertible
                 return "Failed to write bytes to the child process."
             }
         case .outputLimitExceeded:
-            if let context = self.context[self.code],
-                case .int(let limit) = context
-            {
-                return "Child process output exceeded the limit of \(limit) bytes."
-            } else {
-                return "Child process output exceeded the limit."
+            if let context = self.context[self.code] {
+                switch context {
+                case .byteCount(let limit):
+                    return "Child process output exceeded the limit of \(limit) bytes."
+                case .codeUnitCount(let limit, let encodingName):
+                    return "Child process output exceeded the line length limit of \(limit) \(encodingName) code units."
+                default:
+                    break
+                }
             }
+            return "Child process output exceeded the limit."
         case .asyncIOFailed:
             let context = self.context[self.code]
             switch (self.underlyingError, context) {
@@ -286,12 +291,28 @@ extension SubprocessError {
         )
     }
 
-    internal static func outputLimitExceeded(limit: Int) -> Self {
+    internal static func outputLimitExceeded(byteLimit: Int64) -> Self {
         return SubprocessError(
             code: .outputLimitExceeded,
             underlyingError: nil,
             context: [
-                .outputLimitExceeded: .int(limit)
+                .outputLimitExceeded: .byteCount(byteLimit)
+            ]
+        )
+    }
+
+    internal static func outputLimitExceeded<Encoding: _UnicodeEncoding>(
+        codeUnits limit: Int,
+        encoding: Encoding.Type
+    ) -> Self {
+        return SubprocessError(
+            code: .outputLimitExceeded,
+            underlyingError: nil,
+            context: [
+                .outputLimitExceeded: .codeUnitCount(
+                    count: limit,
+                    encodingName: String(describing: encoding)
+                )
             ]
         )
     }

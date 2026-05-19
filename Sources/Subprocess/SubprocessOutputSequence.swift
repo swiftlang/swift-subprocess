@@ -129,7 +129,7 @@ public struct SubprocessOutputSequence: AsyncSequence, @unchecked Sendable {
     ///   the buffer contents as strings.
     public func strings(
         separatedBy separator: StringSequence<UTF8>.Separator = .lineBreaks,
-        bufferingPolicy: StringSequence<UTF8>.BufferingPolicy = .maxLineLength(128 * 1024),
+        bufferingPolicy: StringSequence<UTF8>.BufferingPolicy = .maxLineLength(codeUnits: 128 * 1024),
     ) -> StringSequence<UTF8> {
         return StringSequence(
             underlying: self,
@@ -153,7 +153,7 @@ public struct SubprocessOutputSequence: AsyncSequence, @unchecked Sendable {
     ///   the buffer contents as strings.
     public func strings<Encoding: _UnicodeEncoding & Sendable>(
         separatedBy separator: StringSequence<Encoding>.Separator = .lineBreaks,
-        bufferingPolicy: StringSequence<Encoding>.BufferingPolicy = .maxLineLength(128 * 1024),
+        bufferingPolicy: StringSequence<Encoding>.BufferingPolicy = .maxLineLength(codeUnits: 128 * 1024),
         as encoding: Encoding.Type,
     ) -> StringSequence<Encoding> {
         return StringSequence(
@@ -382,8 +382,8 @@ extension SubprocessOutputSequence {
 
                 while let first = try await nextCodeUnit() {
                     // Throw if we exceed max line length
-                    if case .maxLineLength(let maxLength) = self.bufferingPolicy, buffer.count >= maxLength {
-                        throw SubprocessError.outputLimitExceeded(limit: maxLength)
+                    if case .maxLineLength(let maxCodeUnits) = self.bufferingPolicy, buffer.count >= maxCodeUnits {
+                        throw SubprocessError.outputLimitExceeded(codeUnits: maxCodeUnits, encoding: Encoding.self)
                     }
 
                     switch self.separator.storage {
@@ -506,10 +506,11 @@ extension SubprocessOutputSequence.StringSequence {
     public enum BufferingPolicy: Sendable {
         /// Adds to the buffer without imposing a limit on line length.
         case unbounded
-        /// Imposes a maximum line length limit.
+        /// Imposes a maximum line length limit, measured in code units of
+        /// the sequence's `Encoding`.
         ///
         /// The subprocess throws an error if a line exceeds this limit.
-        case maxLineLength(Int)
+        case maxLineLength(codeUnits: Int)
     }
 
     /// A delimiter that determines where a ``StringSequence``

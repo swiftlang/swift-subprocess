@@ -66,7 +66,7 @@ extension SubprocessIntegrationTests {
         let result = try await _run(
             setup,
             input: .none,
-            output: .string(limit: 32),
+            output: .string(byteLimit: 32),
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
@@ -111,7 +111,7 @@ extension SubprocessIntegrationTests {
         let result = try await _run(
             setup,
             input: .none,
-            output: .string(limit: .max),
+            output: .string(byteLimit: .max),
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
@@ -184,7 +184,7 @@ extension SubprocessIntegrationTests {
                 environment: .inherit.updating([
                     "PATH": "\(firstDir.path()):\(secondDir.path())"
                 ]),
-                output: .string(limit: 8)
+                output: .string(byteLimit: 8)
             )
             #expect(first.terminationStatus.isSuccess)
             #expect(first.standardOutput?.trimmingNewLineAndQuotes() == "FIRST")
@@ -194,7 +194,7 @@ extension SubprocessIntegrationTests {
                 environment: .inherit.updating([
                     "PATH": "\(secondDir.path()):\(firstDir.path())"
                 ]),
-                output: .string(limit: 8)
+                output: .string(byteLimit: 8)
             )
             #expect(second.terminationStatus.isSuccess)
             #expect(second.standardOutput?.trimmingNewLineAndQuotes() == "SECOND")
@@ -221,7 +221,7 @@ extension SubprocessIntegrationTests {
         let result = try await _run(
             setup,
             input: .none,
-            output: .string(limit: 32),
+            output: .string(byteLimit: 32),
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
@@ -254,7 +254,7 @@ extension SubprocessIntegrationTests {
         let result = try await _run(
             setup,
             input: .none,
-            output: .string(limit: 16),
+            output: .string(byteLimit: 16),
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
@@ -277,7 +277,7 @@ extension SubprocessIntegrationTests {
                 executablePathOverride: nil,
                 remainingValues: [arguments]
             ),
-            output: .string(limit: 32)
+            output: .string(byteLimit: 32)
         )
         #expect(result.terminationStatus.isSuccess)
         // https://github.com/swiftlang/swift/issues/77235
@@ -309,7 +309,7 @@ extension SubprocessIntegrationTests {
         let result = try await _run(
             setup,
             input: .none,
-            output: .string(limit: .max),
+            output: .string(byteLimit: .max),
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
@@ -358,7 +358,7 @@ extension SubprocessIntegrationTests {
         let result = try await _run(
             setup,
             input: .none,
-            output: .string(limit: 32),
+            output: .string(byteLimit: 32),
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
@@ -406,7 +406,7 @@ extension SubprocessIntegrationTests {
         let result = try await _run(
             setup,
             input: .none,
-            output: .string(limit: 32),
+            output: .string(byteLimit: 32),
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
@@ -434,7 +434,7 @@ extension SubprocessIntegrationTests {
         let result2 = try await _run(
             setup,
             input: .none,
-            output: .string(limit: 32),
+            output: .string(byteLimit: 32),
             error: .discarded
         )
         // The new echo/printenv should not find `SubprocessTest`
@@ -473,7 +473,7 @@ extension SubprocessIntegrationTests {
         let result = try await _run(
             setup,
             input: .none,
-            output: .string(limit: .max),
+            output: .string(byteLimit: .max),
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
@@ -523,7 +523,7 @@ extension SubprocessIntegrationTests {
         let result = try await _run(
             setup,
             input: .none,
-            output: .string(limit: 32),
+            output: .string(byteLimit: 32),
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
@@ -563,7 +563,7 @@ extension SubprocessIntegrationTests {
         let result = try await _run(
             setup,
             input: .none,
-            output: .string(limit: 32),
+            output: .string(byteLimit: 32),
             error: .discarded
         )
         #if os(Windows)
@@ -588,7 +588,7 @@ extension SubprocessIntegrationTests {
         let result = try await _run(
             setup,
             input: .none,
-            output: .string(limit: 32),
+            output: .string(byteLimit: 32),
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
@@ -613,7 +613,7 @@ extension SubprocessIntegrationTests {
         let result = try await _run(
             setup,
             input: .none,
-            output: .string(limit: 32),
+            output: .string(byteLimit: 32),
             error: .discarded
         )
         #expect(result.terminationStatus == .exited(1))
@@ -636,7 +636,7 @@ extension SubprocessIntegrationTests {
         let result = try await _run(
             setup,
             input: .none,
-            output: .string(limit: 64),
+            output: .string(byteLimit: 64),
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
@@ -666,7 +666,7 @@ extension SubprocessIntegrationTests {
         let result = try await _run(
             setup,
             input: .none,
-            output: .string(limit: .max),
+            output: .string(byteLimit: .max),
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
@@ -700,7 +700,7 @@ extension SubprocessIntegrationTests {
         let result = try await _run(
             setup,
             input: .none,
-            output: .string(limit: .max),
+            output: .string(byteLimit: .max),
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
@@ -750,7 +750,7 @@ extension SubprocessIntegrationTests {
         #endif
 
         await #expect(throws: expectedError) {
-            _ = try await _run(setup, input: .none, output: .string(limit: .max), error: .discarded)
+            _ = try await _run(setup, input: .none, output: .string(byteLimit: .max), error: .discarded)
         }
     }
 }
@@ -772,7 +772,7 @@ extension SubprocessIntegrationTests {
         let catResult = try await _run(
             setup,
             input: .none,
-            output: .string(limit: 16),
+            output: .string(byteLimit: 16),
             error: .discarded
         )
         #expect(catResult.terminationStatus.isSuccess)
@@ -799,7 +799,7 @@ extension SubprocessIntegrationTests {
         let catResult = try await _run(
             setup,
             input: .string(content, using: UTF8.self),
-            output: .string(limit: .max),
+            output: .string(byteLimit: .max),
             error: .discarded
         )
         #expect(catResult.terminationStatus.isSuccess)
@@ -825,7 +825,7 @@ extension SubprocessIntegrationTests {
         let catResult = try await _run(
             setup,
             input: .array(Array(content.utf8)),
-            output: .string(limit: .max),
+            output: .string(byteLimit: .max),
             error: .discarded
         )
         #expect(catResult.terminationStatus.isSuccess)
@@ -862,7 +862,7 @@ extension SubprocessIntegrationTests {
         let cat = try await _run(
             setup,
             input: .fileDescriptor(text, closeAfterSpawningProcess: true),
-            output: .data(limit: 2048 * 1024),
+            output: .data(byteLimit: 2048 * 1024),
             error: .discarded
         )
         #expect(cat.terminationStatus.isSuccess)
@@ -894,7 +894,7 @@ extension SubprocessIntegrationTests {
         let catResult = try await _run(
             setup,
             input: .data(expected),
-            output: .data(limit: 2048 * 1024),
+            output: .data(byteLimit: 2048 * 1024),
             error: .discarded
         )
         #expect(catResult.terminationStatus.isSuccess)
@@ -971,7 +971,7 @@ extension SubprocessIntegrationTests {
         let catResult = try await _run(
             setup,
             input: .sequence(stream),
-            output: .data(limit: 2048 * 1024),
+            output: .data(byteLimit: 2048 * 1024),
             error: .discarded
         )
         #expect(catResult.terminationStatus.isSuccess)
@@ -1055,8 +1055,8 @@ extension SubprocessIntegrationTests {
         let result = try await _run(
             setup,
             input: .none,
-            output: .string(limit: .max),
-            error: .string(limit: .max)
+            output: .string(byteLimit: .max),
+            error: .string(byteLimit: .max)
         )
         #expect(result.terminationStatus.isSuccess)
         #expect(result.standardOutput?.trimmingNewLineAndQuotes().isEmpty == true)
@@ -1113,7 +1113,7 @@ extension SubprocessIntegrationTests {
         let catResult = try await _run(
             setup,
             input: .data(expected),
-            output: .string(limit: 2048 * 1024, encoding: UTF8.self),
+            output: .string(byteLimit: 2048 * 1024, encoding: UTF8.self),
             error: .discarded
         )
         let output = try #require(
@@ -1146,11 +1146,11 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
+        await #expect(throws: SubprocessError.outputLimitExceeded(byteLimit: 16)) {
             _ = try await _run(
                 setup,
                 input: .none,
-                output: .string(limit: 16),
+                output: .string(byteLimit: 16),
                 error: .discarded
             )
         }
@@ -1205,7 +1205,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
+        await #expect(throws: SubprocessError.outputLimitExceeded(byteLimit: 16)) {
             _ = try await _run(
                 setup,
                 input: .none,
@@ -1325,7 +1325,7 @@ extension SubprocessIntegrationTests {
         let catResult = try await _run(
             setup,
             input: .data(expected),
-            output: .data(limit: 2048 * 1024),
+            output: .data(byteLimit: 2048 * 1024),
             error: .discarded
         )
         #expect(
@@ -1350,11 +1350,11 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
+        await #expect(throws: SubprocessError.outputLimitExceeded(byteLimit: 16)) {
             _ = try await _run(
                 setup,
                 input: .none,
-                output: .data(limit: 16),
+                output: .data(byteLimit: 16),
                 error: .discarded
             )
         }
@@ -1385,7 +1385,7 @@ extension SubprocessIntegrationTests {
             setup,
             input: .data(expected),
             output: .discarded,
-            error: .string(limit: 2048 * 1024, encoding: UTF8.self)
+            error: .string(byteLimit: 2048 * 1024, encoding: UTF8.self)
         )
         let output = try #require(
             catResult.standardError?.trimmingNewLineAndQuotes()
@@ -1416,12 +1416,12 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
+        await #expect(throws: SubprocessError.outputLimitExceeded(byteLimit: 16)) {
             _ = try await _run(
                 setup,
                 input: .none,
                 output: .discarded,
-                error: .string(limit: 16)
+                error: .string(byteLimit: 16)
             )
         }
     }
@@ -1474,7 +1474,7 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
+        await #expect(throws: SubprocessError.outputLimitExceeded(byteLimit: 16)) {
             _ = try await _run(
                 setup,
                 input: .none,
@@ -1643,7 +1643,7 @@ extension SubprocessIntegrationTests {
             setup,
             input: .data(expected),
             output: .discarded,
-            error: .data(limit: 2048 * 1024)
+            error: .data(byteLimit: 2048 * 1024)
         )
         #expect(
             catResult.standardError == expected
@@ -1666,12 +1666,12 @@ extension SubprocessIntegrationTests {
         )
         #endif
 
-        await #expect(throws: SubprocessError.outputLimitExceeded(limit: 16)) {
+        await #expect(throws: SubprocessError.outputLimitExceeded(byteLimit: 16)) {
             _ = try await _run(
                 setup,
                 input: .none,
                 output: .discarded,
-                error: .data(limit: 16)
+                error: .data(byteLimit: 16)
             )
         }
     }
@@ -1736,8 +1736,8 @@ extension SubprocessIntegrationTests {
             let result = try await _run(
                 setup,
                 input: .none,
-                output: .string(limit: 4),
-                error: .string(limit: 4)
+                output: .string(byteLimit: 4),
+                error: .string(byteLimit: 4)
             )
             #expect(result.terminationStatus.isSuccess)
             #expect(result.standardOutput?.trimmingNewLineAndQuotes() == "x")
@@ -1762,8 +1762,8 @@ extension SubprocessIntegrationTests {
             let result = try await _run(
                 setup,
                 input: .none,
-                output: .string(limit: 4),
-                error: .string(limit: 4)
+                output: .string(byteLimit: 4),
+                error: .string(byteLimit: 4)
             )
             #expect(result.terminationStatus.isSuccess)
             #expect(result.standardOutput?.trimmingNewLineAndQuotes() == "x")
@@ -1834,8 +1834,8 @@ extension SubprocessIntegrationTests {
         let result = try await _run(
             setup,
             input: .none,
-            output: .string(limit: .max),
-            error: .string(limit: .max)
+            output: .string(byteLimit: .max),
+            error: .string(byteLimit: .max)
         )
         #expect(result.terminationStatus.isSuccess)
         #expect(result.standardOutput?.trimmingNewLineAndQuotes() == "")
@@ -1905,7 +1905,7 @@ extension SubprocessIntegrationTests {
         let result = try await _run(
             setup,
             input: .none,
-            output: .string(limit: 64),
+            output: .string(byteLimit: 64),
             error: .combinedWithOutput
         )
         #expect(result.terminationStatus.isSuccess)
@@ -2012,7 +2012,7 @@ extension SubprocessIntegrationTests {
         let catResult = try await _run(
             setup,
             input: .none,
-            output: .data(limit: 64),
+            output: .data(byteLimit: 64),
             error: .combinedWithOutput
         )
         #expect(catResult.terminationStatus.isSuccess)
@@ -2136,7 +2136,7 @@ extension SubprocessIntegrationTests {
         let result = try await _run(
             setup,
             input: .none,
-            output: .string(limit: 64),
+            output: .string(byteLimit: 64),
             error: .discarded
         ) { _ in
             return "closure-value"
@@ -2218,7 +2218,7 @@ extension SubprocessIntegrationTests {
             setup,
             input: .none,
             output: .sequence,
-            error: .string(limit: 64)
+            error: .string(byteLimit: 64)
         ) { execution in
             var collected = ""
             for try await line in execution.standardOutput.strings() {
@@ -2247,7 +2247,7 @@ extension SubprocessIntegrationTests {
         let result = try await _run(
             setup,
             input: .none,
-            output: .string(limit: 64),
+            output: .string(byteLimit: 64),
             error: .sequence
         ) { execution in
             var collected = ""
@@ -2280,7 +2280,7 @@ extension SubprocessIntegrationTests {
         let result = try await _run(
             setup,
             input: .inputWriter,
-            output: .string(limit: 64),
+            output: .string(byteLimit: 64),
             error: .discarded
         ) { execution in
             _ = try await execution.standardInputWriter.write("hello\n")
@@ -2367,7 +2367,7 @@ extension SubprocessIntegrationTests {
         // reaching EOF.
         //
         // The PID is sent on stderr so the call can capture it via
-        // `.sequence`, while `.string(limit:)` is the mechanism that
+        // `.sequence`, while `.string(byteLimit:)` is the mechanism that
         // would hang on stdout.
         let script = """
             ( exec sleep 12345678 ) </dev/null 2>/dev/null &
@@ -2390,7 +2390,7 @@ extension SubprocessIntegrationTests {
         let result = try await _run(
             setup,
             input: .none,
-            output: .string(limit: 1024),
+            output: .string(byteLimit: 1024),
             error: .sequence
         ) { execution in
             var capturedPid: pid_t = 0
@@ -2410,7 +2410,7 @@ extension SubprocessIntegrationTests {
 
     @Test func testWeDoNotHangIfStandardErrorRemainsOpenButProcessExits() async throws {
         // Mirror of the stdout test: the grandchild only inherits stderr,
-        // and `.string(limit:)` on stderr blocks waiting for an EOF that
+        // and `.string(byteLimit:)` on stderr blocks waiting for an EOF that
         // never arrives.
         let script = """
             ( exec sleep 12345678 ) </dev/null >/dev/null &
@@ -2434,7 +2434,7 @@ extension SubprocessIntegrationTests {
             setup,
             input: .none,
             output: .sequence,
-            error: .string(limit: 1024)
+            error: .string(byteLimit: 1024)
         ) { execution in
             var capturedPid: pid_t = 0
             for try await line in execution.standardOutput.strings() {
@@ -2526,7 +2526,7 @@ extension SubprocessIntegrationTests {
         // since `Start-Process -NoNewWindow` copies the parent's std
         // handles), prints the PID on stderr so we can capture it via
         // `.sequence`, prints "GO" on stdout, and exits. The grandchild
-        // keeps the stdout write end alive — `.string(limit:)` on stdout
+        // keeps the stdout write end alive — `.string(byteLimit:)` on stdout
         // is the call that would hang waiting for an EOF that never
         // arrives.
         let script = """
@@ -2547,7 +2547,7 @@ extension SubprocessIntegrationTests {
         let result = try await _run(
             setup,
             input: .none,
-            output: .string(limit: 1024),
+            output: .string(byteLimit: 1024),
             error: .sequence
         ) { execution in
             // The grandchild also inherits stderr, so the call can't
@@ -2572,7 +2572,7 @@ extension SubprocessIntegrationTests {
         // Mirror of the stdout test: PowerShell prints the PID on stdout
         // (so we can capture it via `.sequence`) and "GO" on stderr, then
         // exits. The grandchild keeps the stderr write end alive —
-        // `.string(limit:)` on stderr is the call that would hang.
+        // `.string(byteLimit:)` on stderr is the call that would hang.
         let script = """
             $ErrorActionPreference = 'Stop'
             \(Self.spawnGrandchildSleep)
@@ -2592,7 +2592,7 @@ extension SubprocessIntegrationTests {
             setup,
             input: .none,
             output: .sequence,
-            error: .string(limit: 1024)
+            error: .string(byteLimit: 1024)
         ) { execution in
             var iterator = execution.standardOutput.strings().makeAsyncIterator()
             while let line = try await iterator.next() {
@@ -2815,8 +2815,8 @@ extension SubprocessIntegrationTests {
                     let r = try await _run(
                         setup,
                         input: .string(string),
-                        output: .data(limit: .max),
-                        error: .data(limit: .max)
+                        output: .data(byteLimit: .max),
+                        error: .data(byteLimit: .max)
                     )
                     #expect(r.terminationStatus == .exited(0))
                     #expect(r.standardOutput.count == 100_000, "Standard output actual \(r.standardOutput.count)")
@@ -3112,7 +3112,7 @@ extension SubprocessIntegrationTests {
                 let result = try await _run(
                     setup,
                     input: .fileDescriptor(readEnd, closeAfterSpawningProcess: true),
-                    output: .string(limit: 32),
+                    output: .string(byteLimit: 32),
                     error: .discarded
                 )
 

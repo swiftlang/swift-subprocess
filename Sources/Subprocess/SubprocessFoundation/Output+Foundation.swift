@@ -24,26 +24,26 @@ public struct DataOutput: OutputProtocol, ErrorOutputProtocol {
     /// The output type for this output option.
     public typealias OutputType = Data
     /// The maximum number of bytes to collect.
-    public let maxSize: Int
+    public let maxSize: Int64
 
     /// Creates data from a raw span.
     public func output(from span: RawSpan) throws(SubprocessError) -> Data {
         return Data(span)
     }
 
-    internal init(limit: Int) {
-        self.maxSize = limit
+    internal init(byteLimit: Int64) {
+        self.maxSize = byteLimit
     }
 }
 
 extension OutputProtocol where Self == DataOutput {
     /// Creates a subprocess output that collects output as `Data`,
-    /// up to `limit` bytes.
+    /// up to `byteLimit` bytes.
     ///
     /// The subprocess throws an error if the child process
-    /// produces more bytes than `limit`.
-    public static func data(limit: Int) -> Self {
-        return .init(limit: limit)
+    /// produces more bytes than `byteLimit`.
+    public static func data(byteLimit: Int64) -> Self {
+        return .init(byteLimit: byteLimit)
     }
 }
 

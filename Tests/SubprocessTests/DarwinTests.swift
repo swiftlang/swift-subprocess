@@ -45,7 +45,7 @@ struct SubprocessDarwinTests {
             .path("/bin/bash"),
             arguments: ["-c", "ps -o pid,pgid,tpgid -p $$"],
             platformOptions: platformOptions,
-            output: .string(limit: .max)
+            output: .string(byteLimit: .max)
         )
         try assertNewSessionCreated(with: psResult)
     }
@@ -62,7 +62,7 @@ struct SubprocessDarwinTests {
         let pwdResult = try await Subprocess.run(
             .path("/bin/pwd"),
             platformOptions: platformOptions,
-            output: .string(limit: .max)
+            output: .string(byteLimit: .max)
         )
         #expect(pwdResult.terminationStatus.isSuccess)
         let currentDir = try #require(

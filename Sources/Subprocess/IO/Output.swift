@@ -29,12 +29,12 @@ public protocol OutputProtocol: Sendable, ~Copyable {
     func output(from span: RawSpan) throws -> OutputType
 
     /// The maximum number of bytes to collect.
-    var maxSize: Int { get }
+    var maxSize: Int64 { get }
 }
 
 extension OutputProtocol {
     /// The maximum number of bytes to collect.
-    public var maxSize: Int { 128 * 1024 }
+    public var maxSize: Int64 { 128 * 1024 }
 }
 
 /// An output type that discards output from the child process.
@@ -102,7 +102,7 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol, ErrorOut
     /// The type for this output.
     public typealias OutputType = String?
     /// The maximum number of bytes to collect.
-    public let maxSize: Int
+    public let maxSize: Int64
 
     /// Creates a string from a raw span.
     public func output(from span: RawSpan) throws -> String? {
@@ -112,8 +112,8 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol, ErrorOut
         }
     }
 
-    internal init(limit: Int, encoding: Encoding.Type) {
-        self.maxSize = limit
+    internal init(byteLimit: Int64, encoding: Encoding.Type) {
+        self.maxSize = byteLimit
     }
 }
 
@@ -122,7 +122,7 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
     /// The output type for this output option.
     public typealias OutputType = [UInt8]
     /// The maximum number of bytes to collect.
-    public let maxSize: Int
+    public let maxSize: Int64
 
     internal func captureOutput(
         from diskIO: consuming IODescriptor,
@@ -130,18 +130,23 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
     ) async throws(SubprocessError) -> [UInt8] {
         var result: [UInt8] = []
         do {
-            var maxLength = self.maxSize
-            if maxLength != .max {
+            var maxLength: Int64 = self.maxSize
+            let isBounded = maxLength != .max
+            if isBounded {
                 // Read one extra byte to detect output that exceeds the
                 // limit.
                 maxLength += 1
+            }
+            // Clamp to `Int.max` on 32-bit platforms.
+            let cappedMaxLength = Int(exactly: maxLength) ?? Int.max
+            if isBounded {
                 // Reserve capacity to avoid reallocations.
-                result.reserveCapacity(maxLength)
+                result.reserveCapacity(cappedMaxLength)
             }
             let bufferSize = AsyncIO.queryPipeBufferSize(for: diskIO.descriptor())
 
-            while result.count < maxLength {
-                let remaining = maxLength - result.count
+            while result.count < cappedMaxLength {
+                let remaining = cappedMaxLength - result.count
                 guard
                     let chunk = try await AsyncIO.shared.read(
                         from: diskIO,
@@ -159,8 +164,8 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
         }
         try diskIO.safelyClose()
 
-        if result.count > self.maxSize {
-            throw .outputLimitExceeded(limit: self.maxSize)
+        if Int64(result.count) > self.maxSize {
+            throw .outputLimitExceeded(byteLimit: self.maxSize)
         }
         return result
     }
@@ -170,7 +175,7 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
         span.withUnsafeBytes { Array($0) }
     }
 
-    internal init(limit: Int) {
+    internal init(limit: Int64) {
         self.maxSize = limit
     }
 }
@@ -231,23 +236,23 @@ extension OutputProtocol where Self == StringOutput<UTF8> {
     /// Creates a subprocess output that collects output as a UTF-8 string.
     ///
     /// The subprocess throws an error if the child process
-    /// produces more bytes than `limit`.
-    public static func string(limit: Int) -> Self {
-        return .init(limit: limit, encoding: UTF8.self)
+    /// produces more bytes than `byteLimit`.
+    public static func string(byteLimit: Int64) -> Self {
+        return .init(byteLimit: byteLimit, encoding: UTF8.self)
     }
 }
 
 extension OutputProtocol {
     /// Creates a subprocess output that collects output as
-    /// a string using the given encoding, up to `limit` bytes.
+    /// a string using the given encoding, up to `byteLimit` bytes.
     ///
     /// The subprocess throws an error if the child process
-    /// produces more bytes than `limit`.
+    /// produces more bytes than `byteLimit`.
     public static func string<Encoding: Unicode.Encoding>(
-        limit: Int,
+        byteLimit: Int64,
         encoding: Encoding.Type
     ) -> Self where Self == StringOutput<Encoding> {
-        return .init(limit: limit, encoding: encoding)
+        return .init(byteLimit: byteLimit, encoding: encoding)
     }
 }
 
@@ -257,7 +262,7 @@ extension OutputProtocol where Self == BytesOutput {
     ///
     /// The subprocess throws an error if the child process
     /// produces more bytes than `limit`.
-    public static func bytes(limit: Int) -> Self {
+    public static func bytes(limit: Int64) -> Self {
         return .init(limit: limit)
     }
 }
@@ -366,17 +371,22 @@ extension OutputProtocol {
 
         var result: [UInt8] = []
         do {
-            var maxLength = self.maxSize
-            if maxLength != .max {
+            var maxLength: Int64 = self.maxSize
+            let isBounded = maxLength != .max
+            if isBounded {
                 // Read one extra byte to detect output that exceeds the
                 // limit.
                 maxLength += 1
-                result.reserveCapacity(maxLength)
+            }
+            // Clamp to `Int.max` on 32-bit platforms.
+            let cappedMaxLength = Int(exactly: maxLength) ?? Int.max
+            if isBounded {
+                result.reserveCapacity(cappedMaxLength)
             }
             let bufferSize = AsyncIO.queryPipeBufferSize(for: diskIO.descriptor())
 
-            while result.count < maxLength {
-                let remaining = maxLength - result.count
+            while result.count < cappedMaxLength {
+                let remaining = cappedMaxLength - result.count
                 guard
                     let chunk = try await AsyncIO.shared.read(
                         from: diskIO,
@@ -394,8 +404,8 @@ extension OutputProtocol {
         }
 
         try diskIO.safelyClose()
-        if result.count > self.maxSize {
-            throw SubprocessError.outputLimitExceeded(limit: self.maxSize)
+        if Int64(result.count) > self.maxSize {
+            throw SubprocessError.outputLimitExceeded(byteLimit: self.maxSize)
         }
 
         return try self.output(from: result)

@@ -53,7 +53,7 @@ extension SubprocessWindowsTests {
                 .path("C:\\Windows\\System32\\whoami.exe"),
                 workingDirectory: workingDirectory,
                 platformOptions: platformOptions,
-                output: .string(limit: .max)
+                output: .string(byteLimit: .max)
             )
 
             try withKnownIssue {
@@ -100,7 +100,7 @@ extension SubprocessWindowsTests {
                 "-ExecutionPolicy", "Bypass", "-File", windowsTester.string,
                 "-mode", "get-console-window",
             ],
-            output: .string(limit: .max)
+            output: .string(byteLimit: .max)
         )
         #expect(sameConsoleResult.terminationStatus.isSuccess)
         let sameConsoleValue = try #require(
@@ -120,7 +120,7 @@ extension SubprocessWindowsTests {
                 "-mode", "get-console-window",
             ],
             platformOptions: platformOptions,
-            output: .string(limit: .max)
+            output: .string(byteLimit: .max)
         )
         #expect(differentConsoleResult.terminationStatus.isSuccess)
         let differentConsoleValue = try #require(
@@ -142,7 +142,7 @@ extension SubprocessWindowsTests {
                 "-mode", "get-console-window",
             ],
             platformOptions: platformOptions,
-            output: .string(limit: .max)
+            output: .string(byteLimit: .max)
         )
         #expect(detachConsoleResult.terminationStatus.isSuccess)
         let detachConsoleValue = try #require(
@@ -166,7 +166,7 @@ extension SubprocessWindowsTests {
                 "-mode", "get-console-window",
             ],
             platformOptions: platformOptions,
-            output: .string(limit: .max)
+            output: .string(byteLimit: .max)
         )
         #expect(newConsoleResult.terminationStatus.isSuccess)
         let newConsoleValue = try #require(
@@ -196,7 +196,7 @@ extension SubprocessWindowsTests {
                 "-Command", "$consoleTitle = [console]::Title; Write-Host $consoleTitle",
             ],
             platformOptions: platformOptions,
-            output: .string(limit: 32)
+            output: .string(byteLimit: 32)
         )
         #expect(changeTitleResult.terminationStatus.isSuccess)
         let newTitle = try #require(
@@ -248,7 +248,7 @@ extension SubprocessWindowsTests {
                     "-mode", "is-process-suspended",
                     "-processID", "\(subprocess.processIdentifier.value)",
                 ],
-                output: .string(limit: .max)
+                output: .string(byteLimit: .max)
             )
             #expect(checkResult.terminationStatus.isSuccess)
             var isSuspended = try #require(
@@ -265,7 +265,7 @@ extension SubprocessWindowsTests {
                     "-mode", "is-process-suspended",
                     "-processID", "\(subprocess.processIdentifier.value)",
                 ],
-                output: .string(limit: .max)
+                output: .string(byteLimit: .max)
             )
             #expect(checkResult.terminationStatus.isSuccess)
             isSuspended = try #require(

@@ -101,8 +101,8 @@ extension SubprocessUnixTests {
             .path("/usr/bin/id"),
             arguments: ["-G"],
             platformOptions: platformOptions,
-            output: .string(limit: .max),
-            error: .string(limit: .max),
+            output: .string(byteLimit: .max),
+            error: .string(byteLimit: .max),
         )
         #expect(idResult.terminationStatus.isSuccess, Comment(rawValue: idResult.standardError ?? ""))
         let ids = try #require(
@@ -135,7 +135,7 @@ extension SubprocessUnixTests {
             .path("/bin/sh"),
             arguments: ["-c", "ps -o pid,pgid -p $$"],
             platformOptions: platformOptions,
-            output: .string(limit: .max)
+            output: .string(byteLimit: .max)
         )
         #expect(psResult.terminationStatus.isSuccess)
         let resultValue = try #require(
@@ -167,7 +167,7 @@ extension SubprocessUnixTests {
             .path("/bin/sh"),
             arguments: ["-c", "cat /proc/$$/stat"],
             platformOptions: platformOptions,
-            output: .string(limit: .max)
+            output: .string(byteLimit: .max)
         )
         try assertNewSessionCreated(fromProcStat: statResult)
         #else
@@ -177,7 +177,7 @@ extension SubprocessUnixTests {
             .path("/bin/sh"),
             arguments: ["-c", "ps -o pid,pgid,tpgid -p $$"],
             platformOptions: platformOptions,
-            output: .string(limit: .max)
+            output: .string(byteLimit: .max)
         )
         try assertNewSessionCreated(with: psResult)
         #endif
@@ -380,7 +380,7 @@ extension SubprocessUnixTests {
                 return try await Subprocess.run(
                     .path("/bin/sh"),
                     arguments: ["-c", "trap 'echo no' TERM; while true; do sleep 1; done"],
-                    output: .string(limit: .max)
+                    output: .string(byteLimit: .max)
                 ).terminationStatus
             }
             group.addTask {
@@ -606,8 +606,8 @@ extension SubprocessUnixTests {
         let result = try await Subprocess.run(
             .path("/bin/sh"),
             arguments: .init(arguments),
-            output: .string(limit: .max),
-            error: .string(limit: .max)
+            output: .string(byteLimit: .max),
+            error: .string(byteLimit: .max)
         )
         #expect(result.terminationStatus.isSuccess)
         #expect(result.standardError?.trimmingNewLineAndQuotes().isEmpty == true)
@@ -650,7 +650,7 @@ extension SubprocessUnixTests {
                         """,
                     ],
                     input: .none,
-                    output: .string(limit: 64),
+                    output: .string(byteLimit: 64),
                     error: .discarded
                 )
             }
@@ -721,7 +721,7 @@ extension SubprocessUnixTests {
             .path("/usr/bin/id"),
             arguments: [argument],
             platformOptions: platformOptions,
-            output: .string(limit: 32)
+            output: .string(byteLimit: 32)
         )
         #expect(idResult.terminationStatus.isSuccess)
         let id = try #require(idResult.standardOutput)
@@ -848,7 +848,7 @@ extension SubprocessUnixTests {
         let limitResult = try await Subprocess.run(
             .path("/bin/sh"),
             arguments: ["-c", "ulimit -n"],
-            output: .string(limit: 32)
+            output: .string(byteLimit: 32)
         )
         guard
             let limitString = limitResult
@@ -877,8 +877,8 @@ extension SubprocessUnixTests {
                         arguments: [
                             "-sc", #"echo "$1" && echo "$1" >&2"#, "--", String(repeating: "X", count: byteCount),
                         ],
-                        output: .data(limit: .max),
-                        error: .data(limit: .max)
+                        output: .data(byteLimit: .max),
+                        error: .data(byteLimit: .max)
                     )
                     guard r.terminationStatus.isSuccess else {
                         Issue.record("Unexpected exit \(r.terminationStatus) from \(r.processIdentifier)")

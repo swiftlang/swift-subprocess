@@ -56,7 +56,7 @@ The simplest way to use `Subprocess` is to run a process and collect its output:
 ```swift
 import Subprocess
 
-let result = try await run(.name("ls"), output: .string(limit: 4096))
+let result = try await run(.name("ls"), output: .string(byteLimit: 4096))
 
 print(result.processIdentifier) // e.g. 1234
 print(result.terminationStatus) // e.g. exited(0)
@@ -131,7 +131,7 @@ let result = try await run(
     .path("/my/app"),
     input: .none,
     output: .sequence,
-    error: .string(limit: 4096)
+    error: .string(byteLimit: 4096)
 ) { execution in
     var lineCount = 0
     for try await _ in execution.standardOutput.lines() {
@@ -199,7 +199,7 @@ let result = try await run(
     // and add NewKey=NewValue
     environment: .inherit.updating(["NewKey": "NewValue"]),
     workingDirectory: "/Users/",
-    output: .string(limit: 4096)
+    output: .string(byteLimit: 4096)
 )
 ```
 
@@ -211,7 +211,7 @@ let config = Configuration(
     arguments: ["--verbose"],
     environment: .inherit
 )
-let result = try await run(config, output: .string(limit: 4096))
+let result = try await run(config, output: .string(byteLimit: 4096))
 ```
 
 
@@ -245,20 +245,20 @@ For the collected-result API, you must specify how to capture standard output.
 | `.discarded` | Discard output |
 | `.fileDescriptor(_:closeAfterSpawningProcess:)` | Write to a file descriptor |
 | `.currentStandardOutput` or `.currentStandardError` | Write to the parent process's standard output or standard error |
-| `.string(limit:)` or `.string(limit:encoding:)` | Collect as `String?` |
+| `.string(byteLimit:)` or `.string(byteLimit:encoding:)` | Collect as `String?` |
 | `.bytes(limit:)` | Collect as `[UInt8]` |
 | `.sequence` | Stream to the closure via `execution.standardOutput` or `execution.standardError` (closure-based `run` only) |
-| `.data(limit:)` | Collect as `Data` (requires `SubprocessFoundation`) |
+| `.data(byteLimit:)` | Collect as `Data` (requires `SubprocessFoundation`) |
 | `.combinedWithOutput` | Merge standard error into the standard output stream (error parameter only) |
 
-The `limit` parameter specifies the maximum number of bytes to collect. `Subprocess` throws an error if the child process produces more output than the limit allows.
+The `byteLimit`/`limit` parameters specify the maximum number of bytes to collect. `Subprocess` throws an error if the child process produces more output than the limit allows.
 
 Use `.combinedWithOutput` for the `error` parameter to merge standard output and standard error into a single stream, equivalent to the shell redirection `2>&1`:
 
 ```swift
 let result = try await run(
     .name("my-tool"),
-    output: .string(limit: 4096),
+    output: .string(byteLimit: 4096),
     error: .combinedWithOutput
 )
 // result.standardOutput contains both standard output and standard error
@@ -279,7 +279,7 @@ let serverTask = Task {
     let result = try await run(
         .name("server"),
         platformOptions: platformOptions,
-        output: .string(limit: 1024)
+        output: .string(byteLimit: 1024)
     )
 }
 

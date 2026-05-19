@@ -78,7 +78,7 @@ struct SubprocessLintingTest {
         let lintResult = try await Subprocess.run(
             configuration,
             output: .discarded,
-            error: .string(limit: .max)
+            error: .string(byteLimit: .max)
         )
         #expect(
             lintResult.terminationStatus.isSuccess,
