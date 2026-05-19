@@ -275,7 +275,10 @@ public func run<
         return try await withThrowingTaskGroup(of: _RunGroupResult<Output, Error>.self) { group in
             var writer: StandardInputWriter?
             if inputIOBox != nil {
-                let inputWriter = StandardInputWriter(diskIO: inputIOBox.take()!)
+                let inputWriter = StandardInputWriter(
+                    diskIO: inputIOBox.take()!,
+                    processIdentifier: processIdentifier
+                )
                 writer = inputWriter
 
                 if Input.self != CustomWriteInput.self {
@@ -294,7 +297,8 @@ public func run<
             if Output.self == SequenceOutput.self {
                 var diskIO = outputIOBox.take()
                 outputSequence = AsyncBufferSequence(
-                    diskIO: diskIO!.consumeDescriptor()
+                    diskIO: diskIO!.consumeDescriptor(),
+                    processIdentifier: processIdentifier
                 )
             } else if Output.OutputType.self == Void.self {
                 // No need to capture output
@@ -303,7 +307,9 @@ public func run<
             } else {
                 var diskIO = outputIOBox.take()
                 group.addTask {
-                    let result = try await output.captureOutput(from: diskIO.take())
+                    let result = try await output.captureOutput(
+                        from: diskIO.take(), for: processIdentifier
+                    )
                     return .standardOutputCaptured(result)
                 }
             }
@@ -311,7 +317,8 @@ public func run<
             if Error.self == SequenceOutput.self {
                 var diskIO = errorIOBox.take()
                 errorSequence = AsyncBufferSequence(
-                    diskIO: diskIO!.consumeDescriptor()
+                    diskIO: diskIO!.consumeDescriptor(),
+                    processIdentifier: processIdentifier
                 )
             } else if Error.OutputType.self == Void.self {
                 // No need to capture error
@@ -320,7 +327,9 @@ public func run<
             } else {
                 var diskIO = errorIOBox.take()
                 group.addTask {
-                    let result = try await error.captureOutput(from: diskIO.take())
+                    let result = try await error.captureOutput(
+                        from: diskIO.take(), for: processIdentifier
+                    )
                     return .standardErrorCaptured(result)
                 }
             }

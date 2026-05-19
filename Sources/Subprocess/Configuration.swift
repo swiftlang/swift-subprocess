@@ -38,14 +38,14 @@ public struct Configuration: Sendable {
     public var environment: Environment
     /// The working directory to use when running the executable.
     ///
-    /// If this property is `nil`, the subprocess will inherit
-    /// the working directory from the parent process.
+    /// If this property is `nil`, the subprocess inherits the working
+    /// directory from the parent process.
     public var workingDirectory: FilePath?
     /// The platform-specific options to use when
     /// running the subprocess.
     public var platformOptions: PlatformOptions
 
-    /// Creates a Configuration with the parameters you provide.
+    /// Creates a configuration with the parameters you provide.
     /// - Parameters:
     ///   - executable: The executable to run.
     ///   - arguments: The arguments to pass to the executable.
@@ -107,37 +107,78 @@ public struct Configuration: Sendable {
         let processIdentifier = spawnResults.processIdentifier
 
         defer {
-            // Close process file descriptor now we finished monitoring
+            // Close the process file descriptor now that monitoring has finished.
             processIdentifier.close()
         }
 
         return try await withAsyncTaskCleanupHandler { () throws -> ExecutionOutcome<Result> in
-            let inputIO = spawnResults.inputWriteEnd()
-            let outputIO = spawnResults.outputReadEnd()
-            let errorIO = spawnResults.errorReadEnd()
+            // The counter coordinates a race between two finishers: the body
+            // closure and the process-termination monitor. Whichever side
+            // increments first observes a value of `1` and owns the response;
+            // the other side sees `2` and stays out of the way.
+            //
+            // If the monitor wins, the child has exited while the body is
+            // still reading or writing. The body might be blocked on a pipe
+            // that an inherited grandchild keeps open, so the monitor calls
+            // `cancelAsyncIO` to unblock it. If the body wins, the I/O
+            // already finished cleanly and no cancellation is needed.
+            let taskFinishFlag = AtomicCounter()
 
-            let result: Swift.Result<Result, any Swift.Error>
-            do {
-                // Body runs in the same isolation
-                let bodyResult = try await body(processIdentifier, inputIO, outputIO, errorIO)
+            let (result, monitorError) = try await withThrowingTaskGroup(
+                of: SubprocessError?.self,
+                returning: (Swift.Result<Result, any Swift.Error>, SubprocessError?).self
+            ) { group in
+                group.addTask {
+                    do throws(SubprocessError) {
+                        try await waitForProcessTermination(for: processIdentifier)
+                        if taskFinishFlag.addOne() == 1 {
+                            // The body closure hasn't finished but the child
+                            // process has terminated. Cancel all active
+                            // AsyncIO now.
+                            try AsyncIO.shared.cancelAsyncIO(for: processIdentifier)
+                        }
+                        return nil
+                    } catch {
+                        try? AsyncIO.shared.cancelAsyncIO(for: processIdentifier)
+                        return error
+                    }
+                }
 
-                result = .success(bodyResult)
-            } catch {
-                result = .failure(error)
+                let inputIO = spawnResults.inputWriteEnd()
+                let outputIO = spawnResults.outputReadEnd()
+                let errorIO = spawnResults.errorReadEnd()
+
+                let result: Swift.Result<Result, any Swift.Error>
+                do {
+                    // Body runs in the same isolation.
+                    let bodyResult = try await body(processIdentifier, inputIO, outputIO, errorIO)
+                    taskFinishFlag.addOne()
+                    result = .success(bodyResult)
+                } catch {
+                    result = .failure(error)
+                }
+
+                // Wait for the monitor child task to finish.
+                let monitorError = try await group.next() ?? nil
+                return (result, monitorError)
             }
 
-            // Ensure that we begin monitoring process termination after `body` runs
-            // and regardless of whether `body` throws, so that the pid gets reaped
-            // even if `body` throws, and we are not leaving zombie processes in the
-            // process table which will cause the process termination monitoring thread
-            // to effectively hang due to the pid never being awaited
-            let terminationStatus = try await monitorProcessTermination(
-                for: processIdentifier
-            )
+            // Drop the cancellation marker before reaping the zombie. After
+            // `reapProcess` runs the kernel can immediately reuse this PID,
+            // so the marker must be gone first; otherwise a concurrent
+            // `run()` that happens to inherit the same PID would see the
+            // stale entry and reject its registrations.
+            AsyncIO.shared.cleanup(processIdentifier: processIdentifier)
 
-            return ExecutionOutcome(
+            let terminationStatus = try reapProcess(with: processIdentifier)
+
+            if let monitorError {
+                throw monitorError
+            }
+
+            return try ExecutionOutcome(
                 terminationStatus: terminationStatus,
-                value: try result.get()
+                value: result.get()
             )
         } onCleanup: {
             let execution = Execution<Input, Output, Error>(
@@ -146,7 +187,7 @@ public struct Configuration: Sendable {
                 outputStream: nil,
                 errorStream: nil
             )
-            // Attempt to terminate the child process
+            // Attempt to terminate the child process.
             await execution.runTeardownSequence(
                 self.platformOptions.teardownSequence
             )

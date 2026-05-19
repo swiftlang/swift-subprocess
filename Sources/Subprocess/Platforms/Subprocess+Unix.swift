@@ -684,6 +684,23 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
 }
 #endif // !canImport(Darwin)
 
+@Sendable
+internal func reapProcess(
+    with processIdentifier: ProcessIdentifier
+) throws(SubprocessError) -> TerminationStatus {
+    do throws(Errno) {
+        // On some platforms, the process exit notification (in particular NOTE_EXIT from kqueue)
+        // may be delivered slightly before the process becomes reapable,
+        // so we must call waitid without WNOHANG to avoid a narrow possibility of a race condition.
+        // If waitid does block, it won't do so for very long at all.
+        let status = try processIdentifier.blockingReap()
+        return status
+    } catch {
+        let subprocessError: SubprocessError = .failedToMonitor(withUnderlyingError: error)
+        throw subprocessError
+    }
+}
+
 extension ProcessIdentifier {
     /// Reaps the zombie for the exited process. This function may block.
     @available(*, noasync)
@@ -694,6 +711,14 @@ extension ProcessIdentifier {
     /// Reaps the zombie for the exited process, or returns `nil` if the process is still running. This function will not block.
     internal func reap() throws(Errno) -> TerminationStatus? {
         try _reap(pid: value)
+    }
+
+    /// Checks whether the process has already exited without consuming the
+    /// zombie. Returns `true` if a child has exited (or stopped/continued in a
+    /// way `waitid` reports), `false` if the child is still running. The
+    /// zombie remains available for a subsequent call to ``blockingReap()``.
+    internal func peekIfExited() throws(Errno) -> Bool {
+        try _peekIfExited(pid: value)
     }
 }
 
@@ -710,6 +735,13 @@ internal func _reap(pid: pid_t) throws(Errno) -> TerminationStatus? {
         return nil
     }
     return TerminationStatus(siginfo)
+}
+
+internal func _peekIfExited(pid: pid_t) throws(Errno) -> Bool {
+    // WNOWAIT leaves the zombie in the process table so a subsequent
+    // `_blockingReap` (or `_reap`) can still consume it.
+    let siginfo = try _waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED | WNOHANG | WNOWAIT)
+    return !(siginfo.si_pid == 0 && siginfo.si_signo == 0)
 }
 
 internal func _waitid(idtype: idtype_t, id: id_t, flags: Int32) throws(Errno) -> siginfo_t {

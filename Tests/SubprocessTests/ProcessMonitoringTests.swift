@@ -327,3 +327,8 @@ extension SubprocessProcessMonitoringTests {
         }
     }
 }
+
+internal func monitorProcessTermination(for processIdentifier: ProcessIdentifier) async throws -> TerminationStatus {
+    try await waitForProcessTermination(for: processIdentifier)
+    return try reapProcess(with: processIdentifier)
+}

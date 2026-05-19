@@ -9,7 +9,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-/// AsyncIO implementation based on kqueue
+/// AsyncIO implementation based on kqueue.
 
 #if SUBPROCESS_ASYNCIO_KQUEUE
 
@@ -51,10 +51,7 @@ private let _kevent:
     ) -> Int32 = kevent
 
 private let _kqueueEventSize = 256
-private let _registration:
-    _Mutex<
-        [PlatformFileDescriptor: SignalStream.Continuation]
-    > = _Mutex([:])
+private let _registration: _Mutex<Registration> = _Mutex(Registration())
 
 private func _makeKevent(
     ident: UInt,
@@ -166,10 +163,11 @@ final class AsyncIO: Sendable {
         do throws(Errno) {
             thread = try pthread_create {
                 func reportError(_ error: SubprocessError) {
-                    _registration.withLock { store in
-                        for continuation in store.values {
-                            continuation.finish(throwing: error)
-                        }
+                    let continuations = _registration.withLock { store in
+                        return store.allContinuations()
+                    }
+                    for continuation in continuations {
+                        continuation.finish(throwing: error)
                     }
                 }
 
@@ -213,10 +211,7 @@ final class AsyncIO: Sendable {
                         }
 
                         let continuation = _registration.withLock { store -> SignalStream.Continuation? in
-                            if let continuation = store[targetFileDescriptor] {
-                                return continuation
-                            }
-                            return nil
+                            return store.continuation(for: targetFileDescriptor)
                         }
                         continuation?.yield(true)
                     }
@@ -294,6 +289,7 @@ final class AsyncIO: Sendable {
 
     internal func registerFileDescriptor(
         _ fileDescriptor: FileDescriptor,
+        processIdentifier: ProcessIdentifier,
         for event: Event
     ) -> SignalStream {
         return SignalStream { (continuation: SignalStream.Continuation) -> () in
@@ -311,34 +307,53 @@ final class AsyncIO: Sendable {
                     filter = Int16(EVFILT_WRITE)
                 }
 
-                _registration.withLock { storage in
-                    storage[fileDescriptor.rawValue] = continuation
+                // Hold the lock across the map insert and `kevent` so a
+                // concurrent `cancelAsyncIO` cannot slip in between the
+                // two steps and observe a half-registered descriptor.
+                let outcome: RegistrationOutcome = _registration.withLock { storage in
+                    guard
+                        storage.register(
+                            fileDescriptor: fileDescriptor.rawValue,
+                            continuation: continuation,
+                            processIdentifier: processIdentifier
+                        )
+                    else {
+                        return .alreadyCancelled
+                    }
+
+                    var kev = _makeKevent(
+                        ident: UInt(fileDescriptor.rawValue),
+                        filter: filter,
+                        flags: UInt16(EV_ADD | EV_ENABLE)
+                    )
+                    let rc = _kevent(
+                        state.kqueueFileDescriptor,
+                        &kev,
+                        1,
+                        nil,
+                        0,
+                        nil
+                    )
+
+                    if rc != 0 {
+                        let capturedError = errno
+                        _ = storage.removeRegistration(for: fileDescriptor.rawValue)
+                        let error: SubprocessError = .asyncIOFailed(
+                            reason: "failed to add \(fileDescriptor.rawValue) to kqueue",
+                            underlyingError: Errno(rawValue: capturedError)
+                        )
+                        return .failed(error)
+                    }
+                    return .registered
                 }
 
-                var kev = _makeKevent(
-                    ident: UInt(fileDescriptor.rawValue),
-                    filter: filter,
-                    flags: UInt16(EV_ADD | EV_ENABLE)
-                )
-                let rc = _kevent(
-                    state.kqueueFileDescriptor,
-                    &kev,
-                    1,
-                    nil,
-                    0,
-                    nil
-                )
-                if rc != 0 {
-                    _registration.withLock { storage in
-                        _ = storage.removeValue(forKey: fileDescriptor.rawValue)
-                    }
-                    let capturedError = errno
-                    let error: SubprocessError = .asyncIOFailed(
-                        reason: "failed to add \(fileDescriptor.rawValue) to kqueue",
-                        underlyingError: Errno(rawValue: capturedError)
-                    )
+                switch outcome {
+                case .registered:
+                    break
+                case .alreadyCancelled:
+                    continuation.finish()
+                case .failed(let error):
                     continuation.finish(throwing: error)
-                    return
                 }
             case .failure(let setupError):
                 continuation.finish(throwing: setupError)
@@ -350,37 +365,82 @@ final class AsyncIO: Sendable {
     internal func removeRegistration(for fileDescriptor: FileDescriptor) throws(SubprocessError) {
         switch self.state {
         case .success(let state):
-            let registration = _registration.withLock { store in
-                return store.removeValue(forKey: fileDescriptor.rawValue)
+            let c = _registration.withLock { store -> SignalStream.Continuation? in
+                guard
+                    let continuation = store.removeRegistration(
+                        for: fileDescriptor.rawValue
+                    )
+                else {
+                    return nil
+                }
+
+                for filter in [EVFILT_READ, EVFILT_WRITE] {
+                    var kev = _makeKevent(
+                        ident: UInt(fileDescriptor.rawValue),
+                        filter: Int16(filter),
+                        flags: UInt16(EV_DELETE)
+                    )
+                    _ = _kevent(
+                        state.kqueueFileDescriptor,
+                        &kev,
+                        1,
+                        nil,
+                        0,
+                        nil
+                    )
+                }
+
+                return continuation
             }
-            guard let registration else {
-                return
-            }
-            registration.finish()
-            var kev = _makeKevent(
-                ident: UInt(fileDescriptor.rawValue),
-                filter: Int16(EVFILT_READ),
-                flags: UInt16(EV_DELETE)
-            )
-            _ = _kevent(
-                state.kqueueFileDescriptor,
-                &kev,
-                1,
-                nil,
-                0,
-                nil
-            )
-            kev.filter = Int16(EVFILT_WRITE)
-            _ = _kevent(
-                state.kqueueFileDescriptor,
-                &kev,
-                1,
-                nil,
-                0,
-                nil
-            )
+            c?.finish()
         case .failure(let setupFailure):
             throw setupFailure
+        }
+    }
+
+    internal func cancelAsyncIO(for processIdentifier: ProcessIdentifier) throws(SubprocessError) {
+        switch self.state {
+        case .success(let state):
+            let cancelledContinuations: [SignalStream.Continuation] = _registration.withLock { storage in
+                let previousRegistrations = storage.cancel(processIdentifier: processIdentifier)
+                guard !previousRegistrations.isEmpty else {
+                    return []
+                }
+                var toBeCancelled: [SignalStream.Continuation] = []
+                for registration in previousRegistrations {
+                    toBeCancelled.append(registration.continuation)
+
+                    for filter in [EVFILT_READ, EVFILT_WRITE] {
+                        var kev = _makeKevent(
+                            ident: UInt(registration.fileDescriptor),
+                            filter: Int16(filter),
+                            flags: UInt16(EV_DELETE)
+                        )
+                        _ = _kevent(
+                            state.kqueueFileDescriptor,
+                            &kev,
+                            1,
+                            nil,
+                            0,
+                            nil
+                        )
+                    }
+                }
+
+                return toBeCancelled
+            }
+
+            for c in cancelledContinuations {
+                c.finish()
+            }
+        case .failure(let error):
+            throw error
+        }
+    }
+
+    internal func cleanup(processIdentifier: ProcessIdentifier) {
+        _registration.withLock { storage in
+            storage.remove(processIdentifier: processIdentifier)
         }
     }
 }

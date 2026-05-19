@@ -177,7 +177,8 @@ extension SubprocessUnixTests {
                 trap 'echo saw SIGQUIT;' QUIT
                 trap 'echo saw SIGTERM;' TERM
                 trap 'echo saw SIGINT; exit 42;' INT
-                while true; do sleep 1; done
+                echo ready
+                while true; do sleep 0.1; done
                 exit 2
                 """,
             ],
@@ -186,9 +187,16 @@ extension SubprocessUnixTests {
             error: .discarded
         ) { subprocess in
             return try await withThrowingTaskGroup(of: Void.self) { group in
+                // Gate the teardown task on bash having actually installed
+                // its signal traps. The reader signals readiness when it
+                // sees the `ready` marker the script prints after the
+                // `trap` lines.
+                let (readyStream, readyContinuation) = AsyncStream.makeStream(of: Void.self)
+
                 group.addTask {
-                    try await Task.sleep(for: .milliseconds(200))
-                    // Send shut down signal
+                    var readyIterator = readyStream.makeAsyncIterator()
+                    _ = await readyIterator.next()
+                    // Send the teardown signal sequence.
                     await subprocess.teardown(using: [
                         .send(signal: .quit, allowedDurationToNextStep: .milliseconds(500)),
                         .send(signal: .terminate, allowedDurationToNextStep: .milliseconds(500)),
@@ -198,7 +206,13 @@ extension SubprocessUnixTests {
                 group.addTask {
                     var outputs: [String] = []
                     for try await line in subprocess.standardOutput.strings() {
-                        outputs.append(line.trimmingCharacters(in: .newlines))
+                        let trimmed = line.trimmingCharacters(in: .newlines)
+                        if trimmed == "ready" {
+                            readyContinuation.yield()
+                            readyContinuation.finish()
+                            continue
+                        }
+                        outputs.append(trimmed)
                     }
                     #expect(outputs == ["saw SIGQUIT", "saw SIGTERM", "saw SIGINT"])
                 }

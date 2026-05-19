@@ -125,16 +125,17 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
     public let maxSize: Int
 
     internal func captureOutput(
-        from diskIO: consuming IODescriptor
+        from diskIO: consuming IODescriptor,
+        for processIdentifier: ProcessIdentifier
     ) async throws(SubprocessError) -> [UInt8] {
         var result: [UInt8] = []
         do {
             var maxLength = self.maxSize
             if maxLength != .max {
-                // If we actually have a max length, attempt to read one
-                // more byte to determine whether output exceeds the limit
+                // Read one extra byte to detect output that exceeds the
+                // limit.
                 maxLength += 1
-                // We can also reserve capacity
+                // Reserve capacity to avoid reallocations.
                 result.reserveCapacity(maxLength)
             }
             let bufferSize = AsyncIO.queryPipeBufferSize(for: diskIO.descriptor())
@@ -144,6 +145,7 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
                 guard
                     let chunk = try await AsyncIO.shared.read(
                         from: diskIO,
+                        for: processIdentifier,
                         upTo: min(bufferSize, remaining)
                     )
                 else {
@@ -335,19 +337,21 @@ extension OutputProtocol {
         return try CreatedPipe(closeWhenDone: true, purpose: .output)
     }
 
-    /// Capture the output from the subprocess up to maxSize
+    /// Captures the output from the subprocess, up to `maxSize` bytes.
     @_disfavoredOverload
     internal func captureOutput(
-        from diskIO: consuming IODescriptor?
+        from diskIO: consuming IODescriptor?,
+        for processIdentifier: ProcessIdentifier
     ) async throws -> OutputType {
         if OutputType.self == Void.self {
             try diskIO?.safelyClose()
             return () as! OutputType
         }
-        // `diskIO` is only `nil` for any types that conform to `OutputProtocol`
-        // and have `Void` as ``OutputType` (i.e. `DiscardedOutput`). Since we
-        // made sure `OutputType` is not `Void` on the line above, `diskIO`
-        // must not be nil; otherwise, this is a programmer error.
+        // `diskIO` is only `nil` for types that conform to `OutputProtocol`
+        // and have `Void` as `OutputType` (such as `DiscardedOutput`). The
+        // line above already returned for the `Void` case, so `diskIO`
+        // must not be `nil` here; otherwise the call site is a programmer
+        // error.
         guard var diskIO else {
             fatalError(
                 "Internal Inconsistency Error: diskIO must not be nil when OutputType is not Void"
@@ -355,15 +359,17 @@ extension OutputProtocol {
         }
 
         if let bytesOutput = self as? BytesOutput {
-            return try await bytesOutput.captureOutput(from: diskIO) as! Self.OutputType
+            return try await bytesOutput.captureOutput(
+                from: diskIO, for: processIdentifier
+            ) as! Self.OutputType
         }
 
         var result: [UInt8] = []
         do {
             var maxLength = self.maxSize
             if maxLength != .max {
-                // If we actually have a max length, attempt to read one
-                // more byte to determine whether output exceeds the limit
+                // Read one extra byte to detect output that exceeds the
+                // limit.
                 maxLength += 1
                 result.reserveCapacity(maxLength)
             }
@@ -374,6 +380,7 @@ extension OutputProtocol {
                 guard
                     let chunk = try await AsyncIO.shared.read(
                         from: diskIO,
+                        for: processIdentifier,
                         upTo: min(bufferSize, remaining)
                     )
                 else {
@@ -396,7 +403,10 @@ extension OutputProtocol {
 }
 
 extension OutputProtocol where OutputType == Void {
-    internal func captureOutput(from fileDescriptor: consuming IODescriptor?) async throws {}
+    internal func captureOutput(
+        from fileDescriptor: consuming IODescriptor?,
+        for processIdentifier: ProcessIdentifier
+    ) async throws {}
 
     /// Converts the output from a raw span to the expected output type.
     public func output(from span: RawSpan) throws {
