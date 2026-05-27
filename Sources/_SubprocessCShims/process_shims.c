@@ -347,6 +347,30 @@ struct linux_dirent64 {
 static int _getdents64(int fd, struct linux_dirent64 *dirp, size_t nbytes) {
     return syscall(SYS_getdents64, fd, dirp, nbytes);
 }
+
+// SYS_close_range is only defined on Linux Kernel 5.9 and above.
+// Define our value if it's not available and call the syscall directly because
+// glibc < 2.34 (e.g. Amazon Linux 2) doesn't provide a close_range() wrapper.
+#ifndef SYS_close_range
+#define SYS_close_range 436
+#endif
+
+#ifndef CLOSE_RANGE_CLOEXEC
+#define CLOSE_RANGE_CLOEXEC (1U << 2)
+#endif
+
+static int _close_range(unsigned int first, unsigned int last, unsigned int flags) {
+    return syscall(SYS_close_range, first, last, flags);
+}
+
+int _subprocess_install_sigchld_handler(void (*handler)(int)) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = handler;
+    sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+    sigemptyset(&sa.sa_mask);
+    return sigaction(SIGCHLD, &sa, NULL);
+}
 #endif
 
 static pid_t _subprocess_pdfork(int *fdp) {
@@ -674,7 +698,11 @@ int _subprocess_fork_exec(
         // Close all other file descriptors
         rc = -1;
         errno = ENOSYS;
-        #if (__has_include(<linux/close_range.h>) && (!defined(__ANDROID__) || __ANDROID_API__  >= 34)) || defined(__FreeBSD__)
+        #if defined(__linux__)
+        // We must NOT close pipefd[1] for writing errors
+        rc = _close_range(STDERR_FILENO + 1, pipefd[1] - 1, CLOSE_RANGE_CLOEXEC);
+        rc |= _close_range(pipefd[1] + 1, ~0U, CLOSE_RANGE_CLOEXEC);
+        #elif defined(__FreeBSD__)
         // We must NOT close pipefd[1] for writing errors
         rc = close_range(STDERR_FILENO + 1, pipefd[1] - 1, CLOSE_RANGE_CLOEXEC);
         rc |= close_range(pipefd[1] + 1, ~0U, CLOSE_RANGE_CLOEXEC);
