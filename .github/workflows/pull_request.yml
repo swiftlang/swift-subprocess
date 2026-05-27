@@ -35,17 +35,17 @@ jobs:
           # Test dependencies
           yum install -y procps
         fi
-      linux_build_command: 'swift test && swift test -c release && swift test --disable-default-traits'
+      linux_build_command: "swift test && swift test -c release && swift test --disable-default-traits"
       enable_freebsd_checks: true
-      freebsd_build_command: 'swift test && swift test -c release && swift test --disable-default-traits'
+      freebsd_build_command: "swift test && swift test -c release && swift test --disable-default-traits"
       windows_swift_versions: '["6.2", "nightly-main"]'
       windows_build_command: |
         Invoke-Program swift test
         Invoke-Program swift test -c release
         Invoke-Program swift test --disable-default-traits
       enable_macos_checks: true
-      macos_xcode_versions: '["26.0"]'
-      macos_build_command: 'xcrun swift test && xcrun swift test -c release && xcrun swift test --disable-default-traits'
+      macos_xcode_versions: '["26.4"]'
+      macos_build_command: "xcrun swift test && xcrun swift test -c release && xcrun swift test --disable-default-traits"
       enable_linux_static_sdk_build: true
       enable_android_sdk_build: true
       android_ndk_versions: '["r27d", "r29"]'

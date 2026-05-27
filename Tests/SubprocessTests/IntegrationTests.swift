@@ -2286,6 +2286,325 @@ extension SubprocessIntegrationTests {
     }
 }
 
+// MARK: - Cancellable IO Tests
+
+// Regression tests for https://github.com/swiftlang/swift-subprocess/issues/256.
+// Ensure Subprocess cancels IO when the child process exits
+
+#if !os(Windows)
+extension SubprocessIntegrationTests {
+    @Test func testWeDoNotHangIfStandardInputRemainsOpenButProcessExits() async throws {
+        // The shell forks a `sleep` grandchild that inherits stdin, then
+        // the main shell reads one line and exits. The parent has 16 MB
+        // queued for stdin which the grandchild never reads; the write
+        // loop is therefore blocked on a full pipe with no reader making
+        // forward progress.
+        //
+        // The subshell trick — duplicating stdin into fd 2 in the parent
+        // shell, then mapping fd 2 back onto fd 0 in the subshell — is
+        // necessary because POSIX requires backgrounded processes (`&`)
+        // to have their stdin redirected to `/dev/null` unless explicitly
+        // overridden. Without this dance, dash and other strict shells
+        // would hand the grandchild `/dev/null` instead of the real stdin
+        // pipe.
+        let script = """
+            exec 2>&-
+            exec 2<&0
+            ( exec 0<&2; exec 2>&-; exec sleep 12345678 ) &
+            exec 2>&-
+            read -r line
+            echo "$line"
+            echo "$!"
+            exec >&-
+            exit 0
+            """
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", script]
+        )
+
+        var sleepPidToKill: pid_t = 0
+        defer {
+            if sleepPidToKill != 0 {
+                kill(sleepPidToKill, SIGKILL)
+            }
+        }
+
+        // "GO\n" plus 16 MB of filler. The first chunk is small enough to fit
+        // in the pipe buffer; the filler is what wedges the writer.
+        var input: [UInt8] = []
+        input.append(contentsOf: "GO\n".utf8)
+        input.append(contentsOf: Array(repeating: UInt8(0x42), count: 16 * 1024 * 1024))
+
+        let result = try await _run(
+            setup,
+            input: .array(input),
+            output: .sequence,
+            error: .discarded
+        ) { execution in
+            var iterator = execution.standardOutput.strings().makeAsyncIterator()
+            #expect(try await iterator.next() == "GO")
+            let pidLine = try await iterator.next()
+            return pidLine.flatMap { pid_t($0) } ?? 0
+        }
+
+        sleepPidToKill = result.closureOutput
+        #expect(sleepPidToKill != 0)
+        #expect(result.terminationStatus == .exited(0))
+    }
+
+    @Test func testWeDoNotHangIfStandardOutputRemainsOpenButProcessExits() async throws {
+        // The shell forks a `sleep` grandchild that inherits stdout. Stdin
+        // and stderr are diverted to `/dev/null` so the grandchild only
+        // holds stdout open. The main shell prints to both streams and
+        // exits; the grandchild keeps the parent's stdout read end from
+        // reaching EOF.
+        //
+        // The PID is sent on stderr so the call can capture it via
+        // `.sequence`, while `.string(limit:)` is the mechanism that
+        // would hang on stdout.
+        let script = """
+            ( exec sleep 12345678 ) </dev/null 2>/dev/null &
+            echo "$!" >&2
+            echo "GO"
+            exit 0
+            """
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", script]
+        )
+
+        var sleepPidToKill: pid_t = 0
+        defer {
+            if sleepPidToKill != 0 {
+                kill(sleepPidToKill, SIGKILL)
+            }
+        }
+
+        let result = try await _run(
+            setup,
+            input: .none,
+            output: .string(limit: 1024),
+            error: .sequence
+        ) { execution in
+            var capturedPid: pid_t = 0
+            for try await line in execution.standardError.strings() {
+                if let pid = pid_t(line) {
+                    capturedPid = pid
+                }
+            }
+            return capturedPid
+        }
+
+        sleepPidToKill = result.closureOutput
+        #expect(sleepPidToKill != 0)
+        #expect(result.terminationStatus == .exited(0))
+        #expect((result.standardOutput ?? "").contains("GO"))
+    }
+
+    @Test func testWeDoNotHangIfStandardErrorRemainsOpenButProcessExits() async throws {
+        // Mirror of the stdout test: the grandchild only inherits stderr,
+        // and `.string(limit:)` on stderr blocks waiting for an EOF that
+        // never arrives.
+        let script = """
+            ( exec sleep 12345678 ) </dev/null >/dev/null &
+            echo "$!"
+            echo "GO" >&2
+            exit 0
+            """
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", script]
+        )
+
+        var sleepPidToKill: pid_t = 0
+        defer {
+            if sleepPidToKill != 0 {
+                kill(sleepPidToKill, SIGKILL)
+            }
+        }
+
+        let result = try await _run(
+            setup,
+            input: .none,
+            output: .sequence,
+            error: .string(limit: 1024)
+        ) { execution in
+            var capturedPid: pid_t = 0
+            for try await line in execution.standardOutput.strings() {
+                if let pid = pid_t(line) {
+                    capturedPid = pid
+                }
+            }
+            return capturedPid
+        }
+
+        sleepPidToKill = result.closureOutput
+        #expect(sleepPidToKill != 0)
+        #expect(result.terminationStatus == .exited(0))
+        #expect((result.standardError ?? "").contains("GO"))
+    }
+}
+#else
+extension SubprocessIntegrationTests {
+    // PowerShell snippet that spawns a long-sleeping grandchild via
+    // `Start-Process -NoNewWindow -PassThru`. The `-NoNewWindow` switch
+    // routes through .NET's `Process.Start` with `UseShellExecute=false`,
+    // which always passes `bInheritHandles=TRUE` and copies PowerShell's
+    // own std handles into `STARTUPINFO.hStd*`. The grandchild therefore
+    // inherits the pipe handles Subprocess set up for PowerShell, and
+    // those pipes stay open after PowerShell exits — the Win32 analog of
+    // the POSIX `fork` and `exec` dance the Unix tests use.
+    private static let spawnGrandchildSleep = """
+        $proc = Start-Process -NoNewWindow -FilePath powershell.exe `
+            -ArgumentList '-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 12345678' `
+            -PassThru
+        """
+
+    private static func killGrandchild(_ pid: DWORD) {
+        guard pid != 0 else { return }
+        guard let handle = OpenProcess(DWORD(PROCESS_TERMINATE), false, pid) else {
+            return
+        }
+        _ = TerminateProcess(handle, 1)
+        CloseHandle(handle)
+    }
+
+    @Test func testWeDoNotHangIfStandardInputRemainsOpenButProcessExits() async throws {
+        // PowerShell forks the sleeping grandchild (which inherits stdin),
+        // reads one line, echoes the line plus the grandchild PID, then
+        // exits. The parent has 16 MB queued for stdin which the grandchild
+        // never reads; the write loop is therefore blocked on a full pipe
+        // buffer with no reader making forward progress.
+        let script = """
+            $ErrorActionPreference = 'Stop'
+            \(Self.spawnGrandchildSleep)
+            $line = [Console]::In.ReadLine()
+            Write-Output $line
+            Write-Output $proc.Id
+            exit 0
+            """
+        let setup = TestSetup(
+            executable: .name("powershell.exe"),
+            arguments: ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script]
+        )
+
+        var grandchildPidToKill: DWORD = 0
+        defer { Self.killGrandchild(grandchildPidToKill) }
+
+        // "GO\r\n" plus 16 MB of filler. The first chunk is small enough to
+        // fit in the pipe buffer; the filler is what wedges the writer.
+        var input: [UInt8] = []
+        input.append(contentsOf: "GO\r\n".utf8)
+        input.append(contentsOf: Array(repeating: UInt8(0x42), count: 16 * 1024 * 1024))
+
+        let result = try await _run(
+            setup,
+            input: .array(input),
+            output: .sequence,
+            error: .discarded
+        ) { execution in
+            var iterator = execution.standardOutput.strings().makeAsyncIterator()
+            #expect(try await iterator.next() == "GO")
+            let pidLine = try await iterator.next()
+            return pidLine.flatMap { DWORD($0) } ?? 0
+        }
+
+        grandchildPidToKill = result.closureOutput
+        #expect(grandchildPidToKill != 0)
+        #expect(result.terminationStatus == .exited(0))
+    }
+
+    @Test func testWeDoNotHangIfStandardOutputRemainsOpenButProcessExits() async throws {
+        // PowerShell forks the sleeping grandchild (which inherits stdout
+        // since `Start-Process -NoNewWindow` copies the parent's std
+        // handles), prints the PID on stderr so we can capture it via
+        // `.sequence`, prints "GO" on stdout, and exits. The grandchild
+        // keeps the stdout write end alive — `.string(limit:)` on stdout
+        // is the call that would hang waiting for an EOF that never
+        // arrives.
+        let script = """
+            $ErrorActionPreference = 'Stop'
+            \(Self.spawnGrandchildSleep)
+            [Console]::Error.WriteLine($proc.Id)
+            Write-Output 'GO'
+            exit 0
+            """
+        let setup = TestSetup(
+            executable: .name("powershell.exe"),
+            arguments: ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script]
+        )
+
+        var grandchildPidToKill: DWORD = 0
+        defer { Self.killGrandchild(grandchildPidToKill) }
+
+        let result = try await _run(
+            setup,
+            input: .none,
+            output: .string(limit: 1024),
+            error: .sequence
+        ) { execution in
+            // The grandchild also inherits stderr, so the call can't
+            // iterate to EOF here. Read until a line parses as a PID and
+            // return — the I/O is cancelled once the child exits.
+            var iterator = execution.standardError.strings().makeAsyncIterator()
+            while let line = try await iterator.next() {
+                if let pid = DWORD(line) {
+                    return pid
+                }
+            }
+            return DWORD(0)
+        }
+
+        grandchildPidToKill = result.closureOutput
+        #expect(grandchildPidToKill != 0)
+        #expect(result.terminationStatus == .exited(0))
+        #expect((result.standardOutput ?? "").contains("GO"))
+    }
+
+    @Test func testWeDoNotHangIfStandardErrorRemainsOpenButProcessExits() async throws {
+        // Mirror of the stdout test: PowerShell prints the PID on stdout
+        // (so we can capture it via `.sequence`) and "GO" on stderr, then
+        // exits. The grandchild keeps the stderr write end alive —
+        // `.string(limit:)` on stderr is the call that would hang.
+        let script = """
+            $ErrorActionPreference = 'Stop'
+            \(Self.spawnGrandchildSleep)
+            Write-Output $proc.Id
+            [Console]::Error.WriteLine('GO')
+            exit 0
+            """
+        let setup = TestSetup(
+            executable: .name("powershell.exe"),
+            arguments: ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script]
+        )
+
+        var grandchildPidToKill: DWORD = 0
+        defer { Self.killGrandchild(grandchildPidToKill) }
+
+        let result = try await _run(
+            setup,
+            input: .none,
+            output: .sequence,
+            error: .string(limit: 1024)
+        ) { execution in
+            var iterator = execution.standardOutput.strings().makeAsyncIterator()
+            while let line = try await iterator.next() {
+                if let pid = DWORD(line) {
+                    return pid
+                }
+            }
+            return DWORD(0)
+        }
+
+        grandchildPidToKill = result.closureOutput
+        #expect(grandchildPidToKill != 0)
+        #expect(result.terminationStatus == .exited(0))
+        #expect((result.standardError ?? "").contains("GO"))
+    }
+}
+#endif // !os(Windows)
+
 // MARK: - Other Tests
 extension SubprocessIntegrationTests {
     @Test func testTerminateProcess() async throws {

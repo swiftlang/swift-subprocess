@@ -601,9 +601,9 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
 
 // MARK: - Process Monitoring
 @Sendable
-internal func monitorProcessTermination(
+internal func waitForProcessTermination(
     for processIdentifier: ProcessIdentifier
-) async throws(SubprocessError) -> TerminationStatus {
+) async throws(SubprocessError) {
     // Once the continuation resumes, it will need to unregister the wait, so
     // yield the wait handle back to the calling scope.
     var waitHandle: HANDLE?
@@ -647,7 +647,15 @@ internal func monitorProcessTermination(
             }
         }
     }
+}
 
+@Sendable
+internal func reapProcess(
+    with processIdentifier: ProcessIdentifier
+) throws(SubprocessError) -> TerminationStatus {
+    // Windows keeps the exit code reachable through the process HANDLE
+    // until the HANDLE is closed, so there is no zombie to reap. We just
+    // need to read the exit code via `GetExitCodeProcess`.
     var status: DWORD = 0
     guard GetExitCodeProcess(processIdentifier.processDescriptor, &status) else {
         throw SubprocessError.failedToMonitor(

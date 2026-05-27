@@ -243,13 +243,14 @@ private func _shutdownWorkerThread() {
 
 #if canImport(Darwin)
 // Unfortunately on Darwin we cannot unconditionally use Atomic since it requires macOS 15
-internal struct AtomicCounter: ~Copyable {
+internal final class AtomicCounter: Sendable {
     private let storage: OSAllocatedUnfairLock<UInt8>
 
     internal init() {
         self.storage = .init(initialState: 0)
     }
 
+    @discardableResult
     internal func addOne() -> UInt8 {
         return self.storage.withLock {
             $0 += 1
@@ -258,7 +259,7 @@ internal struct AtomicCounter: ~Copyable {
     }
 }
 #else
-internal struct AtomicCounter: ~Copyable {
+internal final class AtomicCounter: Sendable {
 
     private let storage: Atomic<UInt8>
 
@@ -266,6 +267,7 @@ internal struct AtomicCounter: ~Copyable {
         self.storage = Atomic(0)
     }
 
+    @discardableResult
     internal func addOne() -> UInt8 {
         return self.storage.add(1, ordering: .sequentiallyConsistent).newValue
     }

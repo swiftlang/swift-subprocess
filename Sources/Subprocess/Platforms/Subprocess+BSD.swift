@@ -27,19 +27,21 @@ internal import Dispatch
 
 // MARK: - Process Monitoring
 @Sendable
-internal func monitorProcessTermination(
+internal func waitForProcessTermination(
     for processIdentifier: ProcessIdentifier
-) async throws(SubprocessError) -> TerminationStatus {
-    switch Result(catching: { () throws(Errno) -> TerminationStatus? in try processIdentifier.reap() }) {
-    case let .success(status?):
-        return status
-    case .success(nil):
-        break
-    case let .failure(error):
+) async throws(SubprocessError) {
+    // Fast path: if the process is already a zombie, return immediately.
+    // Using WNOWAIT leaves the zombie in place for the eventual `reapProcess`.
+    do throws(Errno) {
+        if try processIdentifier.peekIfExited() {
+            return
+        }
+    } catch {
         throw .failedToMonitor(withUnderlyingError: error)
     }
+
     return try await _castError {
-        let result = try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { continuation in
             let source = DispatchSource.makeProcessSource(
                 identifier: processIdentifier.value,
                 eventMask: [.exit],
@@ -47,21 +49,10 @@ internal func monitorProcessTermination(
             )
             source.setEventHandler {
                 source.cancel()
-
-                do throws(Errno) {
-                    // NOTE_EXIT may be delivered slightly before the process becomes reapable,
-                    // so we must call waitid without WNOHANG to avoid a narrow possibility of a race condition.
-                    // If waitid does block, it won't do so for very long at all.
-                    let status = try processIdentifier.blockingReap()
-                    continuation.resume(returning: status)
-                } catch {
-                    let subprocessError: SubprocessError = .failedToMonitor(withUnderlyingError: error)
-                    continuation.resume(throwing: subprocessError)
-                }
+                continuation.resume()
             }
             source.resume()
         }
-        return result
     }
 }
 

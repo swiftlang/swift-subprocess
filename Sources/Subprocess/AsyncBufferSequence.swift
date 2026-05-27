@@ -57,11 +57,13 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
         public typealias Element = Buffer
 
         private let diskIO: DiskIO
+        private let processIdentifier: ProcessIdentifier
         private let preferredBufferSize: Int
         private var buffer: [Buffer]
 
-        internal init(diskIO: DiskIO) {
+        internal init(diskIO: DiskIO, processIdentifier: ProcessIdentifier) {
             self.diskIO = diskIO
+            self.processIdentifier = processIdentifier
             self.buffer = []
             // Only need to query it once at beginning of stream
             self.preferredBufferSize = AsyncIO.queryPipeBufferSize(for: diskIO)
@@ -76,6 +78,7 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
             // Read more data
             let data = try await AsyncIO.shared.read(
                 from: self.diskIO,
+                for: self.processIdentifier,
                 upTo: self.preferredBufferSize
             )
             guard let data else {
@@ -97,10 +100,12 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
     }
 
     private let diskIO: DiskIO
+    private let processIdentifier: ProcessIdentifier
     private let state: State
 
-    internal init(diskIO: DiskIO) {
+    internal init(diskIO: DiskIO, processIdentifier: ProcessIdentifier) {
         self.diskIO = diskIO
+        self.processIdentifier = processIdentifier
         self.state = State()
     }
 
@@ -109,7 +114,7 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
         guard self.state.initializedCount() == 1 else {
             fatalError("AsyncBufferSequence is single pass. It can only be iterated once.")
         }
-        return Iterator(diskIO: self.diskIO)
+        return Iterator(diskIO: self.diskIO, processIdentifier: self.processIdentifier)
     }
 
     /// Splits the buffer into strings using the specified separator.

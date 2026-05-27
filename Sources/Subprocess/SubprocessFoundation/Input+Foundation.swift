@@ -122,7 +122,7 @@ extension StandardInputWriter {
     public func write(
         _ data: Data
     ) async throws(SubprocessError) -> Int {
-        return try await AsyncIO.shared.write(data, to: self.diskIO)
+        return try await AsyncIO.shared.write(data, to: self.diskIO, for: self.processIdentifier)
     }
 
     /// Writes an asynchronous sequence of `Data` to the subprocess's standard input.
@@ -154,9 +154,10 @@ extension Data: AsyncIO._ContiguousBytes {}
 extension AsyncIO {
     internal func write(
         _ data: Data,
-        to diskIO: borrowing IODescriptor
+        to diskIO: borrowing IODescriptor,
+        for processIdentifier: ProcessIdentifier
     ) async throws(SubprocessError) -> Int {
-        return try await self.write(data.bytes, to: diskIO)
+        return try await self.write(data.bytes, to: diskIO, for: processIdentifier)
     }
 }
 

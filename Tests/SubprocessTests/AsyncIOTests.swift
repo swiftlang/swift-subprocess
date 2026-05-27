@@ -346,3 +346,41 @@ extension SubprocessAsyncIOTests.TestBed {
         try await Task.sleep(for: duration)
     }
 }
+
+/// A `ProcessIdentifier` for the current test process.
+///
+/// The AsyncIO-only tests below never spawn a child, so they have no
+/// real `ProcessIdentifier` to pass. The tests only call `read` and
+/// `write` (never `cancelAsyncIO`), so this stand-in is sufficient.
+private var _currentPID: ProcessIdentifier {
+    #if os(Windows)
+    return ProcessIdentifier(
+        value: GetCurrentProcessId(),
+        processDescriptor: GetCurrentProcess(),
+        threadHandle: GetCurrentThread()
+    )
+    #elseif os(Linux) || os(Android) || os(FreeBSD)
+    return ProcessIdentifier(
+        value: getpid(),
+        processDescriptor: 0 // Not used in these tests.
+    )
+    #else
+    return ProcessIdentifier(value: getpid())
+    #endif
+}
+
+extension AsyncIO {
+    func write(
+        _ array: [UInt8],
+        to diskIO: borrowing IODescriptor
+    ) async throws(SubprocessError) -> Int {
+        return try await self.write(array._bytes, to: diskIO, for: _currentPID)
+    }
+
+    func read(
+        from diskIO: borrowing IODescriptor,
+        upTo maxLength: Int
+    ) async throws(SubprocessError) -> [UInt8]? {
+        return try await self.read(from: diskIO, for: _currentPID, upTo: maxLength)
+    }
+}
