@@ -120,6 +120,8 @@ int _pidfd_open(pid_t pid);
 #define P_PIDFD 3
 #endif
 
+int _subprocess_install_sigchld_handler(void (* _Nonnull handler)(int));
+
 #endif
 
 #ifdef __cplusplus
