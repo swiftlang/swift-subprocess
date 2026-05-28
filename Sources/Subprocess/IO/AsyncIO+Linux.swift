@@ -36,7 +36,7 @@ private let _registration: Mutex<Registration> = Mutex(Registration())
 
 final class AsyncIO: Sendable {
 
-    typealias OutputStream = AsyncThrowingStream<AsyncBufferSequence.Buffer, any Error>
+    typealias OutputStream = AsyncThrowingStream<SubprocessOutputSequence.Buffer, any Error>
 
     private struct MonitorThreadContext: Sendable {
         let epollFileDescriptor: CInt

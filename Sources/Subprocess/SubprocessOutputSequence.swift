@@ -39,7 +39,7 @@ import os
 #endif
 
 /// An asynchronous sequence of buffers that streams output from a subprocess.
-public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
+public struct SubprocessOutputSequence: AsyncSequence, @unchecked Sendable {
     /// The failure type for the asynchronous sequence.
     public typealias Failure = any Swift.Error
     /// The element type for the asynchronous sequence.
@@ -51,7 +51,7 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
     internal typealias DiskIO = FileDescriptor
     #endif
 
-    /// An iterator for ``AsyncBufferSequence``.
+    /// An iterator for ``SubprocessOutputSequence``.
     public struct Iterator: AsyncIteratorProtocol {
         /// The element type for the iterator.
         public typealias Element = Buffer
@@ -94,7 +94,7 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
         }
 
         /// Retrieves the next buffer in the sequence, or `nil` if the sequence ended.
-        public mutating func next() async throws -> AsyncBufferSequence.Buffer? {
+        public mutating func next() async throws -> SubprocessOutputSequence.Buffer? {
             return try await self.next(isolation: nil)
         }
     }
@@ -112,7 +112,7 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
     /// Creates an iterator for this asynchronous sequence.
     public func makeAsyncIterator() -> Iterator {
         guard self.state.initializedCount() == 1 else {
-            fatalError("AsyncBufferSequence is single pass. It can only be iterated once.")
+            fatalError("SubprocessOutputSequence is single pass. It can only be iterated once.")
         }
         return Iterator(diskIO: self.diskIO, processIdentifier: self.processIdentifier)
     }
@@ -166,9 +166,9 @@ public struct AsyncBufferSequence: AsyncSequence, @unchecked Sendable {
 }
 
 @available(*, unavailable)
-extension AsyncBufferSequence.Iterator: Sendable {}
+extension SubprocessOutputSequence.Iterator: Sendable {}
 
-extension AsyncBufferSequence {
+extension SubprocessOutputSequence {
     private final class State {
         #if os(macOS)
         private let value: OSAllocatedUnfairLock<Int>
@@ -198,7 +198,7 @@ extension AsyncBufferSequence {
 }
 
 // MARK: - StringSequence
-extension AsyncBufferSequence {
+extension SubprocessOutputSequence {
     /// An asynchronous sequence of strings parsed from a buffer
     /// sequence.
     ///
@@ -230,7 +230,7 @@ extension AsyncBufferSequence {
         /// The element type for the asynchronous sequence.
         public typealias Element = String
 
-        private let base: AsyncBufferSequence
+        private let base: SubprocessOutputSequence
         private let bufferingPolicy: BufferingPolicy
         private let separator: Separator
 
@@ -239,7 +239,7 @@ extension AsyncBufferSequence {
             /// The element type for this Iterator.
             public typealias Element = String
 
-            private var source: AsyncBufferSequence.AsyncIterator
+            private var source: SubprocessOutputSequence.AsyncIterator
             private var buffer: [Encoding.CodeUnit]
             private var underlyingBuffer: [Encoding.CodeUnit]
             private var underlyingBufferIndex: Array<Encoding.CodeUnit>.Index
@@ -250,7 +250,7 @@ extension AsyncBufferSequence {
             private let separatorCodeUnits: [Encoding.CodeUnit]
 
             internal init(
-                underlyingIterator: AsyncBufferSequence.AsyncIterator,
+                underlyingIterator: SubprocessOutputSequence.AsyncIterator,
                 bufferingPolicy: BufferingPolicy,
                 separator: Separator
             ) {
@@ -486,7 +486,7 @@ extension AsyncBufferSequence {
         }
 
         internal init(
-            underlying: AsyncBufferSequence,
+            underlying: SubprocessOutputSequence,
             encoding: Encoding.Type,
             bufferingPolicy: BufferingPolicy,
             separator: Separator
@@ -499,9 +499,9 @@ extension AsyncBufferSequence {
 }
 
 @available(*, unavailable)
-extension AsyncBufferSequence.StringSequence.AsyncIterator: Sendable {}
+extension SubprocessOutputSequence.StringSequence.AsyncIterator: Sendable {}
 
-extension AsyncBufferSequence.StringSequence {
+extension SubprocessOutputSequence.StringSequence {
     /// A strategy for handling buffer capacity.
     public enum BufferingPolicy: Sendable {
         /// Adds to the buffer without imposing a limit on line length.

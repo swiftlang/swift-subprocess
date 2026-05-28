@@ -50,7 +50,7 @@ extension OutputProtocol where Self == DataOutput {
 extension Data {
     /// Creates a `Data` value from a buffer.
     /// - Parameter buffer: The buffer to copy from.
-    public init(buffer: AsyncBufferSequence.Buffer) {
+    public init(buffer: SubprocessOutputSequence.Buffer) {
         self = Data(buffer.data)
     }
 }
