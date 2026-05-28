@@ -1298,16 +1298,18 @@ extension FileDescriptor {
         writeEnd: FileDescriptor
     ) {
         var fds: [2 of CInt] = [-1, -1]
-        guard 0 == _pipe(&fds, 0, _O_BINARY) else {
-            throw SubprocessError.asyncIOFailed(
-                reason: "Failed to create pipe",
-                underlyingError: nil // FIXME: Errno(rawValue: _subprocess_windows_get_errno())
+        try fds.span.withUnsafeBufferPointer { fds in
+            guard 0 == _pipe(fds.baseAddress!, 0, _O_BINARY) else {
+                throw SubprocessError.asyncIOFailed(
+                    reason: "Failed to create pipe",
+                    underlyingError: nil // FIXME: Errno(rawValue: _subprocess_windows_get_errno())
+                )
+            }
+            return (
+                readEnd: FileDescriptor(rawValue: fds[0]),
+                writeEnd: FileDescriptor(rawValue: fds[1])
             )
         }
-        return (
-            readEnd: FileDescriptor(rawValue: fds[0]),
-            writeEnd: FileDescriptor(rawValue: fds[1])
-        )
     }
 
     var platformDescriptor: PlatformFileDescriptor {
