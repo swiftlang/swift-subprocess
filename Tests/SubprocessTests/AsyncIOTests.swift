@@ -357,7 +357,8 @@ private var _currentPID: ProcessIdentifier {
     return ProcessIdentifier(
         value: GetCurrentProcessId(),
         processDescriptor: GetCurrentProcess(),
-        threadHandle: GetCurrentThread()
+        threadHandle: GetCurrentThread(),
+        jobHandle: INVALID_HANDLE_VALUE
     )
     #elseif os(Linux) || os(Android) || os(FreeBSD)
     return ProcessIdentifier(
