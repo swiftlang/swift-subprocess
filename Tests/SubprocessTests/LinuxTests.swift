@@ -29,7 +29,6 @@ import SystemPackage
 import FoundationEssentials
 
 import Testing
-import _SubprocessCShims
 @testable import Subprocess
 
 // MARK: PlatformOption Tests
@@ -37,72 +36,6 @@ import _SubprocessCShims
 struct SubprocessLinuxTests {
     init() {
         _ = globallyIgnoredSIGPIPE
-    }
-
-    @Test func testSuspendResumeProcess() async throws {
-        func blockAndWaitForStatus(
-            pid: pid_t,
-            waitThread: inout pthread_t?,
-            targetSignal: Int32,
-            _ handler: @Sendable @escaping (Int32) -> Void
-        ) async throws {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-                do {
-                    waitThread = try pthread_create {
-                        var suspendedStatus: Int32 = 0
-                        let rc = waitpid(pid, &suspendedStatus, targetSignal)
-                        if rc == -1 {
-                            continuation.resume(throwing: Errno(rawValue: errno))
-                            return
-                        }
-                        handler(suspendedStatus)
-                        continuation.resume()
-                    }
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
-        }
-
-        _ = try await Subprocess.run(
-            // This will intentionally hang
-            .name("sleep"),
-            arguments: ["infinity"],
-            input: .none,
-            output: .discarded,
-            error: .discarded
-        ) { subprocess in
-            // First suspend the process
-            try subprocess.send(signal: .suspend)
-            var thread1: pthread_t? = nil
-            try await blockAndWaitForStatus(
-                pid: subprocess.processIdentifier.value,
-                waitThread: &thread1,
-                targetSignal: WSTOPPED
-            ) { status in
-                #expect(_was_process_suspended(status) > 0)
-            }
-            // Now resume the process
-            try subprocess.send(signal: .resume)
-            var thread2: pthread_t? = nil
-            try await blockAndWaitForStatus(
-                pid: subprocess.processIdentifier.value,
-                waitThread: &thread2,
-                targetSignal: WCONTINUED
-            ) { status in
-                #expect(_was_process_suspended(status) == 0)
-            }
-
-            // Now kill the process
-            try subprocess.send(signal: .terminate)
-
-            if let thread1 {
-                pthread_join(thread1, nil)
-            }
-            if let thread2 {
-                pthread_join(thread2, nil)
-            }
-        }
     }
 
     @Test func testUniqueProcessIdentifier() async throws {

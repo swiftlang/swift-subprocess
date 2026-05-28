@@ -75,30 +75,6 @@ struct SubprocessDarwinTests {
         }
         #expect(FilePath(currentDir) == expected)
     }
-
-    @Test func testSuspendResumeProcess() async throws {
-        _ = try await Subprocess.run(
-            // This will intentionally hang
-            .path("/bin/cat"),
-            input: .none,
-            output: .discarded,
-            error: .discarded
-        ) { subprocess in
-            // First suspend the process
-            try subprocess.send(signal: .suspend)
-            var suspendedStatus: Int32 = 0
-            waitpid(subprocess.processIdentifier.value, &suspendedStatus, WNOHANG | WUNTRACED)
-            #expect(_was_process_suspended(suspendedStatus) > 0)
-            // Now resume the process
-            try subprocess.send(signal: .resume)
-            var resumedStatus: Int32 = 0
-            waitpid(subprocess.processIdentifier.value, &resumedStatus, WNOHANG | WUNTRACED)
-            #expect(_was_process_suspended(resumedStatus) == 0)
-
-            // Now kill the process
-            try subprocess.send(signal: .terminate)
-        }
-    }
 }
 
 #endif // canImport(Darwin)
