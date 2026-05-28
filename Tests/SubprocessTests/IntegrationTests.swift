@@ -33,6 +33,12 @@ import TestResources
 import _SubprocessCShims
 @testable import Subprocess
 
+#if os(Android)
+let isAndroid = true
+#else
+let isAndroid = false
+#endif
+
 @Suite("Subprocess Integration (End to End) Tests", .serialized)
 struct SubprocessIntegrationTests {
     init() {
@@ -2615,7 +2621,7 @@ extension SubprocessIntegrationTests {
         )
         #else
         let setup = TestSetup(
-            executable: .path("/usr/bin/tail"),
+            executable: .name("tail"),
             arguments: ["-f", "/dev/null"]
         )
         #endif
@@ -2787,7 +2793,7 @@ extension SubprocessIntegrationTests {
     }
 
     #if SubprocessFoundation
-    @Test func testCaptureLongStandardOutputAndError() async throws {
+    @Test(.disabled(if: isAndroid, "tee: /dev/stderr: Permission denied")) func testCaptureLongStandardOutputAndError() async throws {
         let string = String(repeating: "X", count: 100_000)
         #if os(Windows)
         let setup = TestSetup(
@@ -2799,7 +2805,7 @@ extension SubprocessIntegrationTests {
         )
         #else
         let setup = TestSetup(
-            executable: .path("/usr/bin/tee"),
+            executable: .name("tee"),
             arguments: ["/dev/stderr"]
         )
         #endif
@@ -2832,7 +2838,7 @@ extension SubprocessIntegrationTests {
         )
         #else
         let setup = TestSetup(
-            executable: .path("/usr/bin/tail"),
+            executable: .name("tail"),
             arguments: ["-f", "/dev/null"]
         )
         #endif
@@ -3098,7 +3104,7 @@ extension SubprocessIntegrationTests {
                 let readEnd = FileDescriptor(rawValue: readEndFd)
                 #else
                 let setup = TestSetup(
-                    executable: .path("/usr/bin/tr"),
+                    executable: .name("tr"),
                     arguments: ["[:lower:]", "[:upper:]"]
                 )
                 let readEnd = pipe.readEnd

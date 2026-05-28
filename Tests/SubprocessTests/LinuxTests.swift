@@ -66,7 +66,7 @@ struct SubprocessLinuxTests {
 
         _ = try await Subprocess.run(
             // This will intentionally hang
-            .path("/usr/bin/sleep"),
+            .name("sleep"),
             arguments: ["infinity"],
             input: .none,
             output: .discarded,
