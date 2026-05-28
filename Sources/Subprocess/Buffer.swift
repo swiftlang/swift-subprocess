@@ -21,7 +21,7 @@ internal import FoundationEssentials
 
 #endif
 
-extension AsyncBufferSequence {
+extension SubprocessOutputSequence {
     /// An immutable collection of bytes.
     public struct Buffer: Sendable {
         internal let data: [UInt8]
@@ -33,7 +33,7 @@ extension AsyncBufferSequence {
 }
 
 // MARK: - Properties
-extension AsyncBufferSequence.Buffer {
+extension SubprocessOutputSequence.Buffer {
     /// The number of bytes in the buffer.
     public var count: Int {
         return self.data.count
@@ -46,7 +46,7 @@ extension AsyncBufferSequence.Buffer {
 }
 
 // MARK: - Accessors
-extension AsyncBufferSequence.Buffer {
+extension SubprocessOutputSequence.Buffer {
     /// Accesses the raw bytes stored in this buffer.
     /// - Parameter body: A closure with an `UnsafeRawBufferPointer` parameter that
     ///   points to the contiguous storage for the buffer. If no such storage exists,

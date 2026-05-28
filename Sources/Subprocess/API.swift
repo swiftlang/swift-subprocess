@@ -291,12 +291,12 @@ public func run<
                 }
             }
 
-            var outputSequence: AsyncBufferSequence? = nil
-            var errorSequence: AsyncBufferSequence? = nil
+            var outputSequence: SubprocessOutputSequence? = nil
+            var errorSequence: SubprocessOutputSequence? = nil
             // Capture output and error in parallel
             if Output.self == SequenceOutput.self {
                 var diskIO = outputIOBox.take()
-                outputSequence = AsyncBufferSequence(
+                outputSequence = SubprocessOutputSequence(
                     diskIO: diskIO!.consumeDescriptor(),
                     processIdentifier: processIdentifier
                 )
@@ -316,7 +316,7 @@ public func run<
 
             if Error.self == SequenceOutput.self {
                 var diskIO = errorIOBox.take()
-                errorSequence = AsyncBufferSequence(
+                errorSequence = SubprocessOutputSequence(
                     diskIO: diskIO!.consumeDescriptor(),
                     processIdentifier: processIdentifier
                 )

@@ -46,14 +46,14 @@ public struct Execution<Input: InputProtocol, Output: OutputProtocol, Error: Out
     public let processIdentifier: ProcessIdentifier
 
     private let inputWriter: StandardInputWriter?
-    private let outputStream: AsyncBufferSequence?
-    private let errorStream: AsyncBufferSequence?
+    private let outputStream: SubprocessOutputSequence?
+    private let errorStream: SubprocessOutputSequence?
 
     init(
         processIdentifier: ProcessIdentifier,
         inputWriter: StandardInputWriter?,
-        outputStream: AsyncBufferSequence?,
-        errorStream: AsyncBufferSequence?
+        outputStream: SubprocessOutputSequence?,
+        errorStream: SubprocessOutputSequence?
     ) {
         self.processIdentifier = processIdentifier
         self.inputWriter = inputWriter
@@ -75,7 +75,7 @@ extension Execution where Input == CustomWriteInput {
 extension Execution where Output == SequenceOutput {
     /// The standard output of the subprocess as an asynchronous sequence of
     /// buffers.
-    public var standardOutput: AsyncBufferSequence {
+    public var standardOutput: SubprocessOutputSequence {
         return self.outputStream!
     }
 }
@@ -83,7 +83,7 @@ extension Execution where Output == SequenceOutput {
 extension Execution where Error == SequenceOutput {
     /// The standard error of the subprocess as an asynchronous sequence of
     /// buffers.
-    public var standardError: AsyncBufferSequence {
+    public var standardError: SubprocessOutputSequence {
         return self.errorStream!
     }
 }
@@ -95,12 +95,12 @@ extension Execution {
     }
 
     @available(*, unavailable, message: "this property requires that the output is .sequence")
-    public var standardOutput: AsyncBufferSequence {
+    public var standardOutput: SubprocessOutputSequence {
         fatalError()
     }
 
     @available(*, unavailable, message: "this property requires that the error is .sequence")
-    public var standardError: AsyncBufferSequence {
+    public var standardError: SubprocessOutputSequence {
         fatalError()
     }
 }

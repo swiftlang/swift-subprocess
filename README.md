@@ -71,7 +71,7 @@ This returns an `ExecutionResult` containing the process identifier, termination
 For more control, pass a closure that runs while the child process is active. The closure receives a single `Execution` value that you use to send signals, write to standard input, and stream standard output and standard error.
 
 > [!CAUTION]
-> The `Execution`, `AsyncBufferSequence`, and `StandardInputWriter` values are valid only for the duration of the closure. Don't let them escape the closure.
+> The `Execution`, `SubprocessOutputSequence`, and `StandardInputWriter` values are valid only for the duration of the closure. Don't let them escape the closure.
 
 You opt into each interactive stream by choosing the matching input or output type:
 
@@ -169,7 +169,7 @@ try await run(
 }
 ```
 
-In the closure-based API, output streams are delivered as an `AsyncBufferSequence` — an asynchronous sequence of `Buffer` values. Each `Buffer` provides access to its bytes via `withUnsafeBytes(_:)` or the `bytes` property (a `RawSpan`).
+In the closure-based API, output streams are delivered as an `SubprocessOutputSequence` — an asynchronous sequence of `Buffer` values. Each `Buffer` provides access to its bytes via `withUnsafeBytes(_:)` or the `bytes` property (a `RawSpan`).
 
 The preferred way to convert `Buffer` to `String` is to read output line by line using `.lines()`. You can optionally specify an encoding and buffering policy:
 

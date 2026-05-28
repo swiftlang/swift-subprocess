@@ -82,7 +82,7 @@ private func _makeKevent(
 
 final class AsyncIO: Sendable {
 
-    typealias OutputStream = AsyncThrowingStream<AsyncBufferSequence.Buffer, any Error>
+    typealias OutputStream = AsyncThrowingStream<SubprocessOutputSequence.Buffer, any Error>
 
     private struct MonitorThreadContext: Sendable {
         let kqueueFileDescriptor: CInt
