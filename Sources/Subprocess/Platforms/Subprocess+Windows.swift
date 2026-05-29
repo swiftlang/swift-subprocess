@@ -1297,36 +1297,19 @@ extension FileDescriptor {
         readEnd: FileDescriptor,
         writeEnd: FileDescriptor
     ) {
-        var saAttributes: SECURITY_ATTRIBUTES = SECURITY_ATTRIBUTES()
-        saAttributes.nLength = DWORD(MemoryLayout<SECURITY_ATTRIBUTES>.size)
-        saAttributes.bInheritHandle = true
-        saAttributes.lpSecurityDescriptor = nil
-
-        var readHandle: HANDLE? = nil
-        var writeHandle: HANDLE? = nil
-        guard CreatePipe(&readHandle, &writeHandle, &saAttributes, 0),
-            readHandle != INVALID_HANDLE_VALUE,
-            writeHandle != INVALID_HANDLE_VALUE,
-            let readHandle: HANDLE = readHandle,
-            let writeHandle: HANDLE = writeHandle
-        else {
-            throw SubprocessError.asyncIOFailed(
-                reason: "Filed to create pipe",
-                underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
-            )
+        var fds: [2 of CInt] = [-1, -1]
+        var span = fds.mutableSpan
+        try span.withUnsafeMutableBufferPointer { fds throws(SubprocessError) in
+            guard 0 == _pipe(fds.baseAddress!, 0, _O_BINARY) else {
+                throw SubprocessError.asyncIOFailed(
+                    reason: "Failed to create pipe",
+                    underlyingError: nil // FIXME: Errno(rawValue: _subprocess_windows_get_errno())
+                )
+            }
         }
-        let readFd = _open_osfhandle(
-            intptr_t(bitPattern: readHandle),
-            FileDescriptor.AccessMode.readOnly.rawValue
-        )
-        let writeFd = _open_osfhandle(
-            intptr_t(bitPattern: writeHandle),
-            FileDescriptor.AccessMode.writeOnly.rawValue
-        )
-
         return (
-            readEnd: FileDescriptor(rawValue: readFd),
-            writeEnd: FileDescriptor(rawValue: writeFd)
+            readEnd: FileDescriptor(rawValue: fds[0]),
+            writeEnd: FileDescriptor(rawValue: fds[1])
         )
     }
 
