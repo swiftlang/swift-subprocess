@@ -1298,7 +1298,7 @@ extension FileDescriptor {
         writeEnd: FileDescriptor
     ) {
         var fds: [2 of CInt] = [-1, -1]
-        try fds.span.withUnsafeBufferPointer { fds in
+        try fds.mutableSpan.withUnsafeMutableBufferPointer { fds in
             guard 0 == _pipe(fds.baseAddress!, 0, _O_BINARY) else {
                 throw SubprocessError.asyncIOFailed(
                     reason: "Failed to create pipe",
