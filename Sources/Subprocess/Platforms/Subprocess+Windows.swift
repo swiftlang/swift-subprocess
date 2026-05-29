@@ -1298,18 +1298,19 @@ extension FileDescriptor {
         writeEnd: FileDescriptor
     ) {
         var fds: [2 of CInt] = [-1, -1]
-        try fds.mutableSpan.withUnsafeMutableBufferPointer { fds in
+        var span = fds.mutableSpan
+        try span.withUnsafeMutableBufferPointer { fds throws(SubprocessError) in
             guard 0 == _pipe(fds.baseAddress!, 0, _O_BINARY) else {
                 throw SubprocessError.asyncIOFailed(
                     reason: "Failed to create pipe",
                     underlyingError: nil // FIXME: Errno(rawValue: _subprocess_windows_get_errno())
                 )
             }
-            return (
-                readEnd: FileDescriptor(rawValue: fds[0]),
-                writeEnd: FileDescriptor(rawValue: fds[1])
-            )
         }
+        return (
+            readEnd: FileDescriptor(rawValue: fds[0]),
+            writeEnd: FileDescriptor(rawValue: fds[1])
+        )
     }
 
     var platformDescriptor: PlatformFileDescriptor {
