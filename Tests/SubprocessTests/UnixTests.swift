@@ -223,6 +223,71 @@ extension SubprocessUnixTests {
     }
 }
 
+// MARK: - Teardown Timing
+extension SubprocessUnixTests {
+    /// Spawns a child that prints `ready` and then blocks in `sleep`, waits
+    /// for that marker so the child is known to be running, then cancels the
+    /// run to trigger teardown and returns how long the teardown took.
+    private func measureCancelledTeardown(
+        using teardownSequence: [TeardownStep]
+    ) async -> Duration {
+        let (readyStream, readyContinuation) = AsyncStream.makeStream(of: Void.self)
+        return await withTaskGroup(
+            of: Void.self,
+            returning: Duration.self
+        ) { group in
+            group.addTask {
+                var platformOptions = PlatformOptions()
+                // Isolate the child in its own session so teardown can't reach
+                // anything but the process we spawned.
+                platformOptions.createSession = true
+                platformOptions.teardownSequence = teardownSequence
+                let configuration = Configuration(
+                    .path("/bin/sh"),
+                    // `exec` so the monitored child becomes `sleep` itself,
+                    // which dies instantly on SIGTERM/SIGKILL.
+                    arguments: ["-c", "echo ready; exec sleep 10"],
+                    platformOptions: platformOptions
+                )
+                _ = try? await Subprocess.run(
+                    configuration,
+                    input: .none,
+                    output: .sequence,
+                    error: .discarded
+                ) { execution in
+                    for try await line in execution.standardOutput.strings() {
+                        if line.trimmingCharacters(in: .whitespacesAndNewlines) == "ready" {
+                            readyContinuation.finish()
+                        }
+                    }
+                }
+            }
+            // Block until the child confirms it is running.
+            for await _ in readyStream {}
+            // Time only the teardown triggered by cancellation.
+            return await ContinuousClock().measure {
+                group.cancelAll()
+                await group.waitForAll()
+            }
+        }
+    }
+
+    @Test func testKillTeardownReturnsAsSoonAsProcessExits() async {
+        let elapsed = await self.measureCancelledTeardown(using: [
+            .send(signal: .kill, allowedDurationToNextStep: .seconds(5))
+        ])
+        #expect(elapsed < .seconds(5), "SIGKILL is uncatchable; teardown should not wait")
+    }
+
+    @Test func testTerminateTeardownReturnsAsSoonAsProcessExits() async {
+        let elapsed = await self.measureCancelledTeardown(using: [
+            .send(signal: .terminate, allowedDurationToNextStep: .seconds(3)),
+            .send(signal: .kill, allowedDurationToNextStep: .seconds(5)),
+        ])
+        #expect(elapsed < .seconds(5), "sleep dies on SIGTERM instantly; teardown should not wait")
+    }
+}
+
 // MARK: - PATH Resolution Tests
 extension SubprocessUnixTests {
     @Test func testExecutablePathsPreserveOrder() throws {
