@@ -282,11 +282,23 @@ extension Configuration {
                 throw error
             }
 
+            let resolvedExecutable: FilePath?
+            switch self.executable.storage {
+            case .path(let path):
+                resolvedExecutable = path
+            case .executable:
+                // `nil` on the fast path, where `applicationName` is `nil` and
+                // `CreateProcessW` searched via `lpCommandLine`; the matched
+                // candidate on the arg0-override path.
+                resolvedExecutable = applicationName.map { FilePath($0) }
+            }
+
             return SpawnResult(
                 processIdentifier: pid,
                 inputWriteEnd: inputWriteFileDescriptor,
                 outputReadEnd: outputReadFileDescriptor,
-                errorReadEnd: errorReadFileDescriptor
+                errorReadEnd: errorReadFileDescriptor,
+                resolvedExecutable: resolvedExecutable
             )
         }
 
