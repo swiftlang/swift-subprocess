@@ -58,6 +58,22 @@ jobs:
         done
         # empty line to ignore the --swift-sdk given by swiftlang/github-workflows/.github/workflows/scripts/install-and-build-with-sdk.sh \
 
+  test_linux_kernel:
+    name: Test Linux Kernel / ${{ matrix.dist-kern }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+          # These are specific distro and kernel versions that the test qemu script supports from here: https://images.linuxcontainers.org
+          dist-kern: ["al2-4.18", "al2-5.10"]
+    container:
+      image: ubuntu:24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Run Test
+        run: bash -c './scripts/test-using-qemu.sh ${{ matrix.dist-kern }}'
+
   soundness:
     name: Soundness
     uses: swiftlang/github-workflows/.github/workflows/soundness.yml@0.0.11
