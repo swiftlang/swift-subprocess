@@ -591,7 +591,8 @@ extension SubprocessUnixTests {
     //
     // Spawns 16 `bash` children, each with a SIGTERM trap that sleeps one second
     // before exiting. Every body closure sends SIGTERM at roughly the same instant,
-    // so all 16 children finish their trap and become zombies inside a single small.
+    // so all 16 children finish their trap and become zombies inside a single small
+    // window.
     @Test(.requiresBash) func testConcurrentSlowExitsDoNotHang() async throws {
         // 16 concurrent slow-to-exit children is enough to flood the
         // monitor and trigger the burst on Linux.
@@ -600,7 +601,13 @@ extension SubprocessUnixTests {
         // POSIX sh) is required: `sh -c 'trap ...; sleep 300'` would defer
         // the trap until `sleep 300` completes, while bash interrupts
         // `wait` immediately on signal.
-        let script = "trap 'sleep 1; exit 0' TERM; sleep 300 & wait"
+        //
+        // `echo x` prints a readiness byte to stdout after the trap is
+        // installed. bash flushes stdio before forking `sleep 300`, so
+        // by the time the parent reads that byte the trap is guaranteed
+        // to be in place. This replaces the fixed 100 ms sleep which is
+        // too short on slow systems (e.g. QEMU without KVM).
+        let script = "trap 'sleep 1; exit 0' TERM; echo x; sleep 300 & wait"
 
         try await withThrowingTaskGroup(of: TerminationStatus.self) { group in
             for _ in 0..<count {
@@ -609,14 +616,19 @@ extension SubprocessUnixTests {
                         .name("bash"),
                         arguments: ["-c", script],
                         input: .none,
-                        output: .discarded,
+                        output: .sequence,
                         error: .discarded
                     ) { execution in
-                        // Let all N processes install their traps before
-                        // we signal them, so the kills land in a tight
-                        // burst and the children exit ~simultaneously.
-                        try await Task.sleep(for: .milliseconds(100))
-                        try execution.send(signal: .terminate)
+                        // Wait for bash to confirm its SIGTERM trap is
+                        // installed before sending the signal, so the trap
+                        // always runs even on slow systems.
+                        var signalSent = false
+                        for try await _ in execution.standardOutput {
+                            if !signalSent {
+                                signalSent = true
+                                try execution.send(signal: .terminate)
+                            }
+                        }
                     }
                     return result.terminationStatus
                 }
