@@ -138,7 +138,7 @@ PROFILE (default: al2-5.10):
 
 GUEST COMMAND (after --):
   Runs as root inside the VM, in /mnt/host, with Swift on PATH.
-  Default: swift test
+  Default: bash (interactive, when stdin is a terminal) or swift test (otherwise)
 
 ENVIRONMENT: VM_MEMORY  VM_CPUS  SSH_PORT  KEEP_WORK  WORK_DIR  VM_DISK_SIZE  TMPDIR
   Note: use "sudo VAR=val ./$(basename "$0")" — plain "VAR=val sudo ..." is stripped by sudo.
@@ -158,7 +158,8 @@ EOF
 # ── Argument parsing ──────────────────────────────────────────────────────────
 HOST_WORKDIR="$(pwd)"
 PROFILE_NAME="al2-5.10"
-GUEST_COMMAND="swift test"
+# Default to an interactive shell when stdin is a terminal, swift test otherwise
+[[ -t 0 ]] && GUEST_COMMAND="bash" || GUEST_COMMAND="swift test"
 KEEP_IMAGE=false
 SKIP_INSTALL=false
 NO_SWIFT=false
@@ -903,12 +904,20 @@ fi
 
 # ── Run guest command ─────────────────────────────────────────────────────────
 step "Running guest command: $GUEST_COMMAND"
-# $GUEST_COMMAND is intentionally expanded on the client side.
-# shellcheck disable=SC2087
-ssh "${SSH_OPTS[@]}" root@localhost bash <<ENDSSH
+# $GUEST_COMMAND is intentionally expanded on the client side (both paths).
+if [[ -t 0 ]]; then
+    # stdin is a terminal — allocate a pty so interactive commands (e.g. bash)
+    # get a prompt and job control works correctly.
+    # shellcheck disable=SC2029
+    ssh -t "${SSH_OPTS[@]}" root@localhost \
+        "[ -f /root/.local/share/swiftly/env.sh ] && . /root/.local/share/swiftly/env.sh; cd /mnt/host; $GUEST_COMMAND"
+else
+    # shellcheck disable=SC2087
+    ssh "${SSH_OPTS[@]}" root@localhost bash <<ENDSSH
 [ -f /root/.local/share/swiftly/env.sh ] && . /root/.local/share/swiftly/env.sh
 cd /mnt/host
 $GUEST_COMMAND
 ENDSSH
+fi
 
 info "Guest command completed successfully."
