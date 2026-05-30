@@ -83,26 +83,31 @@ internal func waitForProcessTermination(
                     // On older releases, use signalfd so we do not need
                     // to register anything with epoll
                     if processIdentifier.processDescriptor > 0 {
-                        // Register processDescriptor with epoll
-                        var event = epoll_event(
-                            events: EPOLLIN.rawValue,
-                            data: epoll_data(fd: processIdentifier.processDescriptor)
-                        )
-                        let rc = epoll_ctl(
-                            storage.epollFileDescriptor,
-                            EPOLL_CTL_ADD,
-                            processIdentifier.processDescriptor,
-                            &event
-                        )
-                        if rc != 0 {
-                            let epollErrno = errno
-                            let error: SubprocessError = .failedToMonitor(
-                                withUnderlyingError: Errno(rawValue: epollErrno)
+                        var newState = storage
+                        // epoll rejects duplicate EPOLL_CTL_ADD for the same fd
+                        // with EEXIST, so only register the pidfd the first
+                        // time we see it. Subsequent waiters share the
+                        // existing registration via the continuation list.
+                        if newState.continuations[processIdentifier.processDescriptor] == nil {
+                            var event = epoll_event(
+                                events: EPOLLIN.rawValue,
+                                data: epoll_data(fd: processIdentifier.processDescriptor)
                             )
-                            return .failure(error)
+                            let rc = epoll_ctl(
+                                storage.epollFileDescriptor,
+                                EPOLL_CTL_ADD,
+                                processIdentifier.processDescriptor,
+                                &event
+                            )
+                            if rc != 0 {
+                                let epollErrno = errno
+                                let error: SubprocessError = .failedToMonitor(
+                                    withUnderlyingError: Errno(rawValue: epollErrno)
+                                )
+                                return .failure(error)
+                            }
                         }
                         // Now save the registration
-                        var newState = storage
                         var list = newState.continuations[processIdentifier.processDescriptor] ?? []
                         list.append(continuation)
                         newState.continuations[processIdentifier.processDescriptor] = list
@@ -119,7 +124,7 @@ internal func waitForProcessTermination(
                             if !processExited {
                                 // Save this continuation to be called by signal handler
                                 var newState = storage
-                                var list = newState.continuations[processIdentifier.processDescriptor] ?? []
+                                var list = newState.continuations[processIdentifier.value] ?? []
                                 list.append(continuation)
                                 newState.continuations[processIdentifier.value] = list
                                 state = .started(newState)

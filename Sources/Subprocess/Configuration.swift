@@ -188,9 +188,7 @@ public struct Configuration: Sendable {
                 errorStream: nil
             )
             // Attempt to terminate the child process.
-            await execution.runTeardownSequence(
-                self.platformOptions.teardownSequence
-            )
+            await execution.teardown(using: self.platformOptions.teardownSequence)
         }
     }
 }
