@@ -576,6 +576,7 @@ int _subprocess_fork_exec(
     if (rc != 0) {
         close(pipefd[0]);
         close(pipefd[1]);
+        pthread_mutex_unlock(&_subprocess_fork_lock);
         return errno;
     }
 
@@ -594,6 +595,7 @@ int _subprocess_fork_exec(
             // Report all other errors
             close(pipefd[0]);
             close(pipefd[1]);
+            pthread_mutex_unlock(&_subprocess_fork_lock);
             return errno;
         }
     }
@@ -602,6 +604,7 @@ int _subprocess_fork_exec(
         // Fork failed
         close(pipefd[0]);
         close(pipefd[1]);
+        pthread_mutex_unlock(&_subprocess_fork_lock);
         return errno;
     }
 
@@ -758,6 +761,7 @@ int _subprocess_fork_exec(
         // Restore old signmask
         rc = pthread_sigmask(SIG_SETMASK, &old_sigmask, NULL);
         if (rc != 0) {
+            pthread_mutex_unlock(&_subprocess_fork_lock);
             reap_child_process_and_return_errno;
         }
 
