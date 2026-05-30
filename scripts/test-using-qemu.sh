@@ -1,4 +1,14 @@
 #!/usr/bin/env bash
+##===----------------------------------------------------------------------===##
+##
+## This source file is part of the Swift.org open source project
+##
+## Copyright (c) 2026 Apple Inc. and the Swift project authors
+## Licensed under Apache License v2.0 with Runtime Library Exception
+##
+## See https://swift.org/LICENSE.txt for license information
+##
+##===----------------------------------------------------------------------===##
 # test-using-qemu.sh
 #
 # Boots a Linux VM under QEMU to run commands (default: swift test) against a
@@ -16,7 +26,6 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LXC_BASE="https://images.linuxcontainers.org/images"
 LXC_GPG_KEY_IDS=(
     "602F567663359FCDE9BCD0E79F93B4C4F3D4444A"
@@ -214,6 +223,7 @@ case "$ARCH" in
         # BNDMOV/WRPKRU instructions; under macOS Rosetta this fills the JIT page
         # budget and triggers mprotect(ENOMEM) → SIGTRAP.  Neither feature is needed
         # by Swift/LLVM, and Linux 5.6+ already dropped MPX support.
+        # shellcheck disable=SC2054
         QEMU_MACHINE_ARGS=(-machine q35 -cpu max,mpx=off,pku=off)
         UEFI_PKG=""
         UEFI_FIRMWARE_SEARCH=()
@@ -402,6 +412,7 @@ USERDATA
         info "Overlay resized to $VM_DISK_SIZE (cloud-init will expand partition on first boot)"
     fi
 
+    # shellcheck disable=SC2054
     QEMU_CMD=(
         "$QEMU_BIN"
         "${QEMU_MACHINE_ARGS[@]}"
@@ -418,6 +429,7 @@ USERDATA
     if [[ -e /dev/kvm ]]; then
         QEMU_CMD+=(-enable-kvm)
     else
+        # shellcheck disable=SC2054
         QEMU_CMD+=(-accel tcg,tb-size=512)
     fi
 
@@ -505,7 +517,7 @@ print(r[0][4][0])
         fi
 
         step "Rootfs network/repo state:"
-        info "  resolv.conf: $(cat "$ROOTFS_DIR/etc/resolv.conf" 2>/dev/null | tr '\n' ' ')"
+        info "  resolv.conf: $(tr '\n' ' ' < "$ROOTFS_DIR/etc/resolv.conf" 2>/dev/null)"
         info "  ifcfg-eth0:  $(grep -s BOOTPROTO "$ROOTFS_DIR/etc/sysconfig/network-scripts/ifcfg-eth0" 2>/dev/null || echo 'absent')"
         info "  yum repos:   $(grep -rh 'mirrorlist\|baseurl' "$ROOTFS_DIR/etc/yum.repos.d/" 2>/dev/null | tr '\n' '|' || echo 'none')"
         info "  yum vars:    awsproto=$(cat "$ROOTFS_DIR/etc/yum/vars/awsproto" 2>/dev/null || echo 'unset') amazonlinux=$(cat "$ROOTFS_DIR/etc/yum/vars/amazonlinux" 2>/dev/null || echo 'unset') awsregion=$(cat "$ROOTFS_DIR/etc/yum/vars/awsregion" 2>/dev/null || echo 'unset') awsdomain=$(cat "$ROOTFS_DIR/etc/yum/vars/awsdomain" 2>/dev/null || echo 'unset')"
@@ -811,6 +823,7 @@ PYEOF
     # net.ifnames=0: use eth0 naming so NetworkManager/ifcfg finds the NIC
     KERNEL_APPEND="root=/dev/vda rw console=ttyS0,115200n8 net.ifnames=0 biosdevname=0 ip=10.0.2.15::10.0.2.2:255.255.255.0::eth0:off"
 
+    # shellcheck disable=SC2054
     QEMU_CMD=(
         "$QEMU_BIN"
         "${QEMU_MACHINE_ARGS[@]}"
@@ -834,6 +847,7 @@ PYEOF
         # dracut initrd boot (full systemd init), and the subsequent forced
         # tb_flush triggers mprotect(PROT_WRITE) on exec pages — which Rosetta
         # blocks with ENOMEM.  A 512 MB cache avoids eviction entirely.
+        # shellcheck disable=SC2054
         QEMU_CMD+=(-accel tcg,tb-size=512)
     fi
 
@@ -842,7 +856,7 @@ fi
 # ── Boot ──────────────────────────────────────────────────────────────────────
 step "Booting VM..."
 info "QEMU: ${QEMU_CMD[*]}"
-> "$WORK_DIR/console.log"
+: > "$WORK_DIR/console.log"
 "${QEMU_CMD[@]}" &
 QEMU_PID=$!
 info "QEMU PID: $QEMU_PID"
@@ -889,6 +903,8 @@ fi
 
 # ── Run guest command ─────────────────────────────────────────────────────────
 step "Running guest command: $GUEST_COMMAND"
+# $GUEST_COMMAND is intentionally expanded on the client side.
+# shellcheck disable=SC2087
 ssh "${SSH_OPTS[@]}" root@localhost bash <<ENDSSH
 [ -f /root/.local/share/swiftly/env.sh ] && . /root/.local/share/swiftly/env.sh
 cd /mnt/host

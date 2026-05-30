@@ -1,4 +1,14 @@
 #!/bin/bash
+##===----------------------------------------------------------------------===##
+##
+## This source file is part of the Swift.org open source project
+##
+## Copyright (c) 2026 Apple Inc. and the Swift project authors
+## Licensed under Apache License v2.0 with Runtime Library Exception
+##
+## See https://swift.org/LICENSE.txt for license information
+##
+##===----------------------------------------------------------------------===##
 
 # This script does a bit of extra preparation of the docker containers used to run the GitHub workflows
 # that are specific to this project's needs when building/testing. Note that this script runs on
@@ -31,7 +41,8 @@ done
 if [ "$installSwiftly" == true ]; then
     echo "Installing swiftly"
 
-    curl -O https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz && tar zxf swiftly-*.tar.gz && ./swiftly init -y --skip-install
+    curl -O "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz" && tar zxf swiftly-*.tar.gz && ./swiftly init -y --skip-install
+    # shellcheck source=/dev/null
     . "/root/.local/share/swiftly/env.sh"
 
     hash -r
