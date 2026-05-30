@@ -574,7 +574,8 @@ extension Configuration {
                     processIdentifier: processIdentifier,
                     inputWriteEnd: inputWriteFileDescriptor,
                     outputReadEnd: outputReadFileDescriptor,
-                    errorReadEnd: errorReadFileDescriptor
+                    errorReadEnd: errorReadFileDescriptor,
+                    resolvedExecutable: FilePath(possibleExecutablePath)
                 )
             }
 
