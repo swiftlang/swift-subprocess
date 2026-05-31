@@ -714,10 +714,12 @@ extension SubprocessUnixTests {
         // Constrain to an ultimate upper limit of 4096, since Docker containers can have limits like 2^20 which is a bit too high for this test.
         // Common defaults are 2560 for macOS and 1024 for Linux.
         let limit = min(ulimit, 4096)
-        // Since we open two pipes per `run`, launch
-        // limit / 4 subprocesses should reveal any
-        // file descriptor leaks
-        let maxConcurrent = limit / 4
+        // Each concurrent spawn holds both ends of the stdout and stderr pipes
+        // plus a temporary exec-error notification pipe while the child's exec()
+        // completes — roughly 6 fds per in-flight spawn regardless of whether
+        // stdin is connected.  Divide by 8 to leave headroom for the process's
+        // own fds and avoid EMFILE under high concurrency.
+        let maxConcurrent = limit / 8
         try await withThrowingTaskGroup(of: Void.self) { group in
             var running = 0
             let byteCount = 1000
