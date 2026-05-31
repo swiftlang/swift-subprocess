@@ -725,24 +725,34 @@ extension SubprocessUnixTests {
             let byteCount = 1000
             for _ in 0..<maxConcurrent {
                 group.addTask {
-                    // This invocation specifically requires bash semantics; sh (on FreeBSD at least) does not consistently support -s in this way
-                    let r = try await Subprocess.run(
-                        .name("bash"),
-                        arguments: [
-                            "-sc", #"echo "$1" && echo "$1" >&2"#, "--", String(repeating: "X", count: byteCount),
-                        ],
-                        output: .data(limit: .max),
-                        error: .data(limit: .max)
-                    )
-                    guard r.terminationStatus.isSuccess else {
-                        Issue.record("Unexpected exit \(r.terminationStatus) from \(r.processIdentifier)")
-                        return
+                    // Catch errors so a single spawn/monitor failure doesn't
+                    // cascade-cancel sibling tasks (which would SIGKILL their
+                    // live subprocesses and flood the log with false failures).
+                    do {
+                        // This invocation specifically requires bash semantics; sh (on FreeBSD at least) does not consistently support -s in this way
+                        let r = try await Subprocess.run(
+                            .name("bash"),
+                            arguments: [
+                                "-sc", #"echo "$1" && echo "$1" >&2"#, "--", String(repeating: "X", count: byteCount),
+                            ],
+                            output: .data(limit: .max),
+                            error: .data(limit: .max)
+                        )
+                        guard r.terminationStatus.isSuccess else {
+                            Issue.record("Unexpected exit \(r.terminationStatus) from \(r.processIdentifier)")
+                            return
+                        }
+                        #expect(r.standardOutput.count == byteCount + 1, "\(r.standardOutput)")
+                        #expect(r.standardError.count == byteCount + 1, "\(r.standardError)")
+                    } catch {
+                        Issue.record("Subprocess.run threw: \(error)")
                     }
-                    #expect(r.standardOutput.count == byteCount + 1, "\(r.standardOutput)")
-                    #expect(r.standardError.count == byteCount + 1, "\(r.standardError)")
                 }
                 running += 1
-                if running >= maxConcurrent / 4 {
+                // Throttle to maxConcurrent/8 live subprocesses at a time
+                // (rather than /4) to reduce peak memory pressure on
+                // memory-constrained kernel-testing VMs (e.g. QEMU + 5.10).
+                if running >= maxConcurrent / 8 {
                     try await group.next()
                 }
             }
