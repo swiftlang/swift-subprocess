@@ -456,6 +456,10 @@ private func _unregisterProcessDescriptorAndNotify(_ pidfd: CInt, context: Monit
             )
             return (continuationList, error)
         }
+        // Close the pidfd now that epoll no longer references it.
+        // reapProcess uses P_PID (not P_PIDFD) so the fd is not
+        // needed past this point.
+        _ = Glibc.close(pidfd)
 
         return (continuationList, nil)
     }
