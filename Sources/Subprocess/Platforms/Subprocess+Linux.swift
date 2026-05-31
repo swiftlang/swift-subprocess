@@ -430,8 +430,7 @@ internal func _setupMonitorSignalHandler() {
 }
 
 private func _unregisterProcessDescriptorAndNotify(_ pidfd: CInt, context: MonitorThreadContext) {
-    // Remove the continuation
-    let result = _processMonitorState.withLock { state -> (continuations: [CheckedContinuation<Void, any Error>], error: SubprocessError?)? in
+    let continuations = _processMonitorState.withLock { state -> [CheckedContinuation<Void, any Error>]? in
         guard case .started(let storage) = state,
             let continuationList = storage.continuations[pidfd]
         else {
@@ -442,41 +441,35 @@ private func _unregisterProcessDescriptorAndNotify(_ pidfd: CInt, context: Monit
         newStorage.continuations.removeValue(forKey: pidfd)
         state = .started(newStorage)
 
-        // Remove this pidfd from epoll to prevent further notifications
-        let rc = epoll_ctl(
+        // Remove this pidfd from epoll to prevent further notifications.
+        // Ignore the return value: if DEL fails (e.g., ENOENT due to a
+        // concurrent removal, or a transient kernel error on older 5.x kernels),
+        // the process has still exited and the continuation must be resumed
+        // normally.  The fd is removed from epoll automatically by the kernel
+        // when processIdentifier.close() closes it, so a failed DEL here is
+        // never permanent.  Propagating a DEL error as a monitoring failure
+        // would trigger onCleanup → SIGKILL against an already-dead process.
+        _ = epoll_ctl(
             context.epollFileDescriptor,
             EPOLL_CTL_DEL,
             pidfd,
             nil
         )
-        if rc != 0 {
-            let epollErrno = errno
-            let error = SubprocessError.failedToMonitor(
-                withUnderlyingError: Errno(rawValue: epollErrno)
-            )
-            return (continuationList, error)
-        }
         // The pidfd is intentionally left open here.  It is owned by
         // ProcessIdentifier and will be closed by processIdentifier.close()
         // in the defer in Configuration.swift once monitoring is fully done.
         // Closing it here would free the fd number and allow it to be recycled
         // before that defer runs, causing a close-the-wrong-fd race.
 
-        return (continuationList, nil)
+        return continuationList
     }
 
-    guard let result else {
+    guard let continuations else {
         return
     }
 
-    if let error = result.error {
-        for c in result.continuations {
-            c.resume(throwing: error)
-        }
-    } else {
-        for c in result.continuations {
-            c.resume()
-        }
+    for c in continuations {
+        c.resume()
     }
 }
 
