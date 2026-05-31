@@ -34,7 +34,7 @@ LXC_GPG_KEY_IDS=(
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 WORK_DIR="${WORK_DIR:-${TMPDIR:-/tmp}/qemu-swift-$$}"
-VM_MEMORY="${VM_MEMORY:-2048}"
+VM_MEMORY="${VM_MEMORY:-4096}"
 VM_CPUS="${VM_CPUS:-2}"
 SSH_HOST_PORT="${SSH_PORT:-2222}"
 KEEP_WORK="${KEEP_WORK:-false}"
