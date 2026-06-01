@@ -698,7 +698,13 @@ extension SubprocessUnixTests {
         // Read the soft fd limit directly rather than spawning a helper process.
         // Cap at 4096: Docker containers can report limits like 2^20.
         var rl = rlimit()
+        #if canImport(Glibc)
+        // On Linux/Glibc RLIMIT_NOFILE is __rlimit_resource (enum) but
+        // getrlimit expects __rlimit_resource_t (Int32); rawValue converts it.
+        getrlimit(Int32(RLIMIT_NOFILE.rawValue), &rl)
+        #else
         getrlimit(RLIMIT_NOFILE, &rl)
+        #endif
         let softLimit = Int(min(rl.rlim_cur, rlim_t(4096)))
 
         // On Linux, account for any fds already open (e.g. from prior tests in
