@@ -314,7 +314,7 @@ extension Configuration {
 public struct PlatformOptions: Sendable {
     /// The credentials to use when spawning the subprocess
     /// as a different user.
-    public struct UserCredentials: Sendable, Hashable {
+    internal struct UserCredentials: Sendable, Hashable {
         /// The name of the user.
         ///
         /// This is the name of the user account to run as.
@@ -389,7 +389,7 @@ public struct PlatformOptions: Sendable {
     }
 
     /// The user credentials for starting the process as another user.
-    public var userCredentials: UserCredentials? = nil
+    internal var userCredentials: UserCredentials? = nil
     /// The console behavior of the new process.
     ///
     /// Defaults to inheriting the console from the parent process.
