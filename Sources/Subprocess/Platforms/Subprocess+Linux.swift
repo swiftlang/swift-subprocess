@@ -545,6 +545,7 @@ internal func _isWaitprocessDescriptorSupported() -> Bool {
         // If we can not retrieve pidfd, the system does not support waitid(P_PIDFD)
         return false
     }
+    defer { try? FileDescriptor(rawValue: selfPidfd).close() }
     /// The following call will fail either with
     /// - ECHILD: in this case we know P_PIDFD is supported and waitid correctly
     ///     reported that we don't have a child with the same selfPidfd;
