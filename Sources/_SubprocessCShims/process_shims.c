@@ -514,6 +514,14 @@ static int _highest_possibly_open_fd(void) {
     return sysconf(_SC_OPEN_MAX);
 }
 
+static void _subprocess_reap_pid(pid_t pid) {
+    siginfo_t info;
+    int rc;
+    do {
+        rc = waitid(P_PID, pid, &info, WEXITED);
+    } while (rc == -1 && errno == EINTR);
+}
+
 int _subprocess_fork_exec(
     pid_t * _Nonnull pid,
     int * _Nonnull pidfd,
@@ -740,8 +748,7 @@ int _subprocess_fork_exec(
     } else {
 #define reap_child_process_and_return_errno int capturedError = errno; \
     close(pipefd[0]); \
-    siginfo_t info; \
-    waitid(P_PID, childPid, &info, WEXITED); \
+    _subprocess_reap_pid(childPid); \
     return capturedError
 
 #if TARGET_OS_LINUX
@@ -778,24 +785,22 @@ int _subprocess_fork_exec(
                 close(pipefd[0]);
                 return 0;
             }
-            // if we reach this point, exec failed.
-            // Since we already have the child pid (fork succeed), reap the child
-            // This mimic posix_spawn behavior
-            siginfo_t info;
-            waitid(P_PID, childPid, &info, WEXITED);
-
+            // Capture errno now, before close()/waitid() can overwrite it.
+            int read_errno = errno;
+            if (read_rc < 0 && read_errno == EINTR) {
+                // Interrupted by a signal. Retry the read. Do not reap here;
+                // the child is reaped exactly once below.
+                continue;
+            }
+            // exec failed. Reap the child (mimics posix_spawn, which reaps on
+            // exec failure) using the pid from the successful fork.
+            _subprocess_reap_pid(childPid);
+            close(pipefd[0]);
             if (read_rc > 0) {
-                // Child exec failed and reported back
-                close(pipefd[0]);
+                // Child exec failed and reported its errno back
                 return childError;
             } else {
-                // Read failed
-                if (errno == EINTR) {
-                    continue;
-                } else {
-                    close(pipefd[0]);
-                    return errno;
-                }
+                return read_errno;
             }
         }
     }
