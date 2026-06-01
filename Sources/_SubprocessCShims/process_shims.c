@@ -78,6 +78,14 @@ int _was_process_suspended(int status) {
     return WIFSTOPPED(status);
 }
 
+uint64_t _subprocess_nofile_soft_limit(void) {
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_NOFILE, &rl) != 0) {
+        return 0;
+    }
+    return (uint64_t)rl.rlim_cur;
+}
+
 int _subprocess_pthread_create(
     pthread_t * _Nonnull ptr,
     pthread_attr_t const * _Nullable attr,

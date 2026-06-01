@@ -695,17 +695,11 @@ internal func assertNewSessionCreated(
 extension SubprocessUnixTests {
     #if SubprocessFoundation
     @Test(.requiresBash) func testConcurrentRun() async throws {
-        // Read the soft fd limit directly rather than spawning a helper process.
+        // Read the soft fd limit via a C shim: RLIMIT_NOFILE's Swift type
+        // varies across platforms and Swift versions, so calling getrlimit
+        // directly from Swift is not reliably portable.
         // Cap at 4096: Docker containers can report limits like 2^20.
-        var rl = rlimit()
-        #if canImport(Glibc)
-        // On Linux/Glibc RLIMIT_NOFILE is __rlimit_resource (enum) but
-        // getrlimit expects __rlimit_resource_t (Int32); rawValue converts it.
-        getrlimit(Int32(RLIMIT_NOFILE.rawValue), &rl)
-        #else
-        getrlimit(RLIMIT_NOFILE, &rl)
-        #endif
-        let softLimit = Int(min(rl.rlim_cur, rlim_t(4096)))
+        let softLimit = Int(min(_subprocess_nofile_soft_limit(), UInt64(4096)))
 
         // On Linux, account for any fds already open (e.g. from prior tests in
         // the same suite) to avoid hitting EMFILE during the concurrent spawn
