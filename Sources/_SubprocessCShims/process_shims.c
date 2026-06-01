@@ -585,9 +585,8 @@ int _subprocess_fork_exec(
     // First attempt to create a process file descriptor on supported platforms, only fall back to fork if those are not available
     pid_t childPid = _subprocess_pdfork(&_pidfd);
     if (childPid < 0) {
-        if (errno == ENOSYS || errno == EMFILE || errno == ENFILE) {
-            // pidfd not available (ENOSYS) or no fd slots available (EMFILE/ENFILE);
-            // fall back to plain fork() without a pidfd.
+        if (errno == ENOSYS) {
+            // process file descriptor is not implemented. Use fork instead
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated"
             childPid = fork();
