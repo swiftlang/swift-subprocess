@@ -545,17 +545,15 @@ internal func _isWaitprocessDescriptorSupported() -> Bool {
         // If we can not retrieve pidfd, the system does not support waitid(P_PIDFD)
         return false
     }
-
-    return try? FileDescriptor(rawValue: selfPidfd).closeAfter() {
-        /// The following call will fail either with
-        /// - ECHILD: in this case we know P_PIDFD is supported and waitid correctly
-        ///     reported that we don't have a child with the same selfPidfd;
-        /// - EINVAL: in this case we know P_PIDFD is not supported because it does not
-        ///     recognize the `P_PIDFD` type
-        errno = 0
-        waitid(idtype_t(UInt32(P_PIDFD)), id_t(selfPidfd), &siginfo, WEXITED | WNOWAIT)
-        return errno == ECHILD
-    }
+    defer { try? FileDescriptor(rawValue: selfPidfd).close() }
+    /// The following call will fail either with
+    /// - ECHILD: in this case we know P_PIDFD is supported and waitid correctly
+    ///     reported that we don't have a child with the same selfPidfd;
+    /// - EINVAL: in this case we know P_PIDFD is not supported because it does not
+    ///     recognize the `P_PIDFD` type
+    errno = 0
+    waitid(idtype_t(UInt32(P_PIDFD)), id_t(selfPidfd), &siginfo, WEXITED | WNOWAIT)
+    return errno == ECHILD
 }
 
 #endif // canImport(Glibc) || canImport(Android) || canImport(Musl)
