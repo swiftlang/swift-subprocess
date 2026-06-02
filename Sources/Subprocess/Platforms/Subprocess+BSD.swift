@@ -30,39 +30,26 @@ internal import Dispatch
 internal func waitForProcessTermination(
     for processIdentifier: ProcessIdentifier
 ) async throws(SubprocessError) {
+    // Use blocking waitid(WNOWAIT) dispatched on a global queue rather than
+    // DispatchSource NOTE_EXIT. On FreeBSD (and macOS), kqueue does not
+    // retroactively deliver NOTE_EXIT if the process exits before the
+    // EVFILT_PROC filter is registered, and libdispatch registers that filter
+    // asynchronously — leaving an unavoidable TOCTOU window. Blocking waitid
+    // with WNOWAIT is race-free: the kernel holds the call until the process
+    // exits and the zombie is left intact for reapProcess. DispatchQueue.global
+    // is used instead of runOnBackgroundThread so concurrent subprocess waits
+    // are not serialised on the single worker thread.
     return try await _castError {
-        try await withCheckedThrowingContinuation { continuation in
-            // Guard against double-resume: the event handler and the backup
-            // peekIfExited() check below can both fire for the same exit.
-            let alreadyResumed = AtomicCounter()
-            let source = DispatchSource.makeProcessSource(
-                identifier: processIdentifier.value,
-                eventMask: [.exit],
-                queue: .global()
-            )
-            source.setEventHandler {
-                if alreadyResumed.addOne() == 1 {
-                    source.cancel()
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            DispatchQueue.global().async {
+                do throws(Errno) {
+                    _ = try _waitid(
+                        idtype: P_PID,
+                        id: id_t(processIdentifier.value),
+                        flags: WEXITED | WNOWAIT
+                    )
                     continuation.resume()
-                }
-            }
-            // Register the source BEFORE checking peekIfExited() to eliminate
-            // the TOCTOU race: if the process exits between the peek and resume()
-            // the NOTE_EXIT event would be lost and the continuation would hang.
-            source.resume()
-            // Backup: if the process already exited before we registered the
-            // source above, kqueue may not fire NOTE_EXIT retroactively.
-            // Uses WNOWAIT so it doesn't reap the zombie (that's done elsewhere).
-            do throws(Errno) {
-                if try processIdentifier.peekIfExited() {
-                    if alreadyResumed.addOne() == 1 {
-                        source.cancel()
-                        continuation.resume()
-                    }
-                }
-            } catch {
-                if alreadyResumed.addOne() == 1 {
-                    source.cancel()
+                } catch {
                     continuation.resume(
                         throwing: SubprocessError.failedToMonitor(withUnderlyingError: error)
                     )
