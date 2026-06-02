@@ -468,6 +468,16 @@ private func _unregisterProcessDescriptorAndNotify(_ pidfd: CInt, context: Monit
         return
     }
 
+    // This function is only called because epoll fired an event for this pidfd,
+    // which means the process has definitively exited — monitoring succeeded. Any
+    // failure from the preceding epoll_ctl(DEL) is a cleanup detail, not a
+    // monitoring failure: on older 5.x kernels epoll_ctl(DEL) can return ENOENT
+    // transiently even when the process is dead, and on all kernels the pidfd is
+    // removed from epoll automatically when processIdentifier.close() closes it.
+    // Resuming the continuations with that DEL error would incorrectly signal a
+    // monitoring failure, which triggers onCleanup → SIGKILL against an already-
+    // dead process and would cause Subprocess.run() to throw, cascading task
+    // cancellation to other live processes.
     for c in continuations {
         c.resume()
     }
