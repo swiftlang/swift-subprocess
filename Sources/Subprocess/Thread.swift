@@ -91,6 +91,7 @@ private struct BackgroundWorkItem {
 // exposed so we can use it with `pthread_cond_wait`.
 private final class WorkQueue: Sendable {
     private nonisolated(unsafe) var queue: [BackgroundWorkItem]
+    private nonisolated(unsafe) var isShuttingDown: Bool = false
     internal nonisolated(unsafe) let mutex: UnsafeMutablePointer<MutexType>
     internal nonisolated(unsafe) let waitCondition: UnsafeMutablePointer<ConditionType>
 
@@ -138,17 +139,25 @@ private final class WorkQueue: Sendable {
         return body(mutex, &queue)
     }
 
-    // Only called in worker thread. Sleeps the thread if there's no more item
+    // Only called in worker thread. Sleeps the thread if there's no more item.
+    // Uses an explicit while loop to handle spurious pthread_cond_wait wakeups,
+    // which are common on FreeBSD and permitted by POSIX.
     func dequeue() -> BackgroundWorkItem? {
-        return self.withUnsafeUnderlyingLock { queue in
-            // Sleep the worker thread if there's no more work
-            queue.isEmpty
-        } body: { mutex, queue in
-            guard !queue.isEmpty else {
-                return nil
-            }
-            return queue.removeFirst()
+        #if canImport(WinSDK)
+        EnterCriticalSection(self.mutex)
+        defer { LeaveCriticalSection(self.mutex) }
+        while queue.isEmpty && !isShuttingDown {
+            SleepConditionVariableCS(self.waitCondition, self.mutex, INFINITE)
         }
+        #else
+        pthread_mutex_lock(self.mutex)
+        defer { pthread_mutex_unlock(self.mutex) }
+        while queue.isEmpty && !isShuttingDown {
+            pthread_cond_wait(self.waitCondition, self.mutex)
+        }
+        #endif
+        guard !queue.isEmpty else { return nil }
+        return queue.removeFirst()
     }
 
     // Only called in parent thread. Signals wait condition to wake up worker thread
@@ -165,6 +174,7 @@ private final class WorkQueue: Sendable {
 
     func shutdown() {
         self.withLock { queue in
+            isShuttingDown = true
             queue.removeAll()
             #if canImport(WinSDK)
             WakeConditionVariable(self.waitCondition)

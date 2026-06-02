@@ -30,28 +30,44 @@ internal import Dispatch
 internal func waitForProcessTermination(
     for processIdentifier: ProcessIdentifier
 ) async throws(SubprocessError) {
-    // Fast path: if the process is already a zombie, return immediately.
-    // Using WNOWAIT leaves the zombie in place for the eventual `reapProcess`.
-    do throws(Errno) {
-        if try processIdentifier.peekIfExited() {
-            return
-        }
-    } catch {
-        throw .failedToMonitor(withUnderlyingError: error)
-    }
-
     return try await _castError {
         try await withCheckedThrowingContinuation { continuation in
+            // Guard against double-resume: the event handler and the backup
+            // peekIfExited() check below can both fire for the same exit.
+            let alreadyResumed = AtomicCounter()
             let source = DispatchSource.makeProcessSource(
                 identifier: processIdentifier.value,
                 eventMask: [.exit],
                 queue: .global()
             )
             source.setEventHandler {
-                source.cancel()
-                continuation.resume()
+                if alreadyResumed.addOne() == 1 {
+                    source.cancel()
+                    continuation.resume()
+                }
             }
+            // Register the source BEFORE checking peekIfExited() to eliminate
+            // the TOCTOU race: if the process exits between the peek and resume()
+            // the NOTE_EXIT event would be lost and the continuation would hang.
             source.resume()
+            // Backup: if the process already exited before we registered the
+            // source above, kqueue may not fire NOTE_EXIT retroactively.
+            // Uses WNOWAIT so it doesn't reap the zombie (that's done elsewhere).
+            do throws(Errno) {
+                if try processIdentifier.peekIfExited() {
+                    if alreadyResumed.addOne() == 1 {
+                        source.cancel()
+                        continuation.resume()
+                    }
+                }
+            } catch {
+                if alreadyResumed.addOne() == 1 {
+                    source.cancel()
+                    continuation.resume(
+                        throwing: SubprocessError.failedToMonitor(withUnderlyingError: error)
+                    )
+                }
+            }
         }
     }
 }
