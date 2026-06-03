@@ -229,7 +229,8 @@ extension SubprocessProcessMonitoringTests {
         }
     }
 
-    @Test func testDoesNotReapUnrelatedChildProcess() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func testDoesNotReapUnrelatedChildProcess() async throws {
         // Make sure we don't reap child exit status that we didn't spawn
         let child1 = self.immediateExitProcess(withExitCode: 0)
         let child2 = self.immediateExitProcess(withExitCode: 0)
