@@ -193,6 +193,9 @@ extension Configuration {
         outputPipe: consuming CreatedPipe,
         errorPipe: consuming CreatedPipe
     ) async throws -> SpawnResult {
+        // Ensure the waiter thread is running.
+        _setupMonitorSignalHandler()
+
         // Instead of checking if every possible executable path
         // is valid, spawn each directly and catch ENOENT
         let possiblePaths = self.executable.possibleExecutablePaths(

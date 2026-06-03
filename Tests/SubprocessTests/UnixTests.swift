@@ -9,13 +9,15 @@
 //
 //===----------------------------------------------------------------------===//
 
-#if canImport(Darwin) || canImport(Glibc)
+#if !os(Windows)
 import Foundation
 
-#if canImport(Glibc)
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Android)
+import Android
+#elseif canImport(Glibc)
 import Glibc
-#elseif canImport(Bionic)
-import Bionic
 #elseif canImport(Musl)
 import Musl
 #endif
@@ -156,6 +158,19 @@ extension SubprocessUnixTests {
         // platformOptions.createSession implies calls to setsid
         var platformOptions = PlatformOptions()
         platformOptions.createSession = true
+        #if os(Android)
+        // Android's `ps` doesn't support `-o pid,pgid,tpgid`. Read the shell's
+        // session fields directly from /proc instead. `$$` is the shell's own
+        // pid, which is the session and group leader after setsid; reading
+        // /proc/self/stat would observe `cat`, which is not the leader.
+        let statResult = try await Subprocess.run(
+            .path("/bin/sh"),
+            arguments: ["-c", "cat /proc/$$/stat"],
+            platformOptions: platformOptions,
+            output: .string(limit: .max)
+        )
+        try assertNewSessionCreated(fromProcStat: statResult)
+        #else
         // Check the process ID (pid), process group ID (pgid), and
         // controlling terminal's process group ID (tpgid)
         let psResult = try await Subprocess.run(
@@ -165,6 +180,7 @@ extension SubprocessUnixTests {
             output: .string(limit: .max)
         )
         try assertNewSessionCreated(with: psResult)
+        #endif
     }
 
     @Test(.requiresBash) func testTeardownSequence() async throws {
@@ -223,6 +239,71 @@ extension SubprocessUnixTests {
     }
 }
 
+// MARK: - Teardown Timing
+extension SubprocessUnixTests {
+    /// Spawns a child that prints `ready` and then blocks in `sleep`, waits
+    /// for that marker so the child is known to be running, then cancels the
+    /// run to trigger teardown and returns how long the teardown took.
+    private func measureCancelledTeardown(
+        using teardownSequence: [TeardownStep]
+    ) async -> Duration {
+        let (readyStream, readyContinuation) = AsyncStream.makeStream(of: Void.self)
+        return await withTaskGroup(
+            of: Void.self,
+            returning: Duration.self
+        ) { group in
+            group.addTask {
+                var platformOptions = PlatformOptions()
+                // Isolate the child in its own session so teardown can't reach
+                // anything but the process we spawned.
+                platformOptions.createSession = true
+                platformOptions.teardownSequence = teardownSequence
+                let configuration = Configuration(
+                    executable: .path("/bin/sh"),
+                    // `exec` so the monitored child becomes `sleep` itself,
+                    // which dies instantly on SIGTERM/SIGKILL.
+                    arguments: ["-c", "echo ready; exec sleep 10"],
+                    platformOptions: platformOptions
+                )
+                _ = try? await Subprocess.run(
+                    configuration,
+                    input: .none,
+                    output: .sequence,
+                    error: .discarded
+                ) { execution in
+                    for try await line in execution.standardOutput.strings() {
+                        if line.trimmingCharacters(in: .whitespacesAndNewlines) == "ready" {
+                            readyContinuation.finish()
+                        }
+                    }
+                }
+            }
+            // Block until the child confirms it is running.
+            for await _ in readyStream {}
+            // Time only the teardown triggered by cancellation.
+            return await ContinuousClock().measure {
+                group.cancelAll()
+                await group.waitForAll()
+            }
+        }
+    }
+
+    @Test func testKillTeardownReturnsAsSoonAsProcessExits() async {
+        let elapsed = await self.measureCancelledTeardown(using: [
+            .send(signal: .kill, allowedDurationToNextStep: .seconds(5))
+        ])
+        #expect(elapsed < .seconds(5), "SIGKILL is uncatchable; teardown should not wait")
+    }
+
+    @Test func testTerminateTeardownReturnsAsSoonAsProcessExits() async {
+        let elapsed = await self.measureCancelledTeardown(using: [
+            .send(signal: .terminate, allowedDurationToNextStep: .seconds(3)),
+            .send(signal: .kill, allowedDurationToNextStep: .seconds(5)),
+        ])
+        #expect(elapsed < .seconds(5), "sleep dies on SIGTERM instantly; teardown should not wait")
+    }
+}
+
 // MARK: - PATH Resolution Tests
 extension SubprocessUnixTests {
     @Test func testExecutablePathsPreserveOrder() throws {
@@ -277,6 +358,60 @@ extension SubprocessUnixTests {
 
 // MARK: - Misc
 extension SubprocessUnixTests {
+    @Test(.timeLimit(.minutes(1)))
+    func testSuspendResumeProcess() async throws {
+        // Set up pipes manually so the test owns both ends. This lets us bound
+        // how long we wait for output. Standard sequence/iterator-based outputs
+        // use non-Sendable iterators that can't be moved into a child task.
+        let inputPipe = try FileDescriptor.pipe()
+        let outputPipe = try FileDescriptor.pipe()
+
+        // Make the read end non-blocking so readLine() can poll with a
+        // deadline instead of blocking indefinitely.
+        let flags = fcntl(outputPipe.readEnd.rawValue, F_GETFL)
+        try #require(fcntl(outputPipe.readEnd.rawValue, F_SETFL, flags | O_NONBLOCK) == 0)
+
+        try await outputPipe.readEnd.closeAfter {
+            try await inputPipe.writeEnd.closeAfter {
+                _ = try await Subprocess.run(
+                    .path("/bin/cat"),
+                    // cat reads from inputPipe.readEnd. The parent keeps writeEnd to feed it.
+                    input: .fileDescriptor(inputPipe.readEnd, closeAfterSpawningProcess: true),
+                    // cat writes to outputPipe.writeEnd. The parent keeps readEnd to drain it.
+                    output: .fileDescriptor(outputPipe.writeEnd, closeAfterSpawningProcess: true),
+                    error: .discarded
+                ) { subprocess in
+                    // Confirm cat is running and echoing before manipulating its state.
+                    try inputPipe.writeEnd.writeLine("ready")
+                    try #require(try await outputPipe.readEnd.readLine(timeout: .seconds(2)) == "ready")
+
+                    // Suspend cat, then write two lines it must not echo back. If
+                    // SIGSTOP took effect, no amount of waiting produces output,
+                    // and the lines accumulate in the pipe buffer until SIGCONT.
+                    try subprocess.send(signal: .suspend)
+                    try inputPipe.writeEnd.writeLine("first")
+                    try inputPipe.writeEnd.writeLine("second")
+
+                    // Give cat 200ms to (incorrectly) produce output. If the suspend
+                    // didn't work, cat already echoed and the pipe has bytes ready.
+                    let leaked = try await outputPipe.readEnd.readLine(timeout: .milliseconds(200))
+                    try #require(leaked == nil, "cat produced output while suspended: \(leaked ?? "")")
+
+                    // Resume cat. Both buffered lines must emerge in order, proving
+                    // the process accumulated state while stopped and released it
+                    // on SIGCONT.
+                    try subprocess.send(signal: .resume)
+                    try #require(try await outputPipe.readEnd.readLine(timeout: .seconds(2)) == "first")
+                    try #require(try await outputPipe.readEnd.readLine(timeout: .seconds(2)) == "second")
+
+                    // Tear down. SIGTERM makes cat exit; closeAfter closes the
+                    // parent's write end as cleanup once run() returns.
+                    try subprocess.send(signal: .terminate)
+                }
+            }
+        }
+    }
+
     @Test func testExitSignal() async throws {
         let signalsToTest: [CInt] = [SIGKILL, SIGTERM, SIGINT]
         for signal in signalsToTest {
@@ -285,7 +420,19 @@ extension SubprocessUnixTests {
                 arguments: ["-c", "kill -\(signal) $$"],
                 output: .discarded
             )
+            #if os(Android)
+            // When terminated by a catchable signal, Android's /bin/sh exits
+            // normally with a status of 128+n instead of dying by the signal.
+            // SIGKILL is uncatchable and still produces a signal-based termination.
+            // https://www.gnu.org/software/autoconf/manual/autoconf-2.69/html_node/Signal-Handling.html
+            let expected: TerminationStatus =
+                signal == SIGKILL
+                ? .signaled(signal)
+                : .exited(128 + signal)
+            #expect(result.terminationStatus == expected)
+            #else
             #expect(result.terminationStatus == .signaled(signal))
+            #endif
         }
     }
 
@@ -586,51 +733,26 @@ extension SubprocessUnixTests {
         }
     }
 
-    // Ensure Subprocess does not hang on Linux when several concurrent
-    // `Subprocess.run` calls saw their children exit in a tight burst.
-    //
-    // Spawns 16 `bash` children, each with a SIGTERM trap that sleeps one second
-    // before exiting. Every body closure sends SIGTERM at roughly the same instant,
-    // so all 16 children finish their trap and become zombies inside a single small
-    // window.
-    @Test(.requiresBash) func testConcurrentSlowExitsDoNotHang() async throws {
-        // 16 concurrent slow-to-exit children is enough to flood the
-        // monitor and trigger the burst on Linux.
+    @Test(.timeLimit(.minutes(1)))
+    func testConcurrentSlowExitsDoNotHang() async throws {
+        // When many concurrent `Subprocess.run` calls have their children exit
+        // in a tight burst, the SIGCHLD-coalescing reaper must drain every
+        // ready child per wakeup. 16 children that each sleep ~1s will exit
+        // within a few milliseconds of each other and flood the reaper; the
+        // body-less runs keep all 16 monitors blocked on termination for the
+        // full second, so the exits land while every monitor is waiting. No
+        // signal or trap is involved: the reaper keys on child exit (SIGCHLD),
+        // which is identical whether a child exits on a timer or a signal, so
+        // a timed exit reproduces the same stress without relying on bash.
         let count = 16
-        // Trap SIGTERM, sleep 1 s in the handler, then exit. bash (not
-        // POSIX sh) is required: `sh -c 'trap ...; sleep 300'` would defer
-        // the trap until `sleep 300` completes, while bash interrupts
-        // `wait` immediately on signal.
-        //
-        // `echo x` prints a readiness byte to stdout after the trap is
-        // installed. bash flushes stdio before forking `sleep 300`, so
-        // by the time the parent reads that byte the trap is guaranteed
-        // to be in place. This replaces the fixed 100 ms sleep which is
-        // too short on slow systems (e.g. QEMU without KVM).
-        let script = "trap 'sleep 1; exit 0' TERM; echo x; sleep 300 & wait"
-
         try await withThrowingTaskGroup(of: TerminationStatus.self) { group in
             for _ in 0..<count {
                 group.addTask {
-                    let result = try await Subprocess.run(
-                        .name("bash"),
-                        arguments: ["-c", script],
-                        input: .none,
-                        output: .sequence,
-                        error: .discarded
-                    ) { execution in
-                        // Wait for bash to confirm its SIGTERM trap is
-                        // installed before sending the signal, so the trap
-                        // always runs even on slow systems.
-                        var signalSent = false
-                        for try await _ in execution.standardOutput {
-                            if !signalSent {
-                                signalSent = true
-                                try execution.send(signal: .terminate)
-                            }
-                        }
-                    }
-                    return result.terminationStatus
+                    try await Subprocess.run(
+                        .path("/bin/sleep"),
+                        arguments: ["1"],
+                        output: .discarded
+                    ).terminationStatus
                 }
             }
             for try await status in group {
@@ -689,6 +811,84 @@ internal func assertNewSessionCreated(
     let tpgid = try #require(Int(match.output.tpgid))
     #expect(pid == pgid)
     #expect(tpgid <= 0)
+}
+
+#if os(Android)
+internal func assertNewSessionCreated<Output: OutputProtocol>(
+    fromProcStat result: ExecutionResult<Void, StringOutput<UTF8>, Output>
+) throws {
+    #expect(result.terminationStatus.isSuccess)
+    let statLine = try #require(result.standardOutput)
+    // `comm` can contain spaces and parentheses, so bracket it by the first
+    // '(' and the last ')' rather than splitting the whole line on whitespace.
+    let openParen = try #require(
+        statLine.firstIndex(of: "("),
+        "/proc stat was in an unexpected format:\n\n\(statLine)"
+    )
+    let closeParen = try #require(
+        statLine.lastIndex(of: ")"),
+        "/proc stat was in an unexpected format:\n\n\(statLine)"
+    )
+    let pid = try #require(Int(statLine[..<openParen].trimmingCharacters(in: .whitespaces)))
+    // Fields after `comm`: [0] state, [1] ppid, [2] pgrp, [3] session, [4] tty_nr, [5] tpgid
+    let fields = statLine[statLine.index(after: closeParen)...].split(separator: " ")
+    try #require(fields.count >= 6, "/proc stat was in an unexpected format:\n\n\(statLine)")
+    let pgid = try #require(Int(fields[2]))
+    let session = try #require(Int(fields[3]))
+    let tpgid = try #require(Int(fields[5]))
+    #expect(pid == pgid)
+    #expect(pid == session)
+    #expect(tpgid <= 0)
+}
+#endif
+
+extension FileDescriptor {
+    /// Writes a line plus newline to the file descriptor.
+    fileprivate func writeLine(_ line: String) throws {
+        let bytes = Array("\(line)\n".utf8)
+        try bytes.withUnsafeBufferPointer { ptr in
+            _ = try self.write(UnsafeRawBufferPointer(ptr))
+        }
+    }
+
+    /// Reads a single line (up to and excluding the next `\n`) from a
+    /// non-blocking file descriptor, returning `nil` if no line arrives
+    /// within `timeout`.
+    fileprivate func readLine(timeout: Duration) async throws -> String? {
+        let deadline = ContinuousClock.now + timeout
+        var accumulated: [UInt8] = []
+
+        while ContinuousClock.now < deadline {
+            var byte: UInt8 = 0
+            let n = withUnsafeMutablePointer(to: &byte) { ptr in
+                #if canImport(Darwin)
+                return Darwin.read(self.rawValue, ptr, 1)
+                #elseif canImport(Android)
+                return Android.read(self.rawValue, ptr, 1)
+                #elseif canImport(Glibc)
+                return Glibc.read(self.rawValue, ptr, 1)
+                #elseif canImport(Musl)
+                return Musl.read(self.rawValue, ptr, 1)
+                #endif
+            }
+
+            if n == 1 {
+                if byte == 0x0A {
+                    return String(decoding: accumulated, as: UTF8.self)
+                }
+                accumulated.append(byte)
+            } else if n == 0 {
+                return accumulated.isEmpty ? nil : String(decoding: accumulated, as: UTF8.self)
+            } else if errno == EAGAIN || errno == EWOULDBLOCK {
+                try await Task.sleep(for: .milliseconds(5))
+            } else if errno == EINTR {
+                continue
+            } else {
+                throw Errno(rawValue: errno)
+            }
+        }
+        return nil
+    }
 }
 
 // MARK: - Performance Tests
@@ -758,4 +958,4 @@ extension SubprocessUnixTests {
     #endif
 }
 
-#endif // canImport(Darwin) || canImport(Glibc)
+#endif // !os(Windows)

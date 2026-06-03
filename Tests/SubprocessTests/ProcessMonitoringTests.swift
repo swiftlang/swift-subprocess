@@ -38,7 +38,7 @@ struct SubprocessProcessMonitoringTests {
 
     init() {
         _ = globallyIgnoredSIGPIPE
-        #if os(Linux) || os(Android)
+        #if !os(Windows)
         _setupMonitorSignalHandler()
         #endif
     }
@@ -293,6 +293,39 @@ extension SubprocessProcessMonitoringTests {
             }
 
             try await group.waitForAll()
+        }
+    }
+
+    @Test func testCanMonitorSameProcessConcurrently() async throws {
+        // Multiple tasks waiting on the *same* process must all observe its
+        // termination. This is the idempotency contract of
+        // waitForProcessTermination: registering the same process for
+        // monitoring more than once concurrently must succeed on every
+        // platform. (On Linux >= 5.4 this specifically guards against
+        // double-registering the pidfd with epoll, which fails with EEXIST.)
+        let waiterCount = 10
+        // Keep the child alive long enough that every waiter registers
+        // before it exits, so the concurrent-registration path is exercised.
+        let config = self.longRunningProcess(withTimeOutSeconds: 1)
+        try await withSpawnedExecution(config: config) { execution in
+            try await withThrowingTaskGroup { group in
+                for _ in 0..<waiterCount {
+                    group.addTask {
+                        // Call the monitoring primitive directly instead of
+                        // monitorProcessTermination: the zombie must be reaped
+                        // exactly once, so we reap only after every waiter has
+                        // observed termination.
+                        try await waitForProcessTermination(
+                            for: execution.processIdentifier
+                        )
+                    }
+                }
+
+                try await group.waitForAll()
+            }
+            // Every waiter resumed without error; reap the process once.
+            let status = try reapProcess(with: execution.processIdentifier)
+            #expect(status.isSuccess)
         }
     }
 

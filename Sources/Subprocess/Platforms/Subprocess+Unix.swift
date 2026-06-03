@@ -37,7 +37,7 @@ public struct Signal: Hashable, Sendable {
     /// The underlying platform-specific value for the signal.
     public let rawValue: Int32
 
-    private init(rawValue: Int32) {
+    public init(rawValue: Int32) {
         self.rawValue = rawValue
     }
 
@@ -112,7 +112,7 @@ extension Execution {
 
         #if os(Linux) || os(Android) || os(FreeBSD)
         // On platforms with process descriptors, use _subprocess_pdkill if possible
-        if shouldSendToProcessGroup || self.processIdentifier.processDescriptor < 0 {
+        if shouldSendToProcessGroup || self.processIdentifier.processDescriptor == .invalidDescriptor {
             // _subprocess_pdkill does not support sending signal to process group
             try _kill(pid, signal: signal)
         } else {
@@ -402,6 +402,10 @@ extension FileDescriptor {
 
 internal typealias PlatformFileDescriptor = CInt
 
+internal extension PlatformFileDescriptor {
+    static var invalidDescriptor: Self { -1 }
+}
+
 // MARK: - Spawning
 
 #if !canImport(Darwin)
@@ -440,9 +444,7 @@ extension Configuration {
         errorPipe: consuming CreatedPipe
     ) async throws -> SpawnResult {
         // Ensure the waiter thread is running.
-        #if os(Linux) || os(Android)
         _setupMonitorSignalHandler()
-        #endif
 
         // Instead of checking if every possible executable path
         // is valid, spawn each directly and catch ENOENT
@@ -500,7 +502,7 @@ extension Configuration {
                             return supplementaryGroups.withOptionalUnsafeBufferPointer { sgroups in
                                 return fileDescriptors.withUnsafeBufferPointer { fds in
                                     var pid: pid_t = 0
-                                    var processDescriptor: PlatformFileDescriptor = -1
+                                    var processDescriptor: PlatformFileDescriptor = .invalidDescriptor
 
                                     let rc = _subprocess_fork_exec(
                                         &pid,
@@ -616,7 +618,7 @@ public struct ProcessIdentifier: Sendable, Hashable {
     }
 
     internal func close() {
-        if self.processDescriptor > 0 {
+        if self.processDescriptor != .invalidDescriptor {
             try? FileDescriptor(rawValue: self.processDescriptor).close()
         }
     }

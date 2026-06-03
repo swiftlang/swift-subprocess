@@ -45,7 +45,7 @@ struct SubprocessLinuxTests {
             output: .discarded,
             error: .discarded
         ) { subprocess in
-            if subprocess.processIdentifier.processDescriptor > 0 {
+            if subprocess.processIdentifier.processDescriptor != .invalidDescriptor {
                 var statinfo = stat()
                 try #require(fstat(subprocess.processIdentifier.processDescriptor, &statinfo) == 0)
 

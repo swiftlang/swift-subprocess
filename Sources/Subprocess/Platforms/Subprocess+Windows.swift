@@ -36,28 +36,6 @@ extension Configuration {
         outputPipe: consuming CreatedPipe,
         errorPipe: consuming CreatedPipe
     ) async throws(SubprocessError) -> SpawnResult {
-        // Spawn differently depending on whether
-        // we need to spawn as a user
-        guard let userCredentials = self.platformOptions.userCredentials else {
-            return try await self.spawnDirect(
-                withInput: inputPipe,
-                outputPipe: outputPipe,
-                errorPipe: errorPipe
-            )
-        }
-        return try await self.spawnAsUser(
-            withInput: inputPipe,
-            outputPipe: outputPipe,
-            errorPipe: errorPipe,
-            userCredentials: userCredentials
-        )
-    }
-
-    internal func spawnDirect(
-        withInput inputPipe: consuming CreatedPipe,
-        outputPipe: consuming CreatedPipe,
-        errorPipe: consuming CreatedPipe
-    ) async throws(SubprocessError) -> SpawnResult {
         let inputReadFileDescriptor: IODescriptor? = inputPipe.readFileDescriptor()
         let inputWriteFileDescriptor: IODescriptor? = inputPipe.writeFileDescriptor()
         let outputReadFileDescriptor: IODescriptor? = outputPipe.readFileDescriptor()
@@ -152,13 +130,13 @@ extension Configuration {
                     // regardless of what the configurator did.
                     createProcessFlags |= DWORD(CREATE_SUSPENDED)
 
-                    // Spawn!
                     let spawnContext = SpawnContext(
                         startupInfo: startupInfo,
                         createProcessFlags: createProcessFlags
                     )
+                    // Spawn (featuring pyramid!)
                     return try await runOnBackgroundThread { () throws(SubprocessError) in
-                        return try applicationName.withOptionalNTPathRepresentation { applicationNameW throws(SubprocessError) in
+                        try applicationName.withOptionalNTPathRepresentation { applicationNameW throws(SubprocessError) in
                             try commandAndArgs._withCString(
                                 encodedAs: UTF16.self
                             ) { commandAndArgsW throws(SubprocessError) in
@@ -166,6 +144,38 @@ extension Configuration {
                                     encodedAs: UTF16.self
                                 ) { environmentW throws(SubprocessError) in
                                     try intendedWorkingDir.withOptionalNTPathRepresentation { intendedWorkingDirW throws(SubprocessError) in
+                                        // Spawn differently depending on whether
+                                        // we need to spawn as a user
+                                        if let userCredentials = self.platformOptions.userCredentials {
+                                            return try userCredentials.username._withCString(
+                                                encodedAs: UTF16.self
+                                            ) { usernameW throws(SubprocessError) in
+                                                try userCredentials.password._withCString(
+                                                    encodedAs: UTF16.self
+                                                ) { passwordW throws(SubprocessError) in
+                                                    try userCredentials.domain.withOptionalCString(
+                                                        encodedAs: UTF16.self
+                                                    ) { domainW throws(SubprocessError) in
+                                                        var processInfo = PROCESS_INFORMATION()
+                                                        let created = CreateProcessWithLogonW(
+                                                            usernameW,
+                                                            domainW,
+                                                            passwordW,
+                                                            DWORD(LOGON_WITH_PROFILE),
+                                                            applicationNameW,
+                                                            UnsafeMutablePointer<WCHAR>(mutating: commandAndArgsW),
+                                                            spawnContext.createProcessFlags,
+                                                            UnsafeMutableRawPointer(mutating: environmentW),
+                                                            intendedWorkingDirW,
+                                                            spawnContext.startupInfo.pointer(to: \.StartupInfo)!,
+                                                            &processInfo
+                                                        )
+                                                        return (created, processInfo, GetLastError(), userManagesResume)
+                                                    }
+                                                }
+                                            }
+                                        }
+
                                         var processInfo = PROCESS_INFORMATION()
                                         let result = CreateProcessW(
                                             applicationNameW,
@@ -200,272 +210,6 @@ extension Configuration {
 
             guard created else {
                 if windowsError == ERROR_FILE_NOT_FOUND || windowsError == ERROR_PATH_NOT_FOUND {
-                    // This execution path is not it. Try the next one
-                    continue
-                }
-
-                try self.safelyCloseMultiple(
-                    inputRead: inputReadFileDescriptor,
-                    inputWrite: inputWriteFileDescriptor,
-                    outputRead: outputReadFileDescriptor,
-                    outputWrite: outputWriteFileDescriptor,
-                    errorRead: errorReadFileDescriptor,
-                    errorWrite: errorWriteFileDescriptor
-                )
-
-                // Match Darwin and Linux behavior and throw
-                // .failedToChangeWorkingDirectory instead of .spawnFailed
-                if windowsError == ERROR_DIRECTORY {
-                    throw SubprocessError.failedToChangeWorkingDirectory(
-                        self.workingDirectory?.string,
-                        underlyingError: SubprocessError.WindowsError(rawValue: windowsError)
-                    )
-                }
-
-                throw SubprocessError.spawnFailed(
-                    withUnderlyingError: SubprocessError.WindowsError(rawValue: windowsError)
-                )
-            }
-
-            do {
-                try Self.assignChildToJobObjectAndResume(
-                    jobHandle: jobHandle,
-                    processInfo: processInfo,
-                    resumeThread: !userManagesResume
-                )
-            } catch {
-                try self.safelyCloseMultiple(
-                    inputRead: inputReadFileDescriptor,
-                    inputWrite: inputWriteFileDescriptor,
-                    outputRead: outputReadFileDescriptor,
-                    outputWrite: outputWriteFileDescriptor,
-                    errorRead: errorReadFileDescriptor,
-                    errorWrite: errorWriteFileDescriptor
-                )
-                throw error
-            }
-
-            // Transfer ownership of the job handle to the `ProcessIdentifier`.
-            jobHandleOwned = false
-
-            let pid = ProcessIdentifier(
-                value: processInfo.dwProcessId,
-                processDescriptor: processInfo.hProcess,
-                threadHandle: processInfo.hThread,
-                jobHandle: jobHandle
-            )
-
-            do {
-                // After spawn finishes, close all child side fds
-                try self.safelyCloseMultiple(
-                    inputRead: inputReadFileDescriptor,
-                    inputWrite: nil,
-                    outputRead: nil,
-                    outputWrite: outputWriteFileDescriptor,
-                    errorRead: nil,
-                    errorWrite: errorWriteFileDescriptor
-                )
-            } catch {
-                // If spawn() throws, monitorProcessTermination
-                // won't have an opportunity to call release, so do it here to avoid leaking the handles.
-                pid.close()
-                throw error
-            }
-
-            return SpawnResult(
-                processIdentifier: pid,
-                inputWriteEnd: inputWriteFileDescriptor,
-                outputReadEnd: outputReadFileDescriptor,
-                errorReadEnd: errorReadFileDescriptor
-            )
-        }
-
-        try self.safelyCloseMultiple(
-            inputRead: inputReadFileDescriptor,
-            inputWrite: inputWriteFileDescriptor,
-            outputRead: outputReadFileDescriptor,
-            outputWrite: outputWriteFileDescriptor,
-            errorRead: errorReadFileDescriptor,
-            errorWrite: errorWriteFileDescriptor
-        )
-
-        // If we reached this point, all possible executable paths have failed
-        throw SubprocessError.executableNotFound(
-            self.executable.description,
-            underlyingError: SubprocessError.WindowsError(rawValue: DWORD(ERROR_FILE_NOT_FOUND))
-        )
-    }
-
-    internal func spawnAsUser(
-        withInput inputPipe: consuming CreatedPipe,
-        outputPipe: consuming CreatedPipe,
-        errorPipe: consuming CreatedPipe,
-        userCredentials: PlatformOptions.UserCredentials
-    ) async throws(SubprocessError) -> SpawnResult {
-        var inputPipeBox: CreatedPipe? = consume inputPipe
-        var outputPipeBox: CreatedPipe? = consume outputPipe
-        var errorPipeBox: CreatedPipe? = consume errorPipe
-
-        var _inputPipe = inputPipeBox.take()!
-        var _outputPipe = outputPipeBox.take()!
-        var _errorPipe = errorPipeBox.take()!
-
-        let inputReadFileDescriptor: IODescriptor? = _inputPipe.readFileDescriptor()
-        let inputWriteFileDescriptor: IODescriptor? = _inputPipe.writeFileDescriptor()
-        let outputReadFileDescriptor: IODescriptor? = _outputPipe.readFileDescriptor()
-        let outputWriteFileDescriptor: IODescriptor? = _outputPipe.writeFileDescriptor()
-        let errorReadFileDescriptor: IODescriptor? = _errorPipe.readFileDescriptor()
-        let errorWriteFileDescriptor: IODescriptor? = _errorPipe.writeFileDescriptor()
-
-        // Create the Job Object up front. It persists across all candidate path
-        // attempts, and is owned by this function until ownership transfers to
-        // the `ProcessIdentifier` on the success path.
-        let jobHandle = try Self.createJobObject()
-        var jobHandleOwned = true
-        defer {
-            if jobHandleOwned {
-                _ = CloseHandle(jobHandle)
-            }
-        }
-
-        // CreateProcessW supports using `lpApplicationName` as well as `lpCommandLine` to
-        // specify executable path. However, only `lpCommandLine` supports PATH looking up,
-        // whereas `lpApplicationName` does not. In general we should rely on `lpCommandLine`'s
-        // automatic PATH lookup so we only need to call `CreateProcessW` once. However, if
-        // user wants to override executable path in arguments, we have to use `lpApplicationName`
-        // to specify the executable path. In this case, manually loop over all possible paths.
-        let possibleExecutablePaths: _OrderedSet<String>
-        if _fastPath(self.arguments.executablePathOverride == nil) {
-            // Fast path: we can rely on `CreateProcessW`'s built in Path searching
-            switch self.executable.storage {
-            case .executable(let executable):
-                possibleExecutablePaths = _OrderedSet([executable])
-            case .path(let path):
-                possibleExecutablePaths = _OrderedSet([path.string])
-            }
-        } else {
-            // Slow path: user requested arg0 override, therefore we must manually
-            // traverse through all possible executable paths
-            possibleExecutablePaths = self.executable.possibleExecutablePaths(
-                withPathValue: self.environment.pathValue()
-            )
-        }
-        for executablePath in possibleExecutablePaths {
-            let (
-                applicationName,
-                commandAndArgs,
-                environment,
-                intendedWorkingDir
-            ): (String?, String, String, String?)
-            do {
-                (
-                    applicationName,
-                    commandAndArgs,
-                    environment,
-                    intendedWorkingDir
-                ) = try self.preSpawn(withPossibleExecutablePath: executablePath)
-            } catch {
-                try self.safelyCloseMultiple(
-                    inputRead: inputReadFileDescriptor,
-                    inputWrite: inputWriteFileDescriptor,
-                    outputRead: outputReadFileDescriptor,
-                    outputWrite: outputWriteFileDescriptor,
-                    errorRead: errorReadFileDescriptor,
-                    errorWrite: errorWriteFileDescriptor
-                )
-                throw error
-            }
-
-            var createProcessFlags = self.generateCreateProcessFlag()
-
-            let (created, processInfo, windowsError, userManagesResume): (Bool, PROCESS_INFORMATION, DWORD, Bool)
-            do {
-                (created, processInfo, windowsError, userManagesResume) = try await self.withStartupInfoEx(
-                    inputRead: inputReadFileDescriptor,
-                    inputWrite: inputWriteFileDescriptor,
-                    outputRead: outputReadFileDescriptor,
-                    outputWrite: outputWriteFileDescriptor,
-                    errorRead: errorReadFileDescriptor,
-                    errorWrite: errorWriteFileDescriptor
-                ) { startupInfo throws(SubprocessError) in
-                    // Give calling process a chance to modify flag and startup info
-                    if let configurator = self.platformOptions.preSpawnProcessConfigurator {
-                        try configurator(&createProcessFlags, &startupInfo.pointer(to: \.StartupInfo)!.pointee)
-                    }
-
-                    // If the configurator set `CREATE_SUSPENDED`, the user has
-                    // explicitly opted into managing the child's initial
-                    // resume themselves. Otherwise, Subprocess resumes the
-                    // child after assigning it to the Job Object.
-                    let userManagesResume = (createProcessFlags & DWORD(CREATE_SUSPENDED)) != 0
-
-                    // Subprocess assigns every spawned child to a Job Object
-                    // before any user code runs in the child. `CREATE_SUSPENDED`
-                    // makes the assignment atomic, so it is always set
-                    // regardless of what the configurator did.
-                    createProcessFlags |= DWORD(CREATE_SUSPENDED)
-
-                    let spawnContext = SpawnContext(
-                        startupInfo: startupInfo,
-                        createProcessFlags: createProcessFlags
-                    )
-                    // Spawn (featuring pyramid!)
-                    return try await runOnBackgroundThread { () throws(SubprocessError) in
-                        return try userCredentials.username._withCString(
-                            encodedAs: UTF16.self
-                        ) { usernameW throws(SubprocessError) in
-                            try userCredentials.password._withCString(
-                                encodedAs: UTF16.self
-                            ) { passwordW throws(SubprocessError) in
-                                try userCredentials.domain.withOptionalCString(
-                                    encodedAs: UTF16.self
-                                ) { domainW throws(SubprocessError) in
-                                    try applicationName.withOptionalNTPathRepresentation { applicationNameW throws(SubprocessError) in
-                                        try commandAndArgs._withCString(
-                                            encodedAs: UTF16.self
-                                        ) { commandAndArgsW throws(SubprocessError) in
-                                            try environment._withCString(
-                                                encodedAs: UTF16.self
-                                            ) { environmentW throws(SubprocessError) in
-                                                try intendedWorkingDir.withOptionalNTPathRepresentation { intendedWorkingDirW throws(SubprocessError) in
-                                                    var processInfo = PROCESS_INFORMATION()
-                                                    let created = CreateProcessWithLogonW(
-                                                        usernameW,
-                                                        domainW,
-                                                        passwordW,
-                                                        DWORD(LOGON_WITH_PROFILE),
-                                                        applicationNameW,
-                                                        UnsafeMutablePointer<WCHAR>(mutating: commandAndArgsW),
-                                                        spawnContext.createProcessFlags,
-                                                        UnsafeMutableRawPointer(mutating: environmentW),
-                                                        intendedWorkingDirW,
-                                                        spawnContext.startupInfo.pointer(to: \.StartupInfo)!,
-                                                        &processInfo
-                                                    )
-                                                    return (created, processInfo, GetLastError(), userManagesResume)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch {
-                try self.safelyCloseMultiple(
-                    inputRead: inputReadFileDescriptor,
-                    inputWrite: inputWriteFileDescriptor,
-                    outputRead: outputReadFileDescriptor,
-                    outputWrite: outputWriteFileDescriptor,
-                    errorRead: errorReadFileDescriptor,
-                    errorWrite: errorWriteFileDescriptor
-                )
-                throw error
-            }
-
-            guard created else {
-                if windowsError == ERROR_FILE_NOT_FOUND || windowsError == ERROR_PATH_NOT_FOUND {
                     // This executable path is not it. Try the next one
                     continue
                 }
@@ -478,6 +222,7 @@ extension Configuration {
                     errorRead: errorReadFileDescriptor,
                     errorWrite: errorWriteFileDescriptor
                 )
+
                 // Match Darwin and Linux behavior and throw
                 // .failedToChangeWorkingDirectory instead of .spawnFailed
                 if windowsError == ERROR_DIRECTORY {
@@ -569,7 +314,7 @@ extension Configuration {
 public struct PlatformOptions: Sendable {
     /// The credentials to use when spawning the subprocess
     /// as a different user.
-    public struct UserCredentials: Sendable, Hashable {
+    internal struct UserCredentials: Sendable, Hashable {
         /// The name of the user.
         ///
         /// This is the name of the user account to run as.
@@ -644,7 +389,7 @@ public struct PlatformOptions: Sendable {
     }
 
     /// The user credentials for starting the process as another user.
-    public var userCredentials: UserCredentials? = nil
+    internal var userCredentials: UserCredentials? = nil
     /// The console behavior of the new process.
     ///
     /// Defaults to inheriting the console from the parent process.
@@ -708,14 +453,58 @@ public struct PlatformOptions: Sendable {
     public init() {}
 }
 
+extension PlatformOptions.ConsoleBehavior: CustomStringConvertible, CustomDebugStringConvertible {
+    /// A textual representation of how the console appears when spawning a
+    /// new process.
+    public var description: String {
+        switch self.storage {
+        case .createNew:
+            return "createNew"
+        case .detach:
+            return "detach"
+        case .inherit:
+            return "inherit"
+        }
+    }
+
+    /// A debug-oriented textual representation of how the console appears when
+    /// spawning a new process.
+    public var debugDescription: String {
+        return self.description
+    }
+}
+
+extension PlatformOptions.WindowStyle: CustomStringConvertible, CustomDebugStringConvertible {
+    /// A textual representation of how the window appears when spawning a
+    /// new process.
+    public var description: String {
+        switch self.storage {
+        case .normal:
+            return "normal"
+        case .hidden:
+            return "hidden"
+        case .maximized:
+            return "maximized"
+        case .minimized:
+            return "minimized"
+        }
+    }
+
+    /// A debug-oriented textual representation of how the window appears when
+    /// spawning a new process.
+    public var debugDescription: String {
+        return self.description
+    }
+}
+
 extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible {
     internal func description(withIndent indent: Int) -> String {
         let indent = String(repeating: " ", count: indent * 4)
         return """
             PlatformOptions(
             \(indent)    userCredentials: \(String(describing: self.userCredentials)),
-            \(indent)    consoleBehavior: \(String(describing: self.consoleBehavior)),
-            \(indent)    windowStyle: \(String(describing: self.windowStyle)),
+            \(indent)    consoleBehavior: \(self.consoleBehavior),
+            \(indent)    windowStyle: \(self.windowStyle),
             \(indent)    createProcessGroup: \(self.createProcessGroup),
             \(indent)    preSpawnProcessConfigurator: \(self.preSpawnProcessConfigurator == nil ? "not set" : "set")
             \(indent))
@@ -1552,36 +1341,19 @@ extension FileDescriptor {
         readEnd: FileDescriptor,
         writeEnd: FileDescriptor
     ) {
-        var saAttributes: SECURITY_ATTRIBUTES = SECURITY_ATTRIBUTES()
-        saAttributes.nLength = DWORD(MemoryLayout<SECURITY_ATTRIBUTES>.size)
-        saAttributes.bInheritHandle = true
-        saAttributes.lpSecurityDescriptor = nil
-
-        var readHandle: HANDLE? = nil
-        var writeHandle: HANDLE? = nil
-        guard CreatePipe(&readHandle, &writeHandle, &saAttributes, 0),
-            readHandle != INVALID_HANDLE_VALUE,
-            writeHandle != INVALID_HANDLE_VALUE,
-            let readHandle: HANDLE = readHandle,
-            let writeHandle: HANDLE = writeHandle
-        else {
-            throw SubprocessError.asyncIOFailed(
-                reason: "Filed to create pipe",
-                underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
-            )
+        var fds: [2 of CInt] = [-1, -1]
+        var span = fds.mutableSpan
+        try span.withUnsafeMutableBufferPointer { fds throws(SubprocessError) in
+            guard 0 == _pipe(fds.baseAddress!, 0, _O_BINARY) else {
+                throw SubprocessError.asyncIOFailed(
+                    reason: "Failed to create pipe",
+                    underlyingError: nil // FIXME: Errno(rawValue: _subprocess_windows_get_errno())
+                )
+            }
         }
-        let readFd = _open_osfhandle(
-            intptr_t(bitPattern: readHandle),
-            FileDescriptor.AccessMode.readOnly.rawValue
-        )
-        let writeFd = _open_osfhandle(
-            intptr_t(bitPattern: writeHandle),
-            FileDescriptor.AccessMode.writeOnly.rawValue
-        )
-
         return (
-            readEnd: FileDescriptor(rawValue: readFd),
-            writeEnd: FileDescriptor(rawValue: writeFd)
+            readEnd: FileDescriptor(rawValue: fds[0]),
+            writeEnd: FileDescriptor(rawValue: fds[1])
         )
     }
 
