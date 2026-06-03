@@ -472,8 +472,12 @@ extension SubprocessUnixTests {
                 group.addTask {
                     var platformOptions = PlatformOptions()
                     platformOptions.teardownSequence = [
-                        // Send SIGINT for child to catch
-                        .send(signal: .interrupt, allowedDurationToNextStep: .milliseconds(100))
+                        // SIGTERM for the child to catch (paired with the poll
+                        // loop in the script). The grace period must comfortably
+                        // exceed the poll interval so the trap is serviced
+                        // before escalation. The grace period is a ceiling;
+                        // teardown returns as soon as the child exits.
+                        .send(signal: .terminate, allowedDurationToNextStep: .seconds(1))
                     ]
                     let result = try await Subprocess.run(
                         .name("bash"),
@@ -485,11 +489,18 @@ extension SubprocessUnixTests {
                             # It runs in the background forever until this script kills it
                             /usr/bin/yes "Runaway process from \(#function), please file a SwiftSubprocess bug." > /dev/null &
                             child_pid=$! # Retrieve the grand child yes pid
-                            # When SIGINT is sent to the script, kill grand child now
-                            trap "echo >&2 'child: received signal, killing grand child ($child_pid)'; kill -s KILL $child_pid; exit 0" INT
+                            # When SIGTERM is sent to the script, kill grand child now
+                            trap "echo >&2 'child: received signal, killing grand child ($child_pid)'; kill -s KILL $child_pid; exit 0" TERM
                             echo "$child_pid" # communicate the child pid to our parent
                             echo "child: waiting for grand child, pid: $child_pid" >&2
-                            wait $child_pid # wait for runaway child to exit
+                            # Poll rather than `wait "$child_pid"`. A blocking wait on a child that never
+                            # exits leaves bash no point at which to service a deferred trap, so a signal
+                            # landing in the window just before waitpid blocks is recorded but never run,
+                            # and teardown escalates to SIGKILL. A short sleep loop returns to a
+                            # trap-checking safe point each iteration, bounding trap latency.
+                            while kill -0 "$child_pid" 2>/dev/null; do
+                                sleep 0.05
+                            done
                             """,
                         ],
                         platformOptions: platformOptions,
@@ -498,7 +509,7 @@ extension SubprocessUnixTests {
                         error: .fileDescriptor(.standardError, closeAfterSpawningProcess: false)
                     ) { execution in
                         // Read stdout incrementally. Once we see the PID line,
-                        // we know the trap is set up and it's safe to send SIGINT.
+                        // we know the trap is set up and it's safe to send SIGTERM.
                         var grandChildPid: pid_t?
                         for try await line in execution.standardOutput.strings() {
                             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
