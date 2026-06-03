@@ -360,13 +360,13 @@ private var _currentPID: ProcessIdentifier {
         threadHandle: GetCurrentThread(),
         jobHandle: INVALID_HANDLE_VALUE
     )
-    #elseif os(Linux) || os(Android) || os(FreeBSD)
+    #elseif canImport(Darwin)
+    return ProcessIdentifier(value: getpid())
+    #else
     return ProcessIdentifier(
         value: getpid(),
         processDescriptor: 0 // Not used in these tests.
     )
-    #else
-    return ProcessIdentifier(value: getpid())
     #endif
 }
 

@@ -169,7 +169,7 @@ internal func _makeKevent(
     flags: UInt16,
     fflags: UInt32 = 0
 ) -> kevent {
-    #if canImport(Darwin)
+    #if canImport(Darwin) || os(OpenBSD)
     return kevent(
         ident: ident,
         filter: filter,

@@ -420,10 +420,11 @@ extension SubprocessUnixTests {
                 arguments: ["-c", "kill -\(signal) $$"],
                 output: .discarded
             )
-            #if os(Android)
-            // When terminated by a catchable signal, Android's /bin/sh exits
-            // normally with a status of 128+n instead of dying by the signal.
-            // SIGKILL is uncatchable and still produces a signal-based termination.
+            #if os(Android) || os(OpenBSD)
+            // When terminated by a catchable signal, /bin/sh on Android (mksh)
+            // and OpenBSD (oksh) — both pdksh-derived — exits normally with a
+            // status of 128+n instead of re-raising the signal. SIGKILL is
+            // uncatchable and still produces a signal-based termination.
             // https://www.gnu.org/software/autoconf/manual/autoconf-2.69/html_node/Signal-Handling.html
             let expected: TerminationStatus =
                 signal == SIGKILL
@@ -652,20 +653,42 @@ extension SubprocessUnixTests {
                 #expect(closeResult == 0)
             }
         }
+        // Probe each fd via dup2 in a forked external command (true(1)).
+        // Avoids the [-e /dev/fd/N] / [-e /proc/self/fd/N] oracle, which
+        // gives false positives on OpenBSD (static character-device nodes
+        // /dev/fd/0..63 exist regardless of which fds are open) and requires
+        // /proc on Linux / fdescfs on FreeBSD.
+        //
+        // Why /usr/bin/true and not the builtin? When bash applies `>&N` to
+        // a builtin, it first saves the original fd via fcntl(F_DUPFD, 10)
+        // so it can restore it after the builtin returns. While the builtin
+        // is running, fd 10 (or whichever low fd >= 10 is free) is held open
+        // as bash's saved fd, so a probe of fd 10 falsely succeeds. Forking
+        // an external command sidesteps this: bash applies the redirection
+        // in the forked child without saving (the child is about to exec
+        // away), so dup2 only succeeds when the fd was genuinely open.
+        //
+        // The subshell wrapper isolates the redirection failure: dash treats
+        // a redirection failure in the current shell as fatal to the
+        // non-interactive script, but a failure in a subshell only exits
+        // the subshell.
         let shellScript =
             """
             for fd in "$@"; do
-                if [ -e "/proc/self/fd/$fd" ] || [ -e "/dev/fd/$fd" ]; then
+                if (/usr/bin/true <&"$fd") 2>/dev/null; then
                     echo "$fd:OPEN"
                 else
                     echo "$fd:CLOSED"
                 fi
             done
             """
-        var arguments = ["-c", shellScript, "--"]
-        #if os(FreeBSD)
-        arguments.append("") // FreeBSD /bin/sh interprets the first argument as the script name
-        #endif
+        // POSIX `sh -c command_string [command_name [argument...]]` always
+        // takes the next argv as $0. Do not pass `--`: OpenBSD's ksh-derived
+        // /bin/sh does not honor it as an option terminator and would assign
+        // it to $0 (while FreeBSD's ash-derived /bin/sh consumes it and
+        // shifts $0 onto the next arg) — keep things deterministic by
+        // passing a single explicit placeholder.
+        var arguments = ["-c", shellScript, "subprocess-fd-test"]
         arguments.append(contentsOf: openedFileDescriptors.map { "\($0)" })
 
         let result = try await Subprocess.run(
