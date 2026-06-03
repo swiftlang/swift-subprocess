@@ -82,7 +82,7 @@ internal func waitForProcessTermination(
                     // pidfd is only supported on Linux kernel 5.4 and above
                     // On older releases, use signalfd so we do not need
                     // to register anything with epoll
-                    if processIdentifier.processDescriptor > 0 {
+                    if processIdentifier.processDescriptor != .invalidDescriptor {
                         var newState = storage
                         // epoll rejects duplicate EPOLL_CTL_ADD for the same fd
                         // with EEXIST, so only register the pidfd the first

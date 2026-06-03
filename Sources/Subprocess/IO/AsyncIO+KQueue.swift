@@ -38,47 +38,7 @@ private typealias _Mutex = OSAllocatedUnfairLock
 private typealias _Mutex = Synchronization.Mutex
 #endif
 
-// The kevent() C function and the kevent struct share the same name.
-// Swift can disambiguate when given an explicit function type.
-private let _kevent:
-    @convention(c) (
-        Int32,
-        UnsafePointer<kevent>?,
-        Int32,
-        UnsafeMutablePointer<kevent>?,
-        Int32,
-        UnsafePointer<timespec>?
-    ) -> Int32 = kevent
-
-private let _kqueueEventSize = 256
 private let _registration: _Mutex<Registration> = _Mutex(Registration())
-
-private func _makeKevent(
-    ident: UInt,
-    filter: Int16,
-    flags: UInt16
-) -> kevent {
-    #if canImport(Darwin)
-    return kevent(
-        ident: ident,
-        filter: filter,
-        flags: flags,
-        fflags: 0,
-        data: 0,
-        udata: nil
-    )
-    #else
-    return kevent(
-        ident: ident,
-        filter: filter,
-        flags: flags,
-        fflags: 0,
-        data: 0,
-        udata: nil,
-        ext: (0, 0, 0, 0)
-    )
-    #endif
-}
 
 final class AsyncIO: Sendable {
 

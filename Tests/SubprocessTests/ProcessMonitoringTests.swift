@@ -38,7 +38,7 @@ struct SubprocessProcessMonitoringTests {
 
     init() {
         _ = globallyIgnoredSIGPIPE
-        #if os(Linux) || os(Android)
+        #if !os(Windows)
         _setupMonitorSignalHandler()
         #endif
     }
