@@ -733,39 +733,26 @@ extension SubprocessUnixTests {
         }
     }
 
-    // Ensure Subprocess does not hang on Linux when several concurrent
-    // `Subprocess.run` calls saw their children exit in a tight burst.
-    //
-    // Spawns 16 `bash` children, each with a SIGTERM trap that sleeps one second
-    // before exiting. Every body closure sends SIGTERM at roughly the same instant,
-    // so all 16 children finish their trap and become zombies inside a single small.
-    @Test(.requiresBash) func testConcurrentSlowExitsDoNotHang() async throws {
-        // 16 concurrent slow-to-exit children is enough to flood the
-        // monitor and trigger the burst on Linux.
+    @Test(.timeLimit(.minutes(1)))
+    func testConcurrentSlowExitsDoNotHang() async throws {
+        // When many concurrent `Subprocess.run` calls have their children exit
+        // in a tight burst, the SIGCHLD-coalescing reaper must drain every
+        // ready child per wakeup. 16 children that each sleep ~1s will exit
+        // within a few milliseconds of each other and flood the reaper; the
+        // body-less runs keep all 16 monitors blocked on termination for the
+        // full second, so the exits land while every monitor is waiting. No
+        // signal or trap is involved: the reaper keys on child exit (SIGCHLD),
+        // which is identical whether a child exits on a timer or a signal, so
+        // a timed exit reproduces the same stress without relying on bash.
         let count = 16
-        // Trap SIGTERM, sleep 1 s in the handler, then exit. bash (not
-        // POSIX sh) is required: `sh -c 'trap ...; sleep 300'` would defer
-        // the trap until `sleep 300` completes, while bash interrupts
-        // `wait` immediately on signal.
-        let script = "trap 'sleep 1; exit 0' TERM; sleep 300 & wait"
-
         try await withThrowingTaskGroup(of: TerminationStatus.self) { group in
             for _ in 0..<count {
                 group.addTask {
-                    let result = try await Subprocess.run(
-                        .name("bash"),
-                        arguments: ["-c", script],
-                        input: .none,
-                        output: .discarded,
-                        error: .discarded
-                    ) { execution in
-                        // Let all N processes install their traps before
-                        // we signal them, so the kills land in a tight
-                        // burst and the children exit ~simultaneously.
-                        try await Task.sleep(for: .milliseconds(100))
-                        try execution.send(signal: .terminate)
-                    }
-                    return result.terminationStatus
+                    try await Subprocess.run(
+                        .path("/bin/sleep"),
+                        arguments: ["1"],
+                        output: .discarded
+                    ).terminationStatus
                 }
             }
             for try await status in group {
