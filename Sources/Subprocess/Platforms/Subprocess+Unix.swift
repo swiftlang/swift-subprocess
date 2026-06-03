@@ -17,7 +17,12 @@ import System
 import SystemPackage
 #endif
 
+#if os(OpenBSD)
+// FIXME: Why is this necessary only on OpenBSD?
+public import _SubprocessCShims
+#else
 import _SubprocessCShims
+#endif
 
 #if canImport(Darwin)
 import Darwin
