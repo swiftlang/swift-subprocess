@@ -37,7 +37,7 @@ public struct Signal: Hashable, Sendable {
     /// The underlying platform-specific value for the signal.
     public let rawValue: Int32
 
-    private init(rawValue: Int32) {
+    public init(rawValue: Int32) {
         self.rawValue = rawValue
     }
 

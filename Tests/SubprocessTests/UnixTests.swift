@@ -259,7 +259,7 @@ extension SubprocessUnixTests {
                 platformOptions.createSession = true
                 platformOptions.teardownSequence = teardownSequence
                 let configuration = Configuration(
-                    .path("/bin/sh"),
+                    executable: .path("/bin/sh"),
                     // `exec` so the monitored child becomes `sleep` itself,
                     // which dies instantly on SIGTERM/SIGKILL.
                     arguments: ["-c", "echo ready; exec sleep 10"],
