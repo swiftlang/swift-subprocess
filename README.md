@@ -345,19 +345,23 @@ See the `PlatformOptions` documentation for a complete list of configurable para
 
 ### Cross-Platform Support
 
-`Subprocess` works on macOS, Linux, and Windows, with feature parity across all platforms as well as platform-specific options for each.
+`Subprocess` provides feature parity across all supported platforms, along with platform-specific options for each.
 
-| **Platform**                       | **Support Status** |
-| ---------------------------------- | ------------------ |
-| **macOS**                          | Supported          |
-| **Ubuntu 20.04**                   | Supported          |
-| **Ubuntu 22.04**                   | Supported          |
-| **Ubuntu 24.04**                   | Supported          |
-| **Red Hat Universal Base Image 9** | Supported          |
-| **Debian 12**                      | Supported          |
-| **Amazon Linux 2**                 | Supported          |
-| **Windows 11**                     | Supported          |
+| **Platform**                       | **Testing**[^testing] |
+| ---------------------------------- | --------------------- |
+| **macOS**                          | Automated             |
+| **Ubuntu 22.04**                   | Automated             |
+| **Ubuntu 24.04**                   | Automated             |
+| **Red Hat Universal Base Image 9** | Automated             |
+| **Debian 12**                      | Automated             |
+| **Amazon Linux 2**                 | Automated             |
+| **Windows 11**                     | Automated             |
+| **Android**                        | Automated             |
+| **FreeBSD**                        | Automated             |
+| **Static Linux SDK**               | Build only            |
+| **OpenBSD**                        | Manual                |
 
+[^testing]: **Automated** platforms are built and tested in CI on every pull request. **Build only** platforms are built (but not tested) in CI on every pull request. **Manual** platforms are tested on a best-effort basis by maintainers.
 
 ## Documentation
 
