@@ -3437,6 +3437,32 @@ extension SubprocessIntegrationTests {
             #expect(output == ["100°C", "32—x", "€5"])
         }
     }
+
+    @Test func testSubprocessTearsdownChildProcessWhenBodyThrows() async throws {
+        struct MyError: Swift.Error {}
+
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("powershell.exe"),
+            arguments: ["-Command", "Start-Sleep -Seconds 9999"]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .name("tail"),
+            arguments: ["-f", "/dev/null"]
+        )
+        #endif
+        await #expect(throws: MyError.self) {
+            _ = try await _run(
+                setup,
+                input: .none,
+                output: .discarded,
+                error: .discarded
+            ) { execution in
+                throw MyError()
+            }
+        }
+    }
 }
 
 // MARK: - Utilities

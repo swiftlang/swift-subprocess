@@ -139,6 +139,14 @@ public struct Configuration: Sendable {
                     taskFinishFlag.addOne()
                     result = .success(bodyResult)
                 } catch {
+                    let execution = Execution<Input, Output, Error>(
+                        processIdentifier: processIdentifier,
+                        inputWriter: nil,
+                        outputStream: nil,
+                        errorStream: nil
+                    )
+                    // Attempt to terminate the child process when the body throws
+                    await execution.teardown(using: self.platformOptions.teardownSequence)
                     result = .failure(error)
                 }
 
