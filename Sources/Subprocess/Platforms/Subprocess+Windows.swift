@@ -453,14 +453,58 @@ public struct PlatformOptions: Sendable {
     public init() {}
 }
 
+extension PlatformOptions.ConsoleBehavior: CustomStringConvertible, CustomDebugStringConvertible {
+    /// A textual representation of how the console appears when spawning a
+    /// new process.
+    public var description: String {
+        switch self.storage {
+        case .createNew:
+            return "createNew"
+        case .detach:
+            return "detach"
+        case .inherit:
+            return "inherit"
+        }
+    }
+
+    /// A debug-oriented textual representation of how the console appears when
+    /// spawning a new process.
+    public var debugDescription: String {
+        return self.description
+    }
+}
+
+extension PlatformOptions.WindowStyle: CustomStringConvertible, CustomDebugStringConvertible {
+    /// A textual representation of how the window appears when spawning a
+    /// new process.
+    public var description: String {
+        switch self.storage {
+        case .normal:
+            return "normal"
+        case .hidden:
+            return "hidden"
+        case .maximized:
+            return "maximized"
+        case .minimized:
+            return "minimized"
+        }
+    }
+
+    /// A debug-oriented textual representation of how the window appears when
+    /// spawning a new process.
+    public var debugDescription: String {
+        return self.description
+    }
+}
+
 extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible {
     internal func description(withIndent indent: Int) -> String {
         let indent = String(repeating: " ", count: indent * 4)
         return """
             PlatformOptions(
             \(indent)    userCredentials: \(String(describing: self.userCredentials)),
-            \(indent)    consoleBehavior: \(String(describing: self.consoleBehavior)),
-            \(indent)    windowStyle: \(String(describing: self.windowStyle)),
+            \(indent)    consoleBehavior: \(self.consoleBehavior),
+            \(indent)    windowStyle: \(self.windowStyle),
             \(indent)    createProcessGroup: \(self.createProcessGroup),
             \(indent)    preSpawnProcessConfigurator: \(self.preSpawnProcessConfigurator == nil ? "not set" : "set")
             \(indent))
