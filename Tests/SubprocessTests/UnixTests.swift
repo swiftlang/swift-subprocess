@@ -905,7 +905,7 @@ extension SubprocessUnixTests {
         // the same suite) to avoid hitting EMFILE during the concurrent spawn
         // burst.  /proc/self/fd lists every open descriptor; subtracting the
         // current count plus a small margin gives the true available headroom.
-        #if os(Linux)
+        #if os(Linux) || os(Android)
         let currentFds = (try? FileManager.default.contentsOfDirectory(atPath: "/proc/self/fd"))?.count ?? 50
         let available = max(32, softLimit - currentFds - 50)
         #else

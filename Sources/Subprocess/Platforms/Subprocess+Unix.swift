@@ -531,7 +531,7 @@ extension Configuration {
                         // clone3(CLONE_PIDFD) allocates a pidfd before exec runs.
                         // If exec fails we retry with the next candidate path, so
                         // close the pidfd here to avoid leaking it across retries.
-                        if processDescriptor > 0 {
+                        if processDescriptor >= 0 {
                             try? FileDescriptor(rawValue: processDescriptor).close()
                         }
                         // Move on to another possible path
