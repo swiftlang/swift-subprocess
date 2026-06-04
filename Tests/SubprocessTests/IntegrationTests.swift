@@ -1819,6 +1819,34 @@ extension SubprocessIntegrationTests {
         #expect(result.terminationStatus.isSuccess)
     }
 
+    #if !os(Windows)
+    @Test func stressTestCapturingLargeStandardError() async throws {
+        // Regression test for swiftlang/swift-subprocess#34.
+        // A child blocked writing to a full stderr pipe while the parent
+        // captured stderr unbounded, with stdout discarded and no input. The
+        // hang was specific to the Unix capture path, so there's no Windows
+        // variant (`testStringErrorOutput()` covers Windows large-stderr
+        // capture). The volume exceeds the pipe buffer so the child actually
+        // blocks on write if the capture ever stops draining, and the exact
+        // byte count guards against a truncated capture.
+        let lineCount = 16_384
+        let lineWidth = 64 // 63 payload bytes + newline; 1 MiB total
+        let payload = String(repeating: "x", count: lineWidth - 1)
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "yes '\(payload)' | head -n \(lineCount) 1>&2"]
+        )
+        let result = try await _run(
+            setup,
+            input: .none,
+            output: .discarded,
+            error: .string(limit: .max)
+        )
+        #expect(result.terminationStatus.isSuccess)
+        #expect(result.standardError?.utf8.count == lineCount * lineWidth)
+    }
+    #endif
+
     @Test func testCaptureEmptyOutputError() async throws {
         #if os(Windows)
         let setup = TestSetup(
