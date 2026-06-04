@@ -72,7 +72,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Run Test
-        run: bash -c './scripts/test-using-qemu.sh ${{ matrix.dist-kern }} -- swift test --no-parallel'
+        run: bash -c './scripts/test-using-qemu.sh ${{ matrix.dist-kern }} -- swift test'
 
   soundness:
     name: Soundness
