@@ -1001,10 +1001,11 @@ extension Configuration {
         ) = try self.generateWindowsCommandAndArguments(
             withPossibleExecutablePath: executablePath
         )
-        // Omit applicationName (and therefore rely on commandAndArgs
-        // for executable path) if we don't need to override arg0
+        // `generateWindowsCommandAndArguments` already decided whether to
+        // omit `applicationName` (and rely on `commandAndArgs` for the
+        // executable path), so pass its result through unchanged.
         return (
-            applicationName: self.arguments.executablePathOverride == nil ? nil : applicationName,
+            applicationName: applicationName,
             commandAndArgs: commandAndArgs,
             environment: environmentString,
             intendedWorkingDir: self.workingDirectory?.string
@@ -1240,7 +1241,7 @@ extension Configuration {
         // For Unix-style argv[0] override (where argv[0] differs from actual exe):
         // Set lpApplicationName = "C:\\path\\to\\real.exe"
         // Set lpCommandLine = "fake_name.exe arg1 arg2"
-        var args = self.arguments.storage.map {
+        let args = self.arguments.storage.map {
             guard case .string(let stringValue) = $0 else {
                 // We should never get here since the API
                 // is guarded off
@@ -1249,76 +1250,216 @@ extension Configuration {
             return stringValue
         }
 
+        // When the target is a batch file (`.bat`/`.cmd`), `CreateProcessW`
+        // runs it by implicitly spawning `cmd.exe /c <command line>`. Because
+        // `cmd.exe` parses its command line differently from
+        // `CommandLineToArgvW`, the step 1 quoting in `quoteWindowsCommandLine`
+        // is not sufficient on its own. A metacharacter such as `&` in an
+        // argument would be interpreted by `cmd.exe` as a command separator,
+        // enabling command injection. This is the "BatBadBut" class of
+        // vulnerabilities (e.g. CVE-2024-24576, CVE-2024-43402). Invoke
+        // `cmd.exe` explicitly with controlled flags and additionally escape
+        // each argument for `cmd.exe` (Colascione's "step 2").
+        let targetsBatchFile = executablePath.isWindowsBatchFile
+
+        if targetsBatchFile {
+            // The argv[0] override is not applicable to a batch file: `cmd.exe`
+            // sets %0 to the script path, so it is intentionally not applied.
+            //
+            // Resolve `cmd.exe` from the system directory so a directory earlier
+            // on PATH can't substitute a different interpreter.
+            let commandPrompt = try Self.resolveCommandPromptPath()
+            let commandAndArgs = try Self.makeBatchFileCommandLine(
+                scriptPath: executablePath,
+                arguments: args
+            )
+            return (applicationName: commandPrompt, commandAndArgs: commandAndArgs)
+        }
+
+        var commandLineArguments = args
         if case .string(let overrideName) = self.arguments.executablePathOverride {
             // Use the override as argument0 and set applicationName
-            args.insert(overrideName, at: 0)
+            commandLineArguments.insert(overrideName, at: 0)
         } else {
             // Set argument[0] to be executableNameOrPath
-            args.insert(executablePath, at: 0)
+            commandLineArguments.insert(executablePath, at: 0)
         }
         return (
-            applicationName: executablePath,
-            commandAndArgs: self.quoteWindowsCommandLine(args)
+            // Omit applicationName (and therefore rely on commandAndArgs for
+            // executable path) when we don't need to override arg0.
+            applicationName: self.arguments.executablePathOverride == nil ? nil : executablePath,
+            commandAndArgs: Self.quoteWindowsCommandLine(commandLineArguments)
         )
     }
 
-    // Taken from SCF
-    private func quoteWindowsCommandLine(_ commandLine: [String]) -> String {
-        func quoteWindowsCommandArg(arg: String) -> String {
-            // Windows escaping, adapted from Daniel Colascione's "Everyone quotes
-            // command line arguments the wrong way" - Microsoft Developer Blog
-            if !arg.contains(where: { " \t\n\"".contains($0) }) {
-                return arg
+    /// Resolves the absolute path to `cmd.exe` from the Windows system directory.
+    private static func resolveCommandPromptPath() throws(SubprocessError) -> String {
+        do throws(SubprocessError.WindowsError) {
+            let systemDirectorySize = GetSystemDirectoryW(nil, 0)
+            let systemDirectory = try fillNullTerminatedWideStringBuffer(
+                initialSize: systemDirectorySize,
+                maxSize: DWORD(Int16.max)
+            ) {
+                return GetSystemDirectoryW($0.baseAddress, DWORD($0.count))
             }
-
-            // To escape the command line, we surround the argument with quotes. However
-            // the complication comes due to how the Windows command line parser treats
-            // backslashes (\) and quotes (")
-            //
-            // - \ is normally treated as a literal backslash
-            //     - e.g. foo\bar\baz => foo\bar\baz
-            // - However, the sequence \" is treated as a literal "
-            //     - e.g. foo\"bar => foo"bar
-            //
-            // But then what if we are given a path that ends with a \? Surrounding
-            // foo\bar\ with " would be "foo\bar\" which would be an unterminated string
-
-            // since it ends on a literal quote. To allow this case the parser treats:
-            //
-            // - \\" as \ followed by the " metachar
-            // - \\\" as \ followed by a literal "
-            // - In general:
-            //     - 2n \ followed by " => n \ followed by the " metachar
-            //     - 2n+1 \ followed by " => n \ followed by a literal "
-            var quoted = "\""
-            var unquoted = arg.unicodeScalars
-
-            while !unquoted.isEmpty {
-                guard let firstNonBackslash = unquoted.firstIndex(where: { $0 != "\\" }) else {
-                    // String ends with a backslash e.g. foo\bar\, escape all the backslashes
-                    // then add the metachar " below
-                    let backslashCount = unquoted.count
-                    quoted.append(String(repeating: "\\", count: backslashCount * 2))
-                    break
-                }
-                let backslashCount = unquoted.distance(from: unquoted.startIndex, to: firstNonBackslash)
-                if unquoted[firstNonBackslash] == "\"" {
-                    // This is  a string of \ followed by a " e.g. foo\"bar. Escape the
-                    // backslashes and the quote
-                    quoted.append(String(repeating: "\\", count: backslashCount * 2 + 1))
-                    quoted.append(String(unquoted[firstNonBackslash]))
-                } else {
-                    // These are just literal backslashes
-                    quoted.append(String(repeating: "\\", count: backslashCount))
-                    quoted.append(String(unquoted[firstNonBackslash]))
-                }
-                // Drop the backslashes and the following character
-                unquoted.removeFirst(backslashCount + 1)
-            }
-            quoted.append("\"")
-            return quoted
+            return FilePath(systemDirectory).appending("cmd.exe").string
+        } catch {
+            throw SubprocessError.asyncIOFailed(
+                reason: "Failed to resolve system directory",
+                underlyingError: error
+            )
         }
-        return commandLine.map(quoteWindowsCommandArg).joined(separator: " ")
+    }
+
+    /// Builds a `cmd.exe` command line that runs a batch file with arguments
+    /// escaped to survive both `cmd.exe` and `CommandLineToArgvW` parsing.
+    ///
+    /// This logic was taken from Rust standard library's `make_bat_command_line`, which hardened these after
+    /// CVE-2024-24576 / CVE-2024-43402.
+    /// https://github.com/rust-lang/rust/blob/master/library/std/src/sys/args/windows.rs
+    ///
+    /// `/d` skips AutoRun, `/e:ON` keeps command extensions, `/v:OFF` disables
+    /// delayed `!` expansion.
+    internal static func makeBatchFileCommandLine(
+        scriptPath: String,
+        arguments: [String]
+    ) throws(SubprocessError) -> String {
+        // `cmd.exe` identifies the script by its quoted token, so the path must
+        // not contain a quote or end with a backslash (which would escape the
+        // closing quote).
+        guard !scriptPath.contains("\""), scriptPath.last != "\\" else {
+            throw SubprocessError.spawnFailed(
+                withUnderlyingError: nil,
+                reason:
+                    "Cannot safely run batch file \"\(scriptPath)\": its path must not contain '\"' or end with '\\'."
+            )
+        }
+        guard !scriptPath.containsCommandLineControlCharacters() else {
+            throw SubprocessError.spawnFailed(
+                withUnderlyingError: nil,
+                reason:
+                    "Cannot safely run batch file \"\(scriptPath)\": its path must not contain \r \n or null byte."
+            )
+        }
+        var commandLine = "cmd.exe /d /e:ON /v:OFF /c \""
+        commandLine += "\"\(scriptPath)\""
+        for argument in arguments {
+            commandLine += " "
+            commandLine += try Self.escapeBatchFileArgument(argument)
+        }
+        commandLine += "\""
+        return commandLine
+    }
+
+    /// Escapes a single argument destined for a batch file run through
+    /// `cmd.exe`. Applies the `CommandLineToArgvW` quoting ("step 1"), then
+    /// prefixes every `cmd.exe` metacharacter,  including the quotes step 1
+    /// added,  with `^` ("step 2"). After `cmd.exe` consumes the carets, the
+    /// child program decodes exactly the original argument.
+    ///
+    /// Both steps are from Daniel Colascione's "Everyone quotes command line
+    /// arguments the wrong way":
+    /// https://learn.microsoft.com/en-us/archive/blogs/twistylittlepassagesallalike/everyone-quotes-command-line-arguments-the-wrong-way
+    internal static func escapeBatchFileArgument(_ argument: String) throws(SubprocessError) -> String {
+        // A NUL truncates the command-line string and CR/LF can split it
+        // into multiple commands. None can be safely escaped for `cmd.exe`,
+        // so reject them rather than silently truncate (matching the
+        // fail-closed behavior other runtimes adopted).
+        guard !argument.containsCommandLineControlCharacters() else {
+            throw SubprocessError.spawnFailed(
+                withUnderlyingError: nil,
+                reason:
+                    "Cannot pass argument to batch file: arguments may not contain NUL, carriage return, or newline characters."
+            )
+        }
+        // Step 1: quote for `CommandLineToArgvW`. An empty argument must be
+        // force-quoted, otherwise it would vanish from the command line.
+        let quoted = argument.isEmpty ? "\"\"" : Self.quoteWindowsCommandArgument(argument)
+        // Step 2: escape `cmd.exe` metacharacters with `^`.
+        var escaped = ""
+        escaped.reserveCapacity(quoted.count)
+        for character in quoted {
+            if Self.cmdMetacharacters.contains(character) {
+                escaped.append("^")
+            }
+            escaped.append(character)
+        }
+        return escaped
+    }
+
+    /// The characters that trigger `cmd.exe`'s textual transformations and so
+    /// must be escaped with `^` when they appear in an argument.
+    ///
+    /// `%` is included per the reference algorithm, but note `cmd.exe`'s
+    /// environment-variable expansion has edge cases `^` cannot fully suppress;
+    /// `%` is not a command-injection vector, however. `!` is additionally
+    /// neutralized by the `/v:OFF` flag set in `makeBatchFileCommandLine`.
+    private static let cmdMetacharacters: Set<Character> = [
+        "(", ")", "%", "!", "^", "\"", "<", ">", "&", "|",
+    ]
+
+    // Taken from SCF
+    private static func quoteWindowsCommandLine(_ commandLine: [String]) -> String {
+        return commandLine.map(Self.quoteWindowsCommandArgument).joined(separator: " ")
+    }
+
+    /// Quotes a single argument so the `CommandLineToArgvW` / C runtime parser
+    /// in the child decodes it back to the original string (Colascione's
+    /// "step 1"). Taken from SCF.
+    /// See https://learn.microsoft.com/en-us/archive/blogs/twistylittlepassagesallalike/everyone-quotes-command-line-arguments-the-wrong-way
+    private static func quoteWindowsCommandArgument(_ arg: String) -> String {
+        // Windows escaping, adapted from Daniel Colascione's "Everyone quotes
+        // command line arguments the wrong way" - Microsoft Developer Blog
+        if !arg.contains(where: { " \t\n\"".contains($0) }) {
+            return arg
+        }
+
+        // To escape the command line, we surround the argument with quotes. However
+        // the complication comes due to how the Windows command line parser treats
+        // backslashes (\) and quotes (")
+        //
+        // - \ is normally treated as a literal backslash
+        //     - e.g. foo\bar\baz => foo\bar\baz
+        // - However, the sequence \" is treated as a literal "
+        //     - e.g. foo\"bar => foo"bar
+        //
+        // But then what if we are given a path that ends with a \? Surrounding
+        // foo\bar\ with " would be "foo\bar\" which would be an unterminated string
+
+        // since it ends on a literal quote. To allow this case the parser treats:
+        //
+        // - \\" as \ followed by the " metachar
+        // - \\\" as \ followed by a literal "
+        // - In general:
+        //     - 2n \ followed by " => n \ followed by the " metachar
+        //     - 2n+1 \ followed by " => n \ followed by a literal "
+        var quoted = "\""
+        var unquoted = arg.unicodeScalars
+
+        while !unquoted.isEmpty {
+            guard let firstNonBackslash = unquoted.firstIndex(where: { $0 != "\\" }) else {
+                // String ends with a backslash e.g. foo\bar\, escape all the backslashes
+                // then add the metachar " below
+                let backslashCount = unquoted.count
+                quoted.append(String(repeating: "\\", count: backslashCount * 2))
+                break
+            }
+            let backslashCount = unquoted.distance(from: unquoted.startIndex, to: firstNonBackslash)
+            if unquoted[firstNonBackslash] == "\"" {
+                // This is  a string of \ followed by a " e.g. foo\"bar. Escape the
+                // backslashes and the quote
+                quoted.append(String(repeating: "\\", count: backslashCount * 2 + 1))
+                quoted.append(String(unquoted[firstNonBackslash]))
+            } else {
+                // These are just literal backslashes
+                quoted.append(String(repeating: "\\", count: backslashCount))
+                quoted.append(String(unquoted[firstNonBackslash]))
+            }
+            // Drop the backslashes and the following character
+            unquoted.removeFirst(backslashCount + 1)
+        }
+        quoted.append("\"")
+        return quoted
     }
 
     private static func pathAccessible(_ path: String) -> Bool {
@@ -1326,6 +1467,21 @@ extension Configuration {
             let attrs = GetFileAttributesW($0)
             return attrs != INVALID_FILE_ATTRIBUTES
         }
+    }
+}
+
+private extension String {
+    // A NUL truncates the command-line string and CR/LF can split it
+    // into multiple commands. None can be safely escaped for `cmd.exe`,
+    // so reject them rather than silently truncate (matching the
+    // fail-closed behavior other runtimes adopted).
+    func containsCommandLineControlCharacters() -> Bool {
+        for scalar in self.unicodeScalars {
+            if scalar == "\u{0}" || scalar == "\r" || scalar == "\n" {
+                return true
+            }
+        }
+        return false
     }
 }
 
@@ -1467,6 +1623,22 @@ extension String {
     internal func hasExtension() -> Bool {
         let components = self.split(separator: ".")
         return components.count > 1 && components.last?.count == 3
+    }
+
+    /// Returns `true` if this path names a Windows batch file (`.bat` or
+    /// `.cmd`), which `CreateProcessW` executes by spawning `cmd.exe`.
+    ///
+    /// Trailing spaces and dots are ignored first, because Windows strips them
+    /// when resolving a path: `deploy.bat. .` still runs as a batch file. Not
+    /// accounting for this was the bypass behind CVE-2024-43402:
+    /// https://blog.rust-lang.org/2024/09/04/cve-2024-43402/
+    internal var isWindowsBatchFile: Bool {
+        var end = self[...]
+        while let last = end.last, last == " " || last == "." {
+            end = end.dropLast()
+        }
+        let lowercased = end.lowercased()
+        return lowercased.hasSuffix(".bat") || lowercased.hasSuffix(".cmd")
     }
 }
 
