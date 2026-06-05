@@ -62,7 +62,7 @@ final class AsyncIO: @unchecked Sendable {
         else {
             let error: SubprocessError = .asyncIOFailed(
                 reason: "CreateIoCompletionPort failed",
-                underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
+                underlyingError: SubprocessError.WindowsError(win32Error: GetLastError())
             )
             self.ioCompletionPort = .failure(error)
             self.monitorThread = .failure(error)
@@ -116,7 +116,7 @@ final class AsyncIO: @unchecked Sendable {
                         } else {
                             let error: SubprocessError = .asyncIOFailed(
                                 reason: "GetQueuedCompletionStatus failed",
-                                underlyingError: SubprocessError.WindowsError(rawValue: lastError)
+                                underlyingError: SubprocessError.WindowsError(win32Error: lastError)
                             )
                             reportError(error)
                             break
@@ -225,7 +225,7 @@ final class AsyncIO: @unchecked Sendable {
                             _ = storage.removeRegistration(for: completionKey)
                             let error: SubprocessError = .asyncIOFailed(
                                 reason: "CreateIoCompletionPort failed",
-                                underlyingError: SubprocessError.WindowsError(rawValue: capturedError)
+                                underlyingError: SubprocessError.WindowsError(win32Error: capturedError)
                             )
                             return .failed(error)
                         }
@@ -353,7 +353,7 @@ final class AsyncIO: @unchecked Sendable {
             }
             guard lastError == ERROR_IO_PENDING else {
                 let error: SubprocessError = .failedToReadFromProcess(
-                    withUnderlyingError: SubprocessError.WindowsError(rawValue: lastError)
+                    withUnderlyingError: SubprocessError.WindowsError(win32Error: lastError)
                 )
                 throw error
             }
@@ -442,7 +442,7 @@ final class AsyncIO: @unchecked Sendable {
                 let lastError = GetLastError()
                 guard lastError == ERROR_IO_PENDING else {
                     let error: SubprocessError = .failedToWriteToProcess(
-                        withUnderlyingError: SubprocessError.WindowsError(rawValue: lastError)
+                        withUnderlyingError: SubprocessError.WindowsError(win32Error: lastError)
                     )
                     throw error
                 }

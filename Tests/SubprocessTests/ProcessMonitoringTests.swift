@@ -205,7 +205,7 @@ extension SubprocessProcessMonitoringTests {
 
     @Test func testInvalidProcessIdentifier() async throws {
         #if os(Windows)
-        let underlying = SubprocessError.WindowsError(rawValue: DWORD(ERROR_INVALID_PARAMETER))
+        let underlying = SubprocessError.WindowsError(win32Error: DWORD(ERROR_INVALID_PARAMETER))
         let processIdentifier = ProcessIdentifier(
             value: .max,
             processDescriptor: INVALID_HANDLE_VALUE,

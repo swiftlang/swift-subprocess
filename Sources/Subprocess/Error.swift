@@ -225,12 +225,47 @@ extension SubprocessError: CustomStringConvertible, CustomDebugStringConvertible
 #if os(Windows)
 
 extension SubprocessError {
-    /// An error that represents a Windows error code from `GetLastError`.
-    public struct WindowsError: Error, RawRepresentable, Hashable {
-        public let rawValue: DWORD
+    /// Represents an error originating from one of the underlying Windows subsystems.
+    public enum WindowsError: Error, Hashable {
 
-        public init(rawValue: DWORD) {
-            self.rawValue = rawValue
+        /// An error returned by the Windows NT kernel or Native API.
+        ///
+        /// `NTSTATUS` values are typically returned by low-level system functions
+        /// prefixed with `Nt` or `Zw`.
+        case ntStatus(NTSTATUS)
+
+        /// A Win32 subsystem error.
+        ///
+        /// These are the standard `DWORD` error codes typically retrieved by calling
+        /// `GetLastError()` immediately after a Win32 API function fails.
+        case win32(DWORD)
+
+        /// A Component Object Model (COM) or Windows Runtime (WinRT) error.
+        ///
+        /// `HRESULT` values encode the severity, facility, and error code. A negative
+        /// value generally indicates a failure.
+        case hresult(HRESULT)
+
+        /// A C Runtime (CRT) or POSIX-style error.
+        ///
+        /// These are typically retrieved from the thread-local `errno` variable after
+        /// a standard C library function fails.
+        case cRuntime(errno_t)
+
+        public init(ntStatus: NTSTATUS) {
+            self = .ntStatus(ntStatus)
+        }
+
+        public init(win32Error: DWORD) {
+            self = .win32(win32Error)
+        }
+
+        public init(hresult: HRESULT) {
+            self = .hresult(hresult)
+        }
+
+        public init(cRuntimeError: errno_t) {
+            self = .cRuntime(cRuntimeError)
         }
     }
 }

@@ -824,7 +824,7 @@ internal func _safelyClose(_ target: _CloseTarget) throws(SubprocessError) {
             }
             let subprocessError: SubprocessError = .asyncIOFailed(
                 reason: "Failed to close HANDLE",
-                underlyingError: SubprocessError.WindowsError(rawValue: error)
+                underlyingError: SubprocessError.WindowsError(win32Error: error)
             )
 
             throw subprocessError
@@ -1066,7 +1066,7 @@ internal struct CreatedPipe: ~Copyable, Sendable {
                 // Throw all other errors
                 throw .asyncIOFailed(
                     reason: "CreateNamedPipeW failed",
-                    underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
+                    underlyingError: SubprocessError.WindowsError(win32Error: GetLastError())
                 )
             }
 
@@ -1094,7 +1094,7 @@ internal struct CreatedPipe: ~Copyable, Sendable {
             guard let childEnd, childEnd != INVALID_HANDLE_VALUE else {
                 throw .asyncIOFailed(
                     reason: "CreateFileW failed",
-                    underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
+                    underlyingError: SubprocessError.WindowsError(win32Error: GetLastError())
                 )
             }
             switch purpose {
@@ -1287,13 +1287,13 @@ extension HANDLE {
         else {
             throw .asyncIOFailed(
                 reason: "Failed to create pipe",
-                underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
+                underlyingError: SubprocessError.WindowsError(win32Error: GetLastError())
             )
         }
         guard let handle else {
             throw .asyncIOFailed(
                 reason: "Failed to create pipe",
-                underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
+                underlyingError: SubprocessError.WindowsError(win32Error: GetLastError())
             )
         }
         return handle
