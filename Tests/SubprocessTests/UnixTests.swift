@@ -189,13 +189,20 @@ extension SubprocessUnixTests {
             arguments: [
                 "-c",
                 """
-                set -e
-                trap 'echo saw SIGQUIT;' QUIT
-                trap 'echo saw SIGTERM;' TERM
-                trap 'echo saw SIGINT; exit 42;' INT
+                trap 'echo saw SIGQUIT' QUIT
+                trap 'echo saw SIGTERM' TERM
+                trap 'echo saw SIGINT; exit 42' INT
                 echo ready
-                while true; do sleep 0.1; done
-                exit 2
+                # A trapped signal interrupts `wait` immediately, so the handler runs
+                # without waiting for a sleep interval to elapse, unlike a foreground
+                # `sleep`, whose completion (and the trap deferred behind it) can slip
+                # past the teardown window under load. The backgrounded sleep is short
+                # so a signal landing as bash enters the wait is still serviced within
+                # one interval rather than stranding on a long-lived child.
+                while true; do
+                    sleep 0.2 &
+                    wait $!
+                done
                 """,
             ],
             input: .none,
@@ -205,8 +212,8 @@ extension SubprocessUnixTests {
             return try await withThrowingTaskGroup(of: Void.self) { group in
                 // Gate the teardown task on bash having actually installed
                 // its signal traps. The reader signals readiness when it
-                // sees the `ready` marker the script prints after the
-                // `trap` lines.
+                // sees the `ready` marker the script prints once its traps are
+                // installed, just before it begins waiting.
                 let (readyStream, readyContinuation) = AsyncStream.makeStream(of: Void.self)
 
                 group.addTask {
