@@ -534,8 +534,8 @@ extension Configuration {
                         if processDescriptor > 0 {
                             do {
                                 try FileDescriptor(rawValue: processDescriptor).close()
-                            } catch Error {
-                                throw SubprocessError.spawnFailed(withUnderlyingError: error)
+                            } catch {
+                                throw SubprocessError.spawnFailed(withUnderlyingError: error as? SubprocessError.UnderlyingError)
                             }
                         }
                         // Move on to another possible path
