@@ -435,7 +435,8 @@ internal func _setupMonitorSignalHandler() {
 }
 
 private func _unregisterProcessDescriptorAndNotify(_ pidfd: CInt, context: MonitorThreadContext) {
-    let continuations = _processMonitorState.withLock { state -> [CheckedContinuation<Void, any Error>]? in
+    // Remove the continuation
+    let result = _processMonitorState.withLock { state -> (continuations: [CheckedContinuation<Void, any Error>], error: SubprocessError?)? in
         guard case .started(let storage) = state,
             let continuationList = storage.continuations[pidfd]
         else {
@@ -467,32 +468,35 @@ private func _unregisterProcessDescriptorAndNotify(_ pidfd: CInt, context: Monit
             pidfd,
             nil
         )
-        assert(delRC == 0 || errno == ENOENT, "epoll_ctl(DEL) failed unexpectedly: \(errno)")
+
         // The pidfd is intentionally left open here.  It is owned by
         // ProcessIdentifier and will be closed by processIdentifier.close()
         // in the defer in Configuration.swift once monitoring is fully done.
         // Closing it here would free the fd number and allow it to be recycled
         // before that defer runs, causing a close-the-wrong-fd race.
 
-        return continuationList
+        if delRC != 0 && errno != ENOENT {
+            let error = SubprocessError.failedToMonitor(
+                withUnderlyingError: Errno(rawValue: errno)
+            )
+            return (continuationList, error)
+        }
+
+        return (continuationList, nil)
     }
 
-    guard let continuations else {
+    guard let result else {
         return
     }
 
-    // This function is only called because epoll fired an event for this pidfd,
-    // which means the process has definitively exited — monitoring succeeded. Any
-    // failure from the preceding epoll_ctl(DEL) is a cleanup detail, not a
-    // monitoring failure: on older 5.x kernels epoll_ctl(DEL) can return ENOENT
-    // transiently even when the process is dead, and on all kernels the pidfd is
-    // removed from epoll automatically when processIdentifier.close() closes it.
-    // Resuming the continuations with that DEL error would incorrectly signal a
-    // monitoring failure, which triggers onCleanup → SIGKILL against an already-
-    // dead process and would cause Subprocess.run() to throw, cascading task
-    // cancellation to other live processes.
-    for c in continuations {
-        c.resume()
+    if let error = result.error {
+        for c in result.continuations {
+            c.resume(throwing: error)
+        }
+    } else {
+        for c in result.continuations {
+            c.resume()
+        }
     }
 }
 

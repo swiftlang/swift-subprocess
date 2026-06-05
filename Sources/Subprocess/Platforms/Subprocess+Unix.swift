@@ -531,11 +531,11 @@ extension Configuration {
                         // clone3(CLONE_PIDFD) allocates a pidfd before exec runs.
                         // If exec fails we retry with the next candidate path, so
                         // close the pidfd here to avoid leaking it across retries.
-                        if processDescriptor > 0 {
+                        if processDescriptor != .invalidDescriptor {
                             do {
                                 try FileDescriptor(rawValue: processDescriptor).close()
                             } catch {
-                                throw SubprocessError.spawnFailed(withUnderlyingError: error as? SubprocessError.UnderlyingError)
+                                throw SubprocessError.spawnFailed(withUnderlyingError: error as? SubprocessError.UnderlyingError )
                             }
                         }
                         // Move on to another possible path
