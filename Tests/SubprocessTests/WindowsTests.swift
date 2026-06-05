@@ -437,6 +437,139 @@ extension SubprocessWindowsTests {
     }
 }
 
+// MARK: - Batch File Argument Escaping (BatBadBut)
+extension SubprocessWindowsTests {
+    @Test func testIsWindowsBatchFileDetection() {
+        #expect("deploy.bat".isWindowsBatchFile)
+        #expect("DEPLOY.BAT".isWindowsBatchFile)
+        #expect("run.cmd".isWindowsBatchFile)
+        #expect("C:\\scripts\\go.CMD".isWindowsBatchFile)
+        // Windows strips trailing spaces and dots before resolving a path, so
+        // these still name a batch file. Not handling this was the
+        // CVE-2024-43402 bypass of the original BatBadBut fix.
+        #expect("deploy.bat. .".isWindowsBatchFile)
+        #expect("deploy.bat   ".isWindowsBatchFile)
+        #expect("deploy.bat...".isWindowsBatchFile)
+        // Not batch files.
+        #expect(!"tool.exe".isWindowsBatchFile)
+        #expect(!"tool".isWindowsBatchFile)
+        #expect(!"archive.bat.zip".isWindowsBatchFile)
+    }
+
+    @Test func testEscapeBatchFileArgument() throws {
+        // cmd.exe metacharacters are prefixed with `^` so cmd.exe passes them
+        // through literally instead of acting on them.
+        #expect(try Configuration.escapeBatchFileArgument("&calc") == "^&calc")
+        #expect(try Configuration.escapeBatchFileArgument("a&b|c") == "a^&b^|c")
+        #expect(try Configuration.escapeBatchFileArgument("50%") == "50^%")
+        // Arguments with whitespace are quoted (step 1); the quotes are then
+        // themselves `^`-escaped (step 2).
+        #expect(try Configuration.escapeBatchFileArgument("hello world") == "^\"hello world^\"")
+        // An embedded quote: escaped for CommandLineToArgvW (\"), then each
+        // resulting quote is escaped for cmd.exe (^").
+        #expect(try Configuration.escapeBatchFileArgument("a\"b") == "^\"a\\^\"b^\"")
+        // An empty argument is force-quoted so it isn't dropped entirely.
+        #expect(try Configuration.escapeBatchFileArgument("") == "^\"^\"")
+        // Characters that cannot be safely conveyed to cmd.exe are rejected.
+        #expect(throws: SubprocessError.self) {
+            _ = try Configuration.escapeBatchFileArgument("line1\nline2")
+        }
+        #expect(throws: SubprocessError.self) {
+            _ = try Configuration.escapeBatchFileArgument("has\rcarriage")
+        }
+        #expect(throws: SubprocessError.self) {
+            _ = try Configuration.escapeBatchFileArgument("has\u{0}nul")
+        }
+    }
+
+    @Test func testMakeBatchFileCommandLine() throws {
+        #expect(
+            try Configuration.makeBatchFileCommandLine(
+                scriptPath: "C:\\Temp\\noop.bat",
+                arguments: ["&calc"]
+            ) == "cmd.exe /d /e:ON /v:OFF /c \"\"C:\\Temp\\noop.bat\" ^&calc\""
+        )
+        // A script path that would break out of its quote pair is rejected.
+        #expect(throws: SubprocessError.self) {
+            _ = try Configuration.makeBatchFileCommandLine(
+                scriptPath: "C:\\Temp\\trailing\\",
+                arguments: []
+            )
+        }
+        #expect(throws: SubprocessError.self) {
+            _ = try Configuration.makeBatchFileCommandLine(
+                scriptPath: "C:\\Temp\\quo\"te.bat",
+                arguments: []
+            )
+        }
+    }
+
+    /// End-to-end proof that cmd.exe metacharacters in an argument to a real
+    /// `.bat` file are not interpreted by the implicitly-spawned cmd.exe.
+    @Test func testBatchFileArgumentsAreNotInterpretedByCmd() async throws {
+        // A throwaway directory with a batch file that echoes a sentinel and
+        // ignores its arguments. If escaping is correct, none of the payloads
+        // below can spawn the injected `echo` redirection, so no marker file
+        // is ever created and the sentinel is the only output.
+        let workingDirectory = URL.temporaryDirectory
+            .appendingPathComponent("subprocess-batbadbut-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: workingDirectory,
+            withIntermediateDirectories: true
+        )
+        defer {
+            try? FileManager.default.removeItem(at: workingDirectory)
+        }
+
+        let batchURL = workingDirectory.appendingPathComponent("noop.bat")
+        try "@echo off\r\necho RAN\r\nexit /b 0\r\n".write(
+            to: batchURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        let batchPath = FilePath(batchURL._fileSystemPath)
+        let workingDirectoryPath = FilePath(workingDirectory._fileSystemPath)
+
+        // Each payload exercises a different cmd.exe injection technique. The
+        // marker file name is unique so a failure points at the payload.
+        let payloads: [(name: String, argument: String, marker: String)] = [
+            ("ampersand", "&echo pwned>inj_amp.txt", "inj_amp.txt"),
+            ("double-ampersand", "x&&echo pwned>inj_damp.txt", "inj_damp.txt"),
+            ("pipe", "x|echo pwned>inj_pipe.txt", "inj_pipe.txt"),
+            ("redirect", "x>inj_redir.txt", "inj_redir.txt"),
+            ("quote-breakout", "\"&echo pwned>inj_quote.txt&\"", "inj_quote.txt"),
+        ]
+
+        for payload in payloads {
+            let result = try await Subprocess.run(
+                .path(batchPath),
+                arguments: [payload.argument],
+                workingDirectory: workingDirectoryPath,
+                output: .string(limit: .max),
+                error: .discarded
+            )
+            // The batch file itself still runs successfully through cmd.exe...
+            #expect(
+                result.terminationStatus.isSuccess,
+                "Batch file did not run for payload \(payload.name)"
+            )
+            // ...and its only output is the sentinel (proving the argument was
+            // not interpreted as a redirection that swallowed the output).
+            #expect(
+                result.standardOutput?.trimmingCharacters(in: .whitespacesAndNewlines) == "RAN",
+                "Unexpected output for payload \(payload.name)"
+            )
+            // No injected command ran.
+            let markerURL = workingDirectory.appendingPathComponent(payload.marker)
+            let injected = FileManager.default.fileExists(atPath: markerURL._fileSystemPath)
+            #expect(!injected, "Command injection occurred for payload \(payload.name)")
+            if injected {
+                try? FileManager.default.removeItem(at: markerURL)
+            }
+        }
+    }
+}
+
 // MARK: - User Utils
 extension SubprocessWindowsTests {
     private func withTemporaryUser(
