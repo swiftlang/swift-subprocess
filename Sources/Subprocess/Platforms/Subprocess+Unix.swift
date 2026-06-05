@@ -532,7 +532,11 @@ extension Configuration {
                         // If exec fails we retry with the next candidate path, so
                         // close the pidfd here to avoid leaking it across retries.
                         if processDescriptor > 0 {
-                            try? FileDescriptor(rawValue: processDescriptor).close()
+                            do {
+                                try FileDescriptor(rawValue: processDescriptor).close()
+                            } catch Error {
+                                throw SubprocessError.spawnFailed(withUnderlyingError: error)
+                            }
                         }
                         // Move on to another possible path
                         continue

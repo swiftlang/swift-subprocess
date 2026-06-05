@@ -447,19 +447,27 @@ private func _unregisterProcessDescriptorAndNotify(_ pidfd: CInt, context: Monit
         state = .started(newStorage)
 
         // Remove this pidfd from epoll to prevent further notifications.
-        // Ignore the return value: if DEL fails (e.g., ENOENT due to a
-        // concurrent removal, or a transient kernel error on older 5.x kernels),
-        // the process has still exited and the continuation must be resumed
-        // normally.  The fd is removed from epoll automatically by the kernel
-        // when processIdentifier.close() closes it, so a failed DEL here is
-        // never permanent.  Propagating a DEL error as a monitoring failure
-        // would trigger onCleanup → SIGKILL against an already-dead process.
-        _ = epoll_ctl(
+        // The return value is intentionally not propagated to the continuation:
+        // epoll firing this event means the process has already exited, so
+        // monitoring succeeded regardless of cleanup outcome.
+        //
+        // ENOENT is silently ignored: it means the fd is not (or is no longer)
+        // in the epoll instance, which is harmless — this occurs on concurrent
+        // removals and on older 5.x kernels where epoll_ctl(DEL) incorrectly
+        // reports ENOENT for pidfds after process exit.  The fd is removed from
+        // epoll automatically by the kernel when processIdentifier.close() closes
+        // it anyway, so a failed DEL is never permanent.
+        //
+        // Any other error (EBADF, EINVAL, …) would indicate a programming error
+        // in fd lifecycle management — e.g. the pidfd was closed prematurely —
+        // and is surfaced as an assertion failure in debug builds.
+        let delRC = epoll_ctl(
             context.epollFileDescriptor,
             EPOLL_CTL_DEL,
             pidfd,
             nil
         )
+        assert(delRC == 0 || errno == ENOENT, "epoll_ctl(DEL) failed unexpectedly: \(errno)")
         // The pidfd is intentionally left open here.  It is owned by
         // ProcessIdentifier and will be closed by processIdentifier.close()
         // in the defer in Configuration.swift once monitoring is fully done.

@@ -118,16 +118,8 @@ public struct Configuration: Sendable {
                         if taskFinishFlag.addOne() == 1 {
                             // The body closure hasn't finished but the child
                             // process has terminated. Cancel all active
-                            // AsyncIO now.  Use try? rather than try: the
-                            // process has already exited, so any epoll DEL
-                            // failure here is harmless — dropped continuations
-                            // will terminate the I/O streams on their own.
-                            // Propagating this error as monitorError would
-                            // trigger onCleanup → SIGKILL on an already-dead
-                            // process, and if Subprocess.run() then throws,
-                            // the caller's task group cascades cancellation to
-                            // other live processes.
-                            try? AsyncIO.shared.cancelAsyncIO(for: processIdentifier)
+                            // AsyncIO now.
+                            try AsyncIO.shared.cancelAsyncIO(for: processIdentifier)
                         }
                         return nil
                     } catch {
