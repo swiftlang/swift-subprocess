@@ -533,6 +533,16 @@ extension Configuration {
                 // Spawn error
                 if spawnError != 0 {
                     if [ENOENT, EACCES, ENOTDIR].contains(spawnError) {
+                        // clone3(CLONE_PIDFD) allocates a pidfd before exec runs.
+                        // If exec fails we retry with the next candidate path, so
+                        // close the pidfd here to avoid leaking it across retries.
+                        if processDescriptor != .invalidDescriptor {
+                            do {
+                                try FileDescriptor(rawValue: processDescriptor).close()
+                            } catch {
+                                throw SubprocessError.spawnFailed(withUnderlyingError: error as? SubprocessError.UnderlyingError)
+                            }
+                        }
                         // Move on to another possible path
                         continue
                     }

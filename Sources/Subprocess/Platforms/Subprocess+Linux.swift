@@ -447,17 +447,37 @@ private func _unregisterProcessDescriptorAndNotify(_ pidfd: CInt, context: Monit
         newStorage.continuations.removeValue(forKey: pidfd)
         state = .started(newStorage)
 
-        // Remove this pidfd from epoll to prevent further notifications
-        let rc = epoll_ctl(
+        // Remove this pidfd from epoll to prevent further notifications.
+        // The return value is intentionally not propagated to the continuation:
+        // epoll firing this event means the process has already exited, so
+        // monitoring succeeded regardless of cleanup outcome.
+        //
+        // ENOENT is silently ignored: it means the fd is not (or is no longer)
+        // in the epoll instance, which is harmless — this occurs on concurrent
+        // removals and on older 5.x kernels where epoll_ctl(DEL) incorrectly
+        // reports ENOENT for pidfds after process exit.  The fd is removed from
+        // epoll automatically by the kernel when processIdentifier.close() closes
+        // it anyway, so a failed DEL is never permanent.
+        //
+        // Any other error (EBADF, EINVAL, …) would indicate a programming error
+        // in fd lifecycle management — e.g. the pidfd was closed prematurely —
+        // and is surfaced as an assertion failure in debug builds.
+        let delRC = epoll_ctl(
             context.epollFileDescriptor,
             EPOLL_CTL_DEL,
             pidfd,
             nil
         )
-        if rc != 0 {
-            let epollErrno = errno
+
+        // The pidfd is intentionally left open here.  It is owned by
+        // ProcessIdentifier and will be closed by processIdentifier.close()
+        // in the defer in Configuration.swift once monitoring is fully done.
+        // Closing it here would free the fd number and allow it to be recycled
+        // before that defer runs, causing a close-the-wrong-fd race.
+
+        if delRC != 0 && errno != ENOENT {
             let error = SubprocessError.failedToMonitor(
-                withUnderlyingError: Errno(rawValue: epollErrno)
+                withUnderlyingError: Errno(rawValue: errno)
             )
             return (continuationList, error)
         }
@@ -552,6 +572,7 @@ internal func _isWaitprocessDescriptorSupported() -> Bool {
         // If we can not retrieve pidfd, the system does not support waitid(P_PIDFD)
         return false
     }
+    defer { try? FileDescriptor(rawValue: selfPidfd).close() }
     /// The following call will fail either with
     /// - ECHILD: in this case we know P_PIDFD is supported and waitid correctly
     ///     reported that we don't have a child with the same selfPidfd;

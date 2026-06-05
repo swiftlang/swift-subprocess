@@ -78,6 +78,14 @@ int _was_process_suspended(int status) {
     return WIFSTOPPED(status);
 }
 
+uint64_t _subprocess_nofile_soft_limit(void) {
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_NOFILE, &rl) != 0) {
+        return 0;
+    }
+    return (uint64_t)rl.rlim_cur;
+}
+
 int _subprocess_pthread_create(
     pthread_t * _Nonnull ptr,
     pthread_attr_t const * _Nullable attr,
@@ -584,6 +592,7 @@ int _subprocess_fork_exec(
     if (rc != 0) {
         close(pipefd[0]);
         close(pipefd[1]);
+        pthread_mutex_unlock(&_subprocess_fork_lock);
         return errno;
     }
 
@@ -602,6 +611,7 @@ int _subprocess_fork_exec(
             // Report all other errors
             close(pipefd[0]);
             close(pipefd[1]);
+            pthread_mutex_unlock(&_subprocess_fork_lock);
             return errno;
         }
     }
@@ -610,6 +620,7 @@ int _subprocess_fork_exec(
         // Fork failed
         close(pipefd[0]);
         close(pipefd[1]);
+        pthread_mutex_unlock(&_subprocess_fork_lock);
         return errno;
     }
 
@@ -765,6 +776,7 @@ int _subprocess_fork_exec(
         // Restore old signmask
         rc = pthread_sigmask(SIG_SETMASK, &old_sigmask, NULL);
         if (rc != 0) {
+            pthread_mutex_unlock(&_subprocess_fork_lock);
             reap_child_process_and_return_errno;
         }
 

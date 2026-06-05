@@ -17,6 +17,7 @@
 #if !TARGET_OS_WINDOWS
 #include <pthread.h>
 #include <unistd.h>
+#include <sys/resource.h>
 
 #if _POSIX_SPAWN
 #include <spawn.h>
@@ -94,6 +95,11 @@ int _get_exit_code(int status);
 int _was_process_signaled(int status);
 int _get_signal_code(int status);
 int _was_process_suspended(int status);
+
+/// Returns the soft RLIMIT_NOFILE value for the current process, or 0 on
+/// error.  Implemented in C so that RLIMIT_NOFILE always resolves to the
+/// correct type regardless of how the Swift Glibc/Darwin overlay imports it.
+uint64_t _subprocess_nofile_soft_limit(void);
 
 void _subprocess_lock_environ(void);
 void _subprocess_unlock_environ(void);

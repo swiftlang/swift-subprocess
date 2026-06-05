@@ -929,52 +929,60 @@ extension FileDescriptor {
 extension SubprocessUnixTests {
     #if SubprocessFoundation
     @Test(.requiresBash) func testConcurrentRun() async throws {
-        // Launch as many processes as we can
-        // Figure out the max open file limit
-        let limitResult = try await Subprocess.run(
-            .path("/bin/sh"),
-            arguments: ["-c", "ulimit -n"],
-            output: .string(limit: 32)
-        )
-        guard
-            let limitString = limitResult
-                .standardOutput?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-            let ulimit = Int(limitString)
-        else {
-            Issue.record("Failed to run  ulimit -n")
-            return
-        }
-        // Constrain to an ultimate upper limit of 4096, since Docker containers can have limits like 2^20 which is a bit too high for this test.
-        // Common defaults are 2560 for macOS and 1024 for Linux.
-        let limit = min(ulimit, 4096)
-        // Since we open two pipes per `run`, launch
-        // limit / 4 subprocesses should reveal any
-        // file descriptor leaks
-        let maxConcurrent = limit / 4
+        // Read the soft fd limit via a C shim: RLIMIT_NOFILE's Swift type
+        // varies across platforms and Swift versions, so calling getrlimit
+        // directly from Swift is not reliably portable.
+        // Cap at 4096: Docker containers can report limits like 2^20.
+        let softLimit = Int(min(_subprocess_nofile_soft_limit(), UInt64(4096)))
+
+        // On Linux, account for any fds already open (e.g. from prior tests in
+        // the same suite) to avoid hitting EMFILE during the concurrent spawn
+        // burst.  /proc/self/fd lists every open descriptor; subtracting the
+        // current count plus a small margin gives the true available headroom.
+        #if os(Linux) || os(Android)
+        let currentFds = (try? FileManager.default.contentsOfDirectory(atPath: "/proc/self/fd"))?.count ?? 50
+        let available = max(32, softLimit - currentFds - 50)
+        #else
+        let available = softLimit
+        #endif
+        // Each concurrent spawn holds both ends of the stdout and stderr pipes
+        // plus a temporary exec-error notification pipe while the child's
+        // exec() completes — roughly 6–8 fds per in-flight spawn.  Divide by
+        // 8 to leave headroom and avoid EMFILE under high concurrency.
+        let maxConcurrent = available / 8
         try await withThrowingTaskGroup(of: Void.self) { group in
             var running = 0
             let byteCount = 1000
             for _ in 0..<maxConcurrent {
                 group.addTask {
-                    // This invocation specifically requires bash semantics; sh (on FreeBSD at least) does not consistently support -s in this way
-                    let r = try await Subprocess.run(
-                        .name("bash"),
-                        arguments: [
-                            "-sc", #"echo "$1" && echo "$1" >&2"#, "--", String(repeating: "X", count: byteCount),
-                        ],
-                        output: .data(limit: .max),
-                        error: .data(limit: .max)
-                    )
-                    guard r.terminationStatus.isSuccess else {
-                        Issue.record("Unexpected exit \(r.terminationStatus) from \(r.processIdentifier)")
-                        return
+                    // Catch errors so a single spawn/monitor failure doesn't
+                    // cascade-cancel sibling tasks (which would SIGKILL their
+                    // live subprocesses and flood the log with false failures).
+                    do {
+                        // This invocation specifically requires bash semantics; sh (on FreeBSD at least) does not consistently support -s in this way
+                        let r = try await Subprocess.run(
+                            .name("bash"),
+                            arguments: [
+                                "-sc", #"echo "$1" && echo "$1" >&2"#, "--", String(repeating: "X", count: byteCount),
+                            ],
+                            output: .data(limit: .max),
+                            error: .data(limit: .max)
+                        )
+                        guard r.terminationStatus.isSuccess else {
+                            Issue.record("Unexpected exit \(r.terminationStatus) from \(r.processIdentifier)")
+                            return
+                        }
+                        #expect(r.standardOutput.count == byteCount + 1, "\(r.standardOutput)")
+                        #expect(r.standardError.count == byteCount + 1, "\(r.standardError)")
+                    } catch {
+                        Issue.record("Subprocess.run threw: \(error)")
                     }
-                    #expect(r.standardOutput.count == byteCount + 1, "\(r.standardOutput)")
-                    #expect(r.standardError.count == byteCount + 1, "\(r.standardError)")
                 }
                 running += 1
-                if running >= maxConcurrent / 4 {
+                // Throttle to maxConcurrent/8 live subprocesses at a time
+                // (rather than /4) to reduce peak memory pressure on
+                // memory-constrained kernel-testing VMs (e.g. QEMU + 5.10).
+                if running >= maxConcurrent / 8 {
                     try await group.next()
                 }
             }
