@@ -61,7 +61,7 @@ extension Configuration {
         // user wants to override executable path in arguments, we have to use `lpApplicationName`
         // to specify the executable path. In this case, manually loop over all possible paths.
         let possibleExecutablePaths: _OrderedSet<String>
-        if _fastPath(self.arguments.executablePathOverride == nil) {
+        if _fastPath(self.arguments._executablePathOverride == nil) {
             // Fast path: we can rely on `CreateProcessW`'s built in Path searching
             switch self.executable.storage {
             case .executable(let executable):
@@ -1004,7 +1004,7 @@ extension Configuration {
         // Omit applicationName (and therefore rely on commandAndArgs
         // for executable path) if we don't need to override arg0
         return (
-            applicationName: self.arguments.executablePathOverride == nil ? nil : applicationName,
+            applicationName: self.arguments._executablePathOverride == nil ? nil : applicationName,
             commandAndArgs: commandAndArgs,
             environment: environmentString,
             intendedWorkingDir: self.workingDirectory?.string
@@ -1249,7 +1249,7 @@ extension Configuration {
             return stringValue
         }
 
-        if case .string(let overrideName) = self.arguments.executablePathOverride {
+        if case .string(let overrideName) = self.arguments._executablePathOverride {
             // Use the override as argument0 and set applicationName
             args.insert(overrideName, at: 0)
         } else {

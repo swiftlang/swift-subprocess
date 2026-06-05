@@ -361,6 +361,33 @@ extension Executable: CustomStringConvertible, CustomDebugStringConvertible {
     }
 }
 
+// MARK: - Executable Introspection
+
+extension Executable {
+    /// The public representation of an executable's contents.
+    ///
+    /// Use this to introspect how an ``Executable`` was constructed (for
+    /// example, to verify in tests that a configuration builder produced the
+    /// expected executable reference without spawning a subprocess).
+    @frozen
+    public enum Representation: Sendable, Hashable {
+        /// The executable is referenced by name and resolved against `PATH`.
+        case name(String)
+        /// The executable is referenced by an absolute or relative file path.
+        case path(FilePath)
+    }
+
+    /// The contents of this executable.
+    public var representation: Representation {
+        switch self.storage {
+        case .executable(let name):
+            return .name(name)
+        case .path(let path):
+            return .path(path)
+        }
+    }
+}
+
 // MARK: - Arguments
 
 /// A collection of arguments to pass to the subprocess.
@@ -369,17 +396,17 @@ public struct Arguments: Sendable, ExpressibleByArrayLiteral, Hashable {
     public typealias ArrayLiteralElement = String
 
     internal let storage: [StringOrRawBytes]
-    internal let executablePathOverride: StringOrRawBytes?
+    internal let _executablePathOverride: StringOrRawBytes?
 
     /// Creates an arguments value from the given literal values.
     public init(arrayLiteral elements: String...) {
         self.storage = elements.map { .string($0) }
-        self.executablePathOverride = nil
+        self._executablePathOverride = nil
     }
     /// Creates an arguments value from the given array.
     public init(_ array: [String]) {
         self.storage = array.map { .string($0) }
-        self.executablePathOverride = nil
+        self._executablePathOverride = nil
     }
 
     /// Creates an ``Arguments`` value using the given values, but
@@ -393,9 +420,9 @@ public struct Arguments: Sendable, ExpressibleByArrayLiteral, Hashable {
     public init(executablePathOverride: String?, remainingValues: [String]) {
         self.storage = remainingValues.map { .string($0) }
         if let executablePathOverride = executablePathOverride {
-            self.executablePathOverride = .string(executablePathOverride)
+            self._executablePathOverride = .string(executablePathOverride)
         } else {
-            self.executablePathOverride = nil
+            self._executablePathOverride = nil
         }
     }
     #if !os(Windows) // Windows does not support non-unicode arguments
@@ -410,15 +437,15 @@ public struct Arguments: Sendable, ExpressibleByArrayLiteral, Hashable {
     public init(executablePathOverride: [UInt8]?, remainingValues: [[UInt8]]) {
         self.storage = remainingValues.map { .rawBytes($0) }
         if let override = executablePathOverride {
-            self.executablePathOverride = .rawBytes(override)
+            self._executablePathOverride = .rawBytes(override)
         } else {
-            self.executablePathOverride = nil
+            self._executablePathOverride = nil
         }
     }
     /// Creates an arguments value from the array you provide.
     public init(_ array: [[UInt8]]) {
         self.storage = array.map { .rawBytes($0) }
-        self.executablePathOverride = nil
+        self._executablePathOverride = nil
     }
     #endif
 }
@@ -428,7 +455,7 @@ extension Arguments: CustomStringConvertible, CustomDebugStringConvertible {
     public var description: String {
         var result: [String] = self.storage.map(\.description)
 
-        if let override = self.executablePathOverride {
+        if let override = self._executablePathOverride {
             result.insert("override\(override.description)", at: 0)
         }
         return result.description
@@ -436,6 +463,64 @@ extension Arguments: CustomStringConvertible, CustomDebugStringConvertible {
 
     /// A debug-oriented textual representation of the arguments.
     public var debugDescription: String { return self.description }
+}
+
+// MARK: - Arguments Introspection
+
+extension Arguments {
+    /// A single argument value, preserving the form in which it was supplied.
+    ///
+    /// On POSIX platforms, arguments may be constructed from non-Unicode
+    /// raw bytes; on Windows, only `String` values are representable.
+    @frozen
+    public enum Value: Sendable, Hashable {
+        /// A string argument.
+        case string(String)
+        #if !os(Windows)
+        /// A raw-bytes argument.
+        ///
+        /// - Note: This case is only available on POSIX platforms.
+        case rawBytes([UInt8])
+        #endif
+    }
+
+    /// The argument that overrides the executable path as `argv[0]`, or `nil`
+    /// if the executable path is used unchanged.
+    ///
+    /// This corresponds to the `executablePathOverride` parameter passed to
+    /// the initializer, and is useful for verifying configuration in tests
+    /// without spawning a subprocess.
+    public var executablePathOverride: Value? {
+        self._executablePathOverride.map(Value.init)
+    }
+}
+
+extension Arguments: RandomAccessCollection {
+    public typealias Element = Value
+    public typealias Index = Int
+
+    public var startIndex: Int { self.storage.startIndex }
+    public var endIndex: Int { self.storage.endIndex }
+
+    public subscript(position: Int) -> Value {
+        Value(self.storage[position])
+    }
+}
+
+extension Arguments.Value {
+    internal init(_ storage: StringOrRawBytes) {
+        switch storage {
+        case .string(let s):
+            self = .string(s)
+        case .rawBytes(let b):
+            #if os(Windows)
+            // Unreachable: The Windows public API cannot construct rawBytes arguments.
+            fatalError("Internal inconsistency: rawBytes argument on Windows")
+            #else
+            self = .rawBytes(b)
+            #endif
+        }
+    }
 }
 
 // MARK: - Environment
@@ -576,7 +661,8 @@ extension Environment: CustomStringConvertible, CustomDebugStringConvertible {
 }
 
 extension Environment.Key {
-    package static let path: Self = "PATH"
+    /// The well-known key for the `PATH` environment variable.
+    public static let path: Self = "PATH"
 }
 
 extension Environment.Key: CodingKeyRepresentable {}
@@ -637,6 +723,50 @@ extension Environment.Key: RawRepresentable {
 }
 
 extension Environment.Key: Sendable {}
+
+// MARK: - Environment Introspection
+
+extension Environment {
+    /// The public representation of an environment's contents.
+    ///
+    /// Use this to introspect how an ``Environment`` was constructed (for
+    /// example, to verify in tests that a configuration builder produced
+    /// the expected inherited overrides or custom values without spawning a
+    /// subprocess).
+    @nonexhaustive
+    public enum Representation: Sendable, Hashable {
+        /// The environment inherits from the current process, with the given
+        /// updates applied.
+        ///
+        /// A `nil` value for a key indicates that the key is unset relative to
+        /// the inherited environment, rather than being set to an empty value.
+        case inherited(updates: [Key: String?])
+        /// The environment uses the given custom values, with no inheritance
+        /// from the current process.
+        case custom([Key: String])
+        #if !os(Windows)
+        /// The environment uses the given raw bytes, with no inheritance from
+        /// the current process.
+        ///
+        /// - Note: This case is only available on POSIX platforms.
+        case rawBytes([[UInt8]])
+        #endif
+    }
+
+    /// The contents of this environment.
+    public var representation: Representation {
+        switch self.config {
+        case .inherit(let updates):
+            return .inherited(updates: updates)
+        case .custom(let values):
+            return .custom(values)
+        #if !os(Windows)
+        case .rawBytes(let bytes):
+            return .rawBytes(bytes)
+        #endif
+        }
+    }
+}
 
 // MARK: - TerminationStatus
 

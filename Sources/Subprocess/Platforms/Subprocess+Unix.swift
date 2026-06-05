@@ -263,7 +263,7 @@ extension Arguments {
     internal func createArgs(withExecutablePath executablePath: String) -> [UnsafeMutablePointer<CChar>?] {
         var argv: [UnsafeMutablePointer<CChar>?] = self.storage.map { $0.createRawBytes() }
         // argv[0] = executable path
-        if let override = self.executablePathOverride {
+        if let override = self._executablePathOverride {
             argv.insert(override.createRawBytes(), at: 0)
         } else {
             argv.insert(strdup(executablePath), at: 0)
