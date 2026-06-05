@@ -300,7 +300,7 @@ extension SubprocessWindowsTests {
             // Nest the child inside a user-supplied Job Object. Subprocess
             // already assigned it to its internal job. This nests further.
             guard AssignProcessToJobObject(hJob, execution.processIdentifier.processDescriptor) else {
-                throw SubprocessError.WindowsError(rawValue: GetLastError())
+                throw SubprocessError.WindowsError(win32Error: GetLastError())
             }
         }
         #expect(result.terminationStatus.isSuccess)
@@ -546,7 +546,7 @@ extension SubprocessWindowsTests {
         guard let snapshot = CreateToolhelp32Snapshot(DWORD(TH32CS_SNAPPROCESS), 0),
             snapshot != INVALID_HANDLE_VALUE
         else {
-            throw SubprocessError.WindowsError(rawValue: GetLastError())
+            throw SubprocessError.WindowsError(win32Error: GetLastError())
         }
         defer { _ = CloseHandle(snapshot) }
 

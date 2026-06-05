@@ -79,7 +79,7 @@ extension SubprocessIntegrationTests {
 
     @Test func testExecutableNamedCannotResolve() async throws {
         #if os(Windows)
-        let underlying = SubprocessError.WindowsError(rawValue: DWORD(ERROR_FILE_NOT_FOUND))
+        let underlying = SubprocessError.WindowsError(win32Error: DWORD(ERROR_FILE_NOT_FOUND))
         #else
         let underlying = Errno(rawValue: ENOENT)
         #endif
@@ -126,7 +126,7 @@ extension SubprocessIntegrationTests {
         #if os(Windows)
         let fakePath = FilePath("D:\\does\\not\\exist")
         let underlying = SubprocessError.WindowsError(
-            rawValue: DWORD(ERROR_FILE_NOT_FOUND)
+            win32Error: DWORD(ERROR_FILE_NOT_FOUND)
         )
         #else
         let fakePath = FilePath("/usr/bin/do-not-exist")
@@ -732,7 +732,7 @@ extension SubprocessIntegrationTests {
             arguments: ["/c", "cd"],
             workingDirectory: invalidPath
         )
-        let underlying = SubprocessError.WindowsError(rawValue: DWORD(ERROR_DIRECTORY))
+        let underlying = SubprocessError.WindowsError(win32Error: DWORD(ERROR_DIRECTORY))
         let expectedError: SubprocessError = .failedToChangeWorkingDirectory(
             #"X:\Does\Not\Exist"#, underlyingError: underlying
         )
@@ -3002,7 +3002,7 @@ extension SubprocessIntegrationTests {
         else {
             throw SubprocessError.asyncIOFailed(
                 reason: "Failed to create pipe",
-                underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
+                underlyingError: SubprocessError.WindowsError(win32Error: GetLastError())
             )
         }
         SetHandleInformation(readHandle, HANDLE_FLAG_INHERIT, 0)
@@ -3032,13 +3032,13 @@ extension SubprocessIntegrationTests {
                 else {
                     throw SubprocessError.asyncIOFailed(
                         reason: "Failed to create pipe",
-                        underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
+                        underlyingError: SubprocessError.WindowsError(win32Error: GetLastError())
                     )
                 }
                 guard let writeEndHandle else {
                     throw SubprocessError.asyncIOFailed(
                         reason: "Failed to create pipe",
-                        underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
+                        underlyingError: SubprocessError.WindowsError(win32Error: GetLastError())
                     )
                 }
                 CloseHandle(pipe.writeEnd) // No longer need the original
@@ -3085,13 +3085,13 @@ extension SubprocessIntegrationTests {
                 else {
                     throw SubprocessError.asyncIOFailed(
                         reason: "Failed to create pipe",
-                        underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
+                        underlyingError: SubprocessError.WindowsError(win32Error: GetLastError())
                     )
                 }
                 guard let readEndHandle else {
                     throw SubprocessError.asyncIOFailed(
                         reason: "Failed to create pipe",
-                        underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
+                        underlyingError: SubprocessError.WindowsError(win32Error: GetLastError())
                     )
                 }
                 CloseHandle(pipe.readEnd) // No longer need the original

@@ -877,7 +877,7 @@ BOOL _subprocess_windows_send_vm_close(
     return FALSE;
 }
 
-unsigned int _subprocess_windows_get_errno(void) {
+errno_t _subprocess_windows_get_errno(void) {
     return errno;
 }
 

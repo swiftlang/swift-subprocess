@@ -307,7 +307,7 @@ internal func begin_thread_x(
     else {
         // _beginthreadex uses errno instead of GetLastError()
         let capturedError = _subprocess_windows_get_errno()
-        throw SubprocessError.WindowsError(rawValue: DWORD(capturedError))
+        throw SubprocessError.WindowsError(cRuntimeError: capturedError)
     }
 
     return threadHandle

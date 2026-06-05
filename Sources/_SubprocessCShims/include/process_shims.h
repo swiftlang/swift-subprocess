@@ -144,7 +144,7 @@ typedef int BOOL;
 #endif
 
 BOOL _subprocess_windows_send_vm_close(DWORD pid);
-unsigned int _subprocess_windows_get_errno(void);
+errno_t _subprocess_windows_get_errno(void);
 
 /// Get the value of `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`.
 ///

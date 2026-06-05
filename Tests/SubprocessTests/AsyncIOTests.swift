@@ -170,7 +170,7 @@ extension SubprocessAsyncIOTests {
             }
 
             #if os(Windows)
-            #expect(subprocessError.underlyingError == SubprocessError.WindowsError(rawValue: DWORD(ERROR_INVALID_HANDLE)))
+            #expect(subprocessError.underlyingError == SubprocessError.WindowsError(win32Error: DWORD(ERROR_INVALID_HANDLE)))
             #elseif canImport(Darwin) || os(FreeBSD) || os(OpenBSD)
             #expect(subprocessError.underlyingError == Errno(rawValue: ECANCELED))
             #else
@@ -208,7 +208,7 @@ extension SubprocessAsyncIOTests {
 
             #if os(Windows)
             #expect(
-                subprocessError.underlyingError == SubprocessError.WindowsError(rawValue: DWORD(ERROR_INVALID_HANDLE)))
+                subprocessError.underlyingError == SubprocessError.WindowsError(win32Error: DWORD(ERROR_INVALID_HANDLE)))
             #elseif canImport(Darwin) || os(FreeBSD) || os(OpenBSD)
             #expect(
                 subprocessError.underlyingError == Errno(rawValue: ECANCELED)

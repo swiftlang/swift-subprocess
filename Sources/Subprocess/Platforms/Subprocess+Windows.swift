@@ -228,12 +228,12 @@ extension Configuration {
                 if windowsError == ERROR_DIRECTORY {
                     throw SubprocessError.failedToChangeWorkingDirectory(
                         self.workingDirectory?.string,
-                        underlyingError: SubprocessError.WindowsError(rawValue: windowsError)
+                        underlyingError: SubprocessError.WindowsError(win32Error: windowsError)
                     )
                 }
 
                 throw SubprocessError.spawnFailed(
-                    withUnderlyingError: SubprocessError.WindowsError(rawValue: windowsError)
+                    withUnderlyingError: SubprocessError.WindowsError(win32Error: windowsError)
                 )
             }
 
@@ -302,7 +302,7 @@ extension Configuration {
         // If we reached this point, all possible executable paths have failed
         throw SubprocessError.executableNotFound(
             self.executable.description,
-            underlyingError: SubprocessError.WindowsError(rawValue: DWORD(ERROR_FILE_NOT_FOUND))
+            underlyingError: SubprocessError.WindowsError(win32Error: DWORD(ERROR_FILE_NOT_FOUND))
         )
     }
 }
@@ -561,7 +561,7 @@ internal func waitForProcessTermination(
                 )
             else {
                 let error: SubprocessError = .failedToMonitor(
-                    withUnderlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
+                    withUnderlyingError: SubprocessError.WindowsError(win32Error: GetLastError())
                 )
                 continuation.resume(
                     throwing: error
@@ -582,7 +582,7 @@ internal func reapProcess(
     var status: DWORD = 0
     guard GetExitCodeProcess(processIdentifier.processDescriptor, &status) else {
         throw SubprocessError.failedToMonitor(
-            withUnderlyingError: .init(rawValue: GetLastError())
+            withUnderlyingError: .init(win32Error: GetLastError())
         )
     }
 
@@ -608,14 +608,14 @@ extension Execution {
             guard TerminateJobObject(self.processIdentifier.jobHandle, exitCode) else {
                 throw SubprocessError.processControlFailed(
                     .terminate,
-                    underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
+                    underlyingError: SubprocessError.WindowsError(win32Error: GetLastError())
                 )
             }
         } else {
             guard TerminateProcess(self.processIdentifier.processDescriptor, exitCode) else {
                 throw SubprocessError.processControlFailed(
                     .terminate,
-                    underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
+                    underlyingError: SubprocessError.WindowsError(win32Error: GetLastError())
                 )
             }
         }
@@ -634,13 +634,13 @@ extension Execution {
         guard let NTSuspendProcess = NTSuspendProcess else {
             throw SubprocessError.processControlFailed(
                 .suspend,
-                underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
+                underlyingError: SubprocessError.WindowsError(win32Error: GetLastError())
             )
         }
         guard NTSuspendProcess(self.processIdentifier.processDescriptor) >= 0 else {
             throw SubprocessError.processControlFailed(
                 .suspend,
-                underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
+                underlyingError: SubprocessError.WindowsError(win32Error: GetLastError())
             )
         }
     }
@@ -658,13 +658,13 @@ extension Execution {
         guard let NTResumeProcess = NTResumeProcess else {
             throw SubprocessError.processControlFailed(
                 .resume,
-                underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
+                underlyingError: SubprocessError.WindowsError(win32Error: GetLastError())
             )
         }
         guard NTResumeProcess(self.processIdentifier.processDescriptor) >= 0 else {
             throw SubprocessError.processControlFailed(
                 .resume,
-                underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
+                underlyingError: SubprocessError.WindowsError(win32Error: GetLastError())
             )
         }
     }
@@ -695,7 +695,7 @@ extension Executable {
                     guard pathLength > 0 else {
                         throw SubprocessError.executableNotFound(
                             executableName,
-                            underlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
+                            underlyingError: SubprocessError.WindowsError(win32Error: GetLastError())
                         )
                     }
                     return withUnsafeTemporaryAllocation(
@@ -929,13 +929,13 @@ public struct ProcessIdentifier: Sendable, Hashable {
 
     internal func close() {
         guard CloseHandle(self.threadHandle) else {
-            fatalError("Failed to close thread HANDLE: \(SubprocessError.WindowsError(rawValue: GetLastError()))")
+            fatalError("Failed to close thread HANDLE: \(SubprocessError.WindowsError(win32Error: GetLastError()))")
         }
         guard CloseHandle(self.processDescriptor) else {
-            fatalError("Failed to close process HANDLE: \(SubprocessError.WindowsError(rawValue: GetLastError()))")
+            fatalError("Failed to close process HANDLE: \(SubprocessError.WindowsError(win32Error: GetLastError()))")
         }
         guard CloseHandle(self.jobHandle) else {
-            fatalError("Failed to close job HANDLE: \(SubprocessError.WindowsError(rawValue: GetLastError()))")
+            fatalError("Failed to close job HANDLE: \(SubprocessError.WindowsError(win32Error: GetLastError()))")
         }
     }
 }
@@ -1113,7 +1113,7 @@ extension Configuration {
         let attributeList = LPPROC_THREAD_ATTRIBUTE_LIST(attributeListPtr.baseAddress!)
         guard InitializeProcThreadAttributeList(attributeList, 1, 0, &attributeListByteCount) else {
             throw SubprocessError.spawnFailed(
-                withUnderlyingError: SubprocessError.WindowsError(rawValue: GetLastError())
+                withUnderlyingError: SubprocessError.WindowsError(win32Error: GetLastError())
             )
         }
         defer {
@@ -1161,7 +1161,7 @@ extension Configuration {
             jobHandle != INVALID_HANDLE_VALUE
         else {
             throw SubprocessError.spawnFailed(
-                withUnderlyingError: SubprocessError.WindowsError(rawValue: GetLastError()),
+                withUnderlyingError: SubprocessError.WindowsError(win32Error: GetLastError()),
                 reason: "Failed to create Job Object"
             )
         }
@@ -1184,7 +1184,7 @@ extension Configuration {
         // the Job Object before resuming, so it cannot run any user code
         // outside the job.
         guard AssignProcessToJobObject(jobHandle, processInfo.hProcess) else {
-            let assignError = SubprocessError.WindowsError(rawValue: GetLastError())
+            let assignError = SubprocessError.WindowsError(win32Error: GetLastError())
             _ = TerminateProcess(processInfo.hProcess, 1)
             _ = CloseHandle(processInfo.hThread)
             _ = CloseHandle(processInfo.hProcess)
@@ -1211,7 +1211,7 @@ extension Configuration {
         }
 
         guard ResumeThread(processInfo.hThread) != DWORD(bitPattern: -1) else {
-            let resumeError = SubprocessError.WindowsError(rawValue: GetLastError())
+            let resumeError = SubprocessError.WindowsError(win32Error: GetLastError())
             _ = TerminateProcess(processInfo.hProcess, 1)
             _ = CloseHandle(processInfo.hThread)
             _ = CloseHandle(processInfo.hProcess)
@@ -1347,7 +1347,9 @@ extension FileDescriptor {
             guard 0 == _pipe(fds.baseAddress!, 0, _O_BINARY) else {
                 throw SubprocessError.asyncIOFailed(
                     reason: "Failed to create pipe",
-                    underlyingError: nil // FIXME: Errno(rawValue: _subprocess_windows_get_errno())
+                    underlyingError: SubprocessError.WindowsError(
+                        cRuntimeError: _subprocess_windows_get_errno()
+                    )
                 )
             }
         }
@@ -1425,7 +1427,7 @@ extension String {
                 return try withUnsafeTemporaryAllocation(of: WCHAR.self, capacity: Int(dwLength)) { pwszFullPath in
                     guard (1..<dwLength).contains(GetFullPathNameW(pwszPath, DWORD(pwszFullPath.count), pwszFullPath.baseAddress, nil)) else {
                         throw SubprocessError.spawnFailed(
-                            withUnderlyingError: SubprocessError.WindowsError(rawValue: GetLastError()),
+                            withUnderlyingError: SubprocessError.WindowsError(win32Error: GetLastError()),
                             reason: "Invalid Windows Path"
                         )
                     }
@@ -1455,7 +1457,7 @@ extension String {
 
                     throw SubprocessError.spawnFailed(
                         withUnderlyingError: SubprocessError.WindowsError(
-                            rawValue: WIN32_FROM_HRESULT(result)
+                            hresult: result
                         ),
                         reason: "Invalid Windows Path"
                     )
@@ -1528,7 +1530,7 @@ internal func fillNullTerminatedWideStringBuffer(
                     let count = try body(buffer)
                     switch count {
                     case 0:
-                        throw SubprocessError.WindowsError(rawValue: GetLastError())
+                        throw SubprocessError.WindowsError(win32Error: GetLastError())
                     case 1..<DWORD(buffer.count):
                         let result = String(decodingCString: buffer.baseAddress!, as: UTF16.self)
                         assert(result.utf16.count == count, "Parsed UTF-16 count \(result.utf16.count) != reported UTF-16 count \(count)")
@@ -1549,7 +1551,7 @@ internal func fillNullTerminatedWideStringBuffer(
             #endif
         }
     }
-    throw SubprocessError.WindowsError(rawValue: DWORD(ERROR_INSUFFICIENT_BUFFER))
+    throw SubprocessError.WindowsError(win32Error: DWORD(ERROR_INSUFFICIENT_BUFFER))
 }
 
 #endif // canImport(WinSDK)
