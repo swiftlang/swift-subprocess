@@ -1691,36 +1691,42 @@ extension UInt8 {
 internal func fillNullTerminatedWideStringBuffer(
     initialSize: DWORD,
     maxSize: DWORD,
-    _ body: (UnsafeMutableBufferPointer<WCHAR>) throws(SubprocessError.WindowsError) -> DWORD
+    _ body: (UnsafeMutableBufferPointer<WCHAR>) -> DWORD
 ) throws(SubprocessError.WindowsError) -> String {
+    enum FillResult {
+        case filled(String)
+        case insufficient
+        case failed(DWORD)
+    }
     var bufferCount = max(1, min(initialSize, maxSize))
     while bufferCount <= maxSize {
-        do {
-            if let result = try withUnsafeTemporaryAllocation(
-                of: WCHAR.self, capacity: Int(bufferCount),
-                { buffer throws(SubprocessError.WindowsError) in
-                    let count = try body(buffer)
-                    switch count {
-                    case 0:
-                        throw SubprocessError.WindowsError(win32Error: GetLastError())
-                    case 1..<DWORD(buffer.count):
-                        let result = String(decodingCString: buffer.baseAddress!, as: UTF16.self)
-                        assert(result.utf16.count == count, "Parsed UTF-16 count \(result.utf16.count) != reported UTF-16 count \(count)")
-                        return result
-                    default:
-                        bufferCount *= 2
-                        return nil
-                    }
-                })
-            {
-                return result
+        let result: FillResult = withUnsafeTemporaryAllocation(
+            of: WCHAR.self,
+            capacity: Int(bufferCount)
+        ) { buffer in
+            let count = body(buffer)
+            switch count {
+            case 0:
+                return .failed(GetLastError())
+            case 1..<DWORD(buffer.count):
+                // `count` is in-range, so the buffer holds a null-terminated
+                // string of `count` units.
+                return .filled(
+                    String(
+                        decodingCString: buffer.baseAddress!,
+                        as: UTF16.self
+                    ))
+            default:
+                return .insufficient
             }
-        } catch {
-            #if swift(>=6.3)
-            throw error
-            #else
-            throw error as! SubprocessError.WindowsError
-            #endif
+        }
+        switch result {
+        case .filled(let string):
+            return string
+        case .failed(let win32Error):
+            throw SubprocessError.WindowsError(win32Error: win32Error)
+        case .insufficient:
+            bufferCount *= 2
         }
     }
     throw SubprocessError.WindowsError(win32Error: DWORD(ERROR_INSUFFICIENT_BUFFER))
