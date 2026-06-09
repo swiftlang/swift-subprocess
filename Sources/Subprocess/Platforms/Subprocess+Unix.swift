@@ -537,10 +537,10 @@ extension Configuration {
                         // If exec fails we retry with the next candidate path, so
                         // close the pidfd here to avoid leaking it across retries.
                         if processDescriptor != .invalidDescriptor {
-                            do {
-                                try FileDescriptor(rawValue: processDescriptor).close()
+                            do throws(SubprocessError) {
+                                try _safelyClose(.fileDescriptor(FileDescriptor(rawValue: processDescriptor)))
                             } catch {
-                                throw SubprocessError.spawnFailed(withUnderlyingError: error as? SubprocessError.UnderlyingError)
+                                throw SubprocessError.spawnFailed(withUnderlyingError: error.underlyingError)
                             }
                         }
                         // Move on to another possible path
@@ -628,7 +628,7 @@ public struct ProcessIdentifier: Sendable, Hashable {
 
     internal func close() {
         if self.processDescriptor != .invalidDescriptor {
-            try? FileDescriptor(rawValue: self.processDescriptor).close()
+            try? _safelyClose(.fileDescriptor(FileDescriptor(rawValue: self.processDescriptor)))
         }
     }
 }
