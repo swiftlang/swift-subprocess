@@ -66,7 +66,12 @@ public struct Configuration: Sendable {
         self.platformOptions = platformOptions
     }
 
-    internal func run<Result, Input: InputProtocol, Output: OutputProtocol, Error: OutputProtocol>(
+    internal func run<
+        Result: ~Copyable & Sendable,
+        Input: InputProtocol,
+        Output: OutputProtocol,
+        Error: OutputProtocol
+    >(
         input: consuming CreatedPipe,
         as inputType: Input.Type,
         output: consuming CreatedPipe,
@@ -108,9 +113,13 @@ public struct Configuration: Sendable {
             // already finished cleanly and no cancellation is needed.
             let taskFinishFlag = AtomicCounter()
 
-            let (result, monitorError) = try await withThrowingTaskGroup(
+            // The body's result is moved out through this box rather than
+            // returned from the task group since a noncopyable `Result` can't be a
+            // `GroupResult`. The group returns only the (copyable) monitor error.
+            var resultBox: Swift.Result<Result, any Swift.Error>? = nil
+            let monitorError = try await withThrowingTaskGroup(
                 of: SubprocessError?.self,
-                returning: (Swift.Result<Result, any Swift.Error>, SubprocessError?).self
+                returning: SubprocessError?.self
             ) { group in
                 group.addTask {
                     do throws(SubprocessError) {
@@ -132,12 +141,11 @@ public struct Configuration: Sendable {
                 let outputIO = spawnResults.outputReadEnd()
                 let errorIO = spawnResults.errorReadEnd()
 
-                let result: Swift.Result<Result, any Swift.Error>
                 do {
                     // Body runs in the same isolation.
                     let bodyResult = try await body(processIdentifier, inputIO, outputIO, errorIO)
                     taskFinishFlag.addOne()
-                    result = .success(bodyResult)
+                    resultBox = .success(bodyResult)
                 } catch {
                     let execution = Execution<Input, Output, Error>(
                         processIdentifier: processIdentifier,
@@ -147,12 +155,11 @@ public struct Configuration: Sendable {
                     )
                     // Attempt to terminate the child process when the body throws
                     await execution.teardown(using: self.platformOptions.teardownSequence)
-                    result = .failure(error)
+                    resultBox = .failure(error)
                 }
 
                 // Wait for the monitor child task to finish.
-                let monitorError = try await group.next() ?? nil
-                return (result, monitorError)
+                return try await group.next() ?? nil
             }
 
             // Drop the cancellation marker before reaping the zombie. After
@@ -170,7 +177,7 @@ public struct Configuration: Sendable {
 
             return try ExecutionOutcome(
                 terminationStatus: terminationStatus,
-                value: result.get()
+                value: resultBox.take()!.get()
             )
         } onCleanup: {
             let execution = Execution<Input, Output, Error>(
@@ -1171,14 +1178,18 @@ extension Optional where Wrapped == String {
 /// In the latter case, `onCleanup` may be run concurrently with `body`.
 /// The `body` closure is guaranteed to run exactly once.
 /// The `onCleanup` closure is guaranteed to run only once, or not at all.
-internal func withAsyncTaskCleanupHandler<Result: Sendable>(
+internal func withAsyncTaskCleanupHandler<Result: ~Copyable & Sendable>(
     _ body: () async throws -> Result,
     onCleanup handler: @Sendable @escaping () async -> Void,
 ) async throws -> Result {
     let (runCancellationHandlerStream, runCancellationHandlerContinuation) = AsyncThrowingStream.makeStream(of: Void.self)
-    return try await withThrowingTaskGroup(
+    // The body's result is moved out through this box rather than returned
+    // from the task group: a noncopyable `Result` can't be a `GroupResult`,
+    // which must be `Copyable`. The group itself returns `Void`.
+    var resultBox: Result? = nil
+    try await withThrowingTaskGroup(
         of: Void.self,
-        returning: Result.self
+        returning: Void.self
     ) { group in
         group.addTask {
             // Keep this task sleep indefinitely until the parent task is cancelled.
@@ -1213,14 +1224,14 @@ internal func withAsyncTaskCleanupHandler<Result: Sendable>(
         }
 
         do {
-            let result = try await body()
+            resultBox = try await body()
             runCancellationHandlerContinuation.finish()
-            return result
         } catch {
             runCancellationHandlerContinuation.finish(throwing: error)
             throw error
         }
     }
+    return resultBox.take()!
 }
 
 internal struct _OrderedSet<Element: Hashable & Sendable>: Hashable, Sendable {

@@ -532,7 +532,7 @@ extension SubprocessUnixTests {
                     // Make sure the grand child `/usr/bin/yes` actually exited
                     // This is unfortunately racy because the pid isn't immediately invalided
                     // once `kill` returns. Allow a few failures and delay to counter this
-                    let grandChildPid = try #require(result.closureOutput)
+                    let grandChildPid = try #require(result.closureResult)
                     for _ in 0..<10 {
                         let rc = kill(grandChildPid, 0)
                         if rc == 0 {
@@ -614,7 +614,7 @@ extension SubprocessUnixTests {
                         return grandChildPid
                     }
                     #expect(result.terminationStatus == .signaled(SIGTERM))
-                    let grandChildPid = try #require(result.closureOutput)
+                    let grandChildPid = try #require(result.closureResult)
                     // Grandchild should have been signalled via the process group.
                     // Allow a few iterations for signal propagation and reaping.
                     for _ in 0..<10 {

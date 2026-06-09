@@ -22,17 +22,17 @@ import SystemPackage
 ///
 /// The `ClosureResult` generic parameter is `Void` when you call a `run(...)`
 /// overload that doesn't take a `body` closure. It's the closure's return type
-/// otherwise. You access the closure's return value with ``closureOutput``.
+/// otherwise. You access the closure's return value with ``closureResult``.
 ///
 /// The ``standardOutput`` and ``standardError`` properties are available when
 /// the corresponding output type produces a non-`Void` value. They're
 /// unavailable for output types such as ``DiscardedOutput``, ``SequenceOutput``,
 /// and ``FileDescriptorOutput``.
 public struct ExecutionResult<
-    ClosureResult: Sendable,
+    ClosureResult: Sendable & ~Copyable,
     Output: OutputProtocol,
     Error: OutputProtocol
->: Sendable {
+>: Sendable, ~Copyable {
     /// The process identifier of the subprocess.
     public let processIdentifier: ProcessIdentifier
     /// The termination status of the subprocess.
@@ -44,24 +44,33 @@ public struct ExecutionResult<
     public let standardError: Error.OutputType
 
     /// The value returned by the body closure passed to `run`.
-    public let closureOutput: ClosureResult
+    public let closureResult: ClosureResult
 
     internal init(
         processIdentifier: ProcessIdentifier,
         terminationStatus: TerminationStatus,
-        closureOutput: ClosureResult,
+        closureResult: consuming ClosureResult,
         standardOutput: Output.OutputType,
         standardError: Error.OutputType
     ) {
         self.processIdentifier = processIdentifier
         self.terminationStatus = terminationStatus
-        self.closureOutput = closureOutput
+        self.closureResult = closureResult
         self.standardOutput = standardOutput
         self.standardError = standardError
     }
 }
 
+extension ExecutionResult where ClosureResult: ~Copyable {
+    /// Consumes this result and returns the value produced by the `run` body closure.
+    public consuming func takeClosureResult() -> ClosureResult {
+        return self.closureResult
+    }
+}
+
 // MARK: - ExecutionResult Conformances
+
+extension ExecutionResult: Copyable where ClosureResult: Copyable {}
 
 extension ExecutionResult: Equatable where Output.OutputType: Equatable, Error.OutputType: Equatable, ClosureResult: Equatable {}
 
@@ -74,7 +83,7 @@ extension ExecutionResult: CustomStringConvertible where Output.OutputType: Cust
             ExecutionResult(
                 processIdentifier: \(self.processIdentifier),
                 terminationStatus: \(self.terminationStatus.description),
-                closureOutput: \(String(describing: self.closureOutput)),
+                closureResult: \(String(describing: self.closureResult)),
                 standardOutput: \(self.standardOutput.description)
                 standardError: \(self.standardError.description)
             )
@@ -90,7 +99,7 @@ where Output.OutputType: CustomDebugStringConvertible, Error.OutputType: CustomD
             ExecutionResult(
                 processIdentifier: \(self.processIdentifier),
                 terminationStatus: \(self.terminationStatus.debugDescription),
-                closureOutput: \(String(describing: self.closureOutput)),
+                closureResult: \(String(describing: self.closureResult)),
                 standardOutput: \(self.standardOutput.debugDescription)
                 standardError: \(self.standardError.debugDescription)
             )
@@ -102,17 +111,19 @@ where Output.OutputType: CustomDebugStringConvertible, Error.OutputType: CustomD
 
 /// The outcome of a subprocess execution, containing the closure's return
 /// value and the termination status of the child process.
-internal struct ExecutionOutcome<Result: Sendable>: Sendable {
+internal struct ExecutionOutcome<Result: Sendable & ~Copyable>: Sendable, ~Copyable {
     /// The termination status of the child process.
     internal let terminationStatus: TerminationStatus
     /// The value returned by the closure passed to the `run` method.
     internal let value: Result
 
-    internal init(terminationStatus: TerminationStatus, value: Result) {
+    internal init(terminationStatus: TerminationStatus, value: consuming Result) {
         self.terminationStatus = terminationStatus
         self.value = value
     }
 }
+
+extension ExecutionOutcome: Copyable where Result: Copyable {}
 
 extension ExecutionOutcome: Equatable where Result: Equatable {}
 
