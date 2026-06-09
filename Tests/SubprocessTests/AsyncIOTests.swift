@@ -239,6 +239,86 @@ extension SubprocessAsyncIOTests {
     }
 }
 
+// MARK: - Cancellation Tests
+extension SubprocessAsyncIOTests {
+    @Test(.timeLimit(.minutes(1)))
+    func testReadDrainsBufferedDataAfterCancellation() async throws {
+        let payload = randomData(count: 1024)
+        let io = AsyncIO.shared
+        defer {
+            io.cleanup(processIdentifier: _currentPID)
+        }
+
+        var pipe = try CreatedPipe(closeWhenDone: true, purpose: .input)
+        let readTestBed = try TestBed(ioDescriptor: _require(pipe.readFileDescriptor()))
+        let writeTestBed = try TestBed(ioDescriptor: _require(pipe.writeFileDescriptor()))
+
+        // Buffer the payload with no read pending. It fits comfortably within
+        // the pipe capacity, so the write completes without a reader.
+        let written = try await io.write(payload, to: writeTestBed.ioDescriptor)
+        #expect(written == payload.count)
+
+        // Stand in for the termination monitor: the child has exited, so the
+        // run cancels its I/O while bytes are still buffered.
+        try io.cancelAsyncIO(for: _currentPID)
+
+        let drained = try await io.read(
+            from: readTestBed.ioDescriptor,
+            upTo: payload.count
+        )
+
+        // Close promptly to bound any dangling-I/O window on a backend that
+        // issues a read on the cancelled path without awaiting completion.
+        try await readTestBed.finish()
+        try await writeTestBed.finish()
+
+        let bytes = try #require(
+            drained,
+            "read returned nil while \(payload.count) bytes were buffered: the cancelled path dropped them instead of draining"
+        )
+        #expect(bytes == payload)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func testReadDrainsBufferedDataAfterCancellationOnAttachedHandle() async throws {
+        let firstChunk = randomData(count: 1024)
+        let secondChunk = randomData(count: 1024)
+        let io = AsyncIO.shared
+        defer {
+            io.cleanup(processIdentifier: _currentPID)
+        }
+
+        var pipe = try CreatedPipe(closeWhenDone: true, purpose: .input)
+        let readTestBed = try TestBed(ioDescriptor: _require(pipe.readFileDescriptor()))
+        let writeTestBed = try TestBed(ioDescriptor: _require(pipe.writeFileDescriptor()))
+
+        // Both chunks sit in the pipe buffer together.
+        let written = try await io.write(firstChunk + secondChunk, to: writeTestBed.ioDescriptor)
+        #expect(written == firstChunk.count + secondChunk.count)
+
+        // A first, uncancelled read attaches the descriptor and consumes the
+        // first chunk.
+        let first = try await io.read(from: readTestBed.ioDescriptor, upTo: firstChunk.count)
+        #expect(first == firstChunk)
+
+        // Cancel while the second chunk is still buffered.
+        try io.cancelAsyncIO(for: _currentPID)
+
+        // The cancelled read must drain the second chunk from the now-cancelled,
+        // already-attached descriptor.
+        let second = try await io.read(from: readTestBed.ioDescriptor, upTo: secondChunk.count)
+
+        try await readTestBed.finish()
+        try await writeTestBed.finish()
+
+        let drained = try #require(
+            second,
+            "read returned nil while \(secondChunk.count) buffered bytes remained on an already-attached descriptor: the cancelled path dropped them"
+        )
+        #expect(drained == secondChunk)
+    }
+}
+
 // MARK: - Utils
 extension SubprocessAsyncIOTests {
     final class TestBed: Sendable {
