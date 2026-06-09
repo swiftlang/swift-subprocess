@@ -1018,7 +1018,7 @@ extension SubprocessIntegrationTests {
             return try await buffer
         }
         #expect(result.terminationStatus.isSuccess)
-        #expect(result.closureOutput == expected)
+        #expect(result.closureResult == expected)
     }
 
     @Test func testNoInputTriggersEOF() async throws {
@@ -1716,7 +1716,7 @@ extension SubprocessIntegrationTests {
             return try await buffer
         }
         #expect(result.terminationStatus.isSuccess)
-        #expect(result.closureOutput == expected)
+        #expect(result.closureResult == expected)
     }
 
     @Test func stressTestWithLittleOutput() async throws {
@@ -2146,7 +2146,41 @@ extension SubprocessIntegrationTests {
             return 42
         }
         #expect(result.terminationStatus.isSuccess)
-        #expect(result.closureOutput == 42)
+        #expect(result.closureResult == 42)
+    }
+
+    @Test func testBodyClosureReturnsNoncopyableValue() async throws {
+        // A move-only value returned from the body closure: this only compiles
+        // if `run`'s `Result` (and `ExecutionResult.closureResult`) is `~Copyable`.
+        struct MoveOnlyToken: ~Copyable, Sendable {
+            let value: Int
+        }
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: ["/c", "echo hello"]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/echo"),
+            arguments: ["hello"]
+        )
+        #endif
+        let result = try await _run(
+            setup,
+            input: .none,
+            output: .discarded,
+            error: .discarded
+        ) { _ in
+            return MoveOnlyToken(value: 42)
+        }
+        // `result` is itself noncopyable (its ClosureResult is). Read the
+        // copyable field first, then move the token out via the consuming
+        // accessor (a non-`@frozen` type can't be partially consumed across
+        // module boundaries).
+        #expect(result.terminationStatus.isSuccess)
+        let token = result.takeClosureResult()
+        #expect(token.value == 42)
     }
 
     @Test func testBodyClosureReturnValueWithCapturedOutput() async throws {
@@ -2170,7 +2204,7 @@ extension SubprocessIntegrationTests {
             return "closure-value"
         }
         #expect(result.terminationStatus.isSuccess)
-        #expect(result.closureOutput == "closure-value")
+        #expect(result.closureResult == "closure-value")
         let output = try #require(result.standardOutput)
         #expect(output.contains("hello"))
     }
@@ -2255,7 +2289,7 @@ extension SubprocessIntegrationTests {
             return collected
         }
         #expect(result.terminationStatus.isSuccess)
-        #expect(result.closureOutput.contains("Hello Stdout"))
+        #expect(result.closureResult.contains("Hello Stdout"))
         let stderr = try #require(result.standardError)
         #expect(stderr.contains("Hello Stderr"))
     }
@@ -2285,7 +2319,7 @@ extension SubprocessIntegrationTests {
             return collected
         }
         #expect(result.terminationStatus.isSuccess)
-        #expect(result.closureOutput.contains("Hello Stderr"))
+        #expect(result.closureResult.contains("Hello Stderr"))
         let stdout = try #require(result.standardOutput)
         #expect(stdout.contains("Hello Stdout"))
     }
@@ -2382,7 +2416,7 @@ extension SubprocessIntegrationTests {
             return pidLine.flatMap { pid_t($0) } ?? 0
         }
 
-        sleepPidToKill = result.closureOutput
+        sleepPidToKill = result.closureResult
         #expect(sleepPidToKill != 0)
         #expect(result.terminationStatus == .exited(0))
     }
@@ -2430,7 +2464,7 @@ extension SubprocessIntegrationTests {
             return capturedPid
         }
 
-        sleepPidToKill = result.closureOutput
+        sleepPidToKill = result.closureResult
         #expect(sleepPidToKill != 0)
         #expect(result.terminationStatus == .exited(0))
         #expect((result.standardOutput ?? "").contains("GO"))
@@ -2473,7 +2507,7 @@ extension SubprocessIntegrationTests {
             return capturedPid
         }
 
-        sleepPidToKill = result.closureOutput
+        sleepPidToKill = result.closureResult
         #expect(sleepPidToKill != 0)
         #expect(result.terminationStatus == .exited(0))
         #expect((result.standardError ?? "").contains("GO"))
@@ -2544,7 +2578,7 @@ extension SubprocessIntegrationTests {
             return pidLine.flatMap { DWORD($0) } ?? 0
         }
 
-        grandchildPidToKill = result.closureOutput
+        grandchildPidToKill = result.closureResult
         #expect(grandchildPidToKill != 0)
         #expect(result.terminationStatus == .exited(0))
     }
@@ -2590,7 +2624,7 @@ extension SubprocessIntegrationTests {
             return DWORD(0)
         }
 
-        grandchildPidToKill = result.closureOutput
+        grandchildPidToKill = result.closureResult
         #expect(grandchildPidToKill != 0)
         #expect(result.terminationStatus == .exited(0))
         #expect((result.standardOutput ?? "").contains("GO"))
@@ -2631,7 +2665,7 @@ extension SubprocessIntegrationTests {
             return DWORD(0)
         }
 
-        grandchildPidToKill = result.closureOutput
+        grandchildPidToKill = result.closureResult
         #expect(grandchildPidToKill != 0)
         #expect(result.terminationStatus == .exited(0))
         #expect((result.standardError ?? "").contains("GO"))
@@ -2996,11 +3030,11 @@ extension SubprocessIntegrationTests {
         #expect(result.terminationStatus.isSuccess)
         #if os(Windows)
         // cmd.exe interactive mode prints more info
-        #expect(result.closureOutput.output.contains("hello stdout"))
+        #expect(result.closureResult.output.contains("hello stdout"))
         #else
-        #expect(result.closureOutput.output == "hello stdout")
+        #expect(result.closureResult.output == "hello stdout")
         #endif
-        #expect(result.closureOutput.error == "hello stderr")
+        #expect(result.closureResult.error == "hello stderr")
     }
 
     @Test func testSubprocessPipeChain() async throws {
@@ -3566,7 +3600,7 @@ func _run<
     )
 }
 
-func _run<Result, Input: InputProtocol, Output: OutputProtocol, Error: ErrorOutputProtocol>(
+func _run<Result: ~Copyable, Input: InputProtocol, Output: OutputProtocol, Error: ErrorOutputProtocol>(
     _ setup: TestSetup,
     input: Input,
     output: Output,

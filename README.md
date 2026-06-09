@@ -122,9 +122,9 @@ let result = try await run(
 }
 ```
 
-The closure-based `run` returns an `ExecutionResult`. Access the closure's return value with `result.closureOutput`, and the termination status with `result.terminationStatus`.
+The closure-based `run` returns an `ExecutionResult`. Access the closure's return value with `result.closureResult`, and the termination status with `result.terminationStatus`.
 
-Because `input`, `output`, and `error` are separate parameters, you can mix streaming and capturing in the same call. For example, stream standard output from the closure while collecting standard error as a string, and return the closure's own value through `closureOutput`:
+Because `input`, `output`, and `error` are separate parameters, you can mix streaming and capturing in the same call. For example, stream standard output from the closure while collecting standard error as a string, and return the closure's own value through `closureResult`:
 
 ```swift
 let result = try await run(
@@ -140,7 +140,7 @@ let result = try await run(
     return lineCount
 }
 
-print(result.closureOutput)         // The line count returned from the closure.
+print(result.closureResult)         // The line count returned from the closure.
 print(result.standardError ?? "")   // The captured standard error.
 ```
 

@@ -127,7 +127,7 @@ public func run<
 /// - Returns: An ``ExecutionResult`` that contains the closure's return value and
 ///   the termination status of the child process.
 public func run<
-    Result,
+    Result: ~Copyable,
     Input: InputProtocol,
     Output: OutputProtocol,
     Error: ErrorOutputProtocol
@@ -238,7 +238,7 @@ public func run<
 /// - Returns: An ``ExecutionResult`` that contains the closure's return value and
 ///   the termination status of the child process.
 public func run<
-    Result,
+    Result: ~Copyable,
     Input: InputProtocol,
     Output: OutputProtocol,
     Error: ErrorOutputProtocol
@@ -251,16 +251,9 @@ public func run<
         Execution<Input, Output, Error>
     ) async throws -> Result
 ) async throws -> ExecutionResult<Result, Output, Error> {
-    typealias RunResult = (
-        processIdentifier: ProcessIdentifier,
-        closureResult: Result,
-        output: Output.OutputType,
-        error: Error.OutputType
-    )
-
     let outputPipe = try output.createPipe()
     let errorPipe = try error.createPipe(from: outputPipe)
-    let result: ExecutionOutcome<RunResult> = try await configuration.run(
+    let outcome: ExecutionOutcome<_RunOutcome<Result, Output, Error>> = try await configuration.run(
         input: try input.createPipe(),
         as: Input.self,
         output: outputPipe,
@@ -272,7 +265,14 @@ public func run<
         var outputIOBox = consume outputIO
         var errorIOBox = consume errorIO
 
-        return try await withThrowingTaskGroup(of: _RunGroupResult<Output, Error>.self) { group in
+        // The body's (possibly noncopyable) result is moved out through this
+        // box. The task group returns only the captured output and error,
+        // because a noncopyable value can't be a `GroupResult`.
+        var resultBox: Result? = nil
+        let captured: (Output.OutputType, Error.OutputType) = try await withThrowingTaskGroup(
+            of: _RunGroupResult<Output, Error>.self,
+            returning: (Output.OutputType, Error.OutputType).self
+        ) { group in
             var writer: StandardInputWriter?
             if inputIOBox != nil {
                 let inputWriter = StandardInputWriter(
@@ -340,9 +340,8 @@ public func run<
                 outputStream: outputSequence,
                 errorStream: errorSequence
             )
-            let result: Result
             do {
-                result = try await body(execution)
+                resultBox = try await body(execution)
             } catch {
                 if Input.self == CustomWriteInput.self {
                     try await writer?.finish()
@@ -371,16 +370,24 @@ public func run<
             if Error.OutputType.self == Void.self {
                 capturedError = (() as Any) as? Error.OutputType
             }
-            return (processIdentifier, result, capturedOutput!, capturedError!)
+            return (capturedOutput!, capturedError!)
         }
+        return _RunOutcome(
+            processIdentifier: processIdentifier,
+            closureResult: resultBox.take()!,
+            output: captured.0,
+            error: captured.1
+        )
     }
 
+    let terminationStatus = outcome.terminationStatus
+    let capturedResult = outcome.value
     return ExecutionResult(
-        processIdentifier: result.value.processIdentifier,
-        terminationStatus: result.terminationStatus,
-        closureOutput: result.value.closureResult,
-        standardOutput: result.value.output,
-        standardError: result.value.error
+        processIdentifier: capturedResult.processIdentifier,
+        terminationStatus: terminationStatus,
+        closureResult: capturedResult.closureResult,
+        standardOutput: capturedResult.output,
+        standardError: capturedResult.error
     )
 }
 
@@ -388,4 +395,15 @@ private enum _RunGroupResult<Output: OutputProtocol, Error: OutputProtocol> {
     case standardOutputCaptured(Output.OutputType)
     case standardErrorCaptured(Error.OutputType)
     case inputWritten
+}
+
+private struct _RunOutcome<
+    ClosureResult: Sendable & ~Copyable,
+    Output: OutputProtocol,
+    Error: OutputProtocol
+>: ~Copyable, Sendable {
+    let processIdentifier: ProcessIdentifier
+    let closureResult: ClosureResult
+    let output: Output.OutputType
+    let error: Error.OutputType
 }
