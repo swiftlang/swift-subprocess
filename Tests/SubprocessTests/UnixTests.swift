@@ -378,10 +378,19 @@ extension SubprocessUnixTests {
         let flags = fcntl(outputPipe.readEnd.rawValue, F_GETFL)
         try #require(fcntl(outputPipe.readEnd.rawValue, F_SETFL, flags | O_NONBLOCK) == 0)
 
+        // Isolate cat in its own session: the SIGSTOP below would otherwise
+        // leave a stopped process in the test runner's process group, and a
+        // concurrent child exit that orphans that group makes the kernel
+        // deliver SIGHUP+SIGCONT to every member of the group, including this
+        // test process, killing the run.
+        var platformOptions = PlatformOptions()
+        platformOptions.createSession = true
+
         try await outputPipe.readEnd.closeAfter {
             try await inputPipe.writeEnd.closeAfter {
                 _ = try await Subprocess.run(
                     .path("/bin/cat"),
+                    platformOptions: platformOptions,
                     // cat reads from inputPipe.readEnd. The parent keeps writeEnd to feed it.
                     input: .fileDescriptor(inputPipe.readEnd, closeAfterSpawningProcess: true),
                     // cat writes to outputPipe.writeEnd. The parent keeps readEnd to drain it.
