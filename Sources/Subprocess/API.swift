@@ -288,6 +288,13 @@ public func run<
                         try await inputWriter.finish()
                         return .inputWritten
                     }
+                    // The input source can stall indefinitely. Wait for termination here and cancel
+                    // the group when the child exits. Output and error capture respond to cancellation
+                    // by draining whatever is still buffered and returning it, so nothing is truncated.
+                    group.addTask {
+                        _ = try? await waitForProcessTermination(for: processIdentifier)
+                        return .processTerminated
+                    }
                 }
             }
 
@@ -358,6 +365,9 @@ public func run<
                 switch groupResult {
                 case .inputWritten:
                     continue
+                case .processTerminated:
+                    // The child exited. Cancel any still-running tasks so the drain can complete.
+                    group.cancelAll()
                 case .standardOutputCaptured(let output):
                     capturedOutput = output
                 case .standardErrorCaptured(let error):
@@ -395,6 +405,7 @@ private enum _RunGroupResult<Output: OutputProtocol, Error: OutputProtocol> {
     case standardOutputCaptured(Output.OutputType)
     case standardErrorCaptured(Error.OutputType)
     case inputWritten
+    case processTerminated
 }
 
 private struct _RunOutcome<

@@ -999,4 +999,93 @@ extension SubprocessUnixTests {
     #endif
 }
 
+// MARK: - Standard Input Inheritance
+extension SubprocessUnixTests {
+    @Test func testInheritStandardInput() async throws {
+        // Exercises the public `InputProtocol.standardInput`: the child inherits
+        // the parent's own standard input (fd 0). We temporarily point fd 0 at a
+        // pipe we control, feed it a line, and confirm the child reads it back.
+        //
+        // Not ported to Windows: the equivalent would require swapping the test
+        // host's own `STD_INPUT_HANDLE` / CRT fd 0 — global console state that
+        // can't be changed safely or verified from here.
+        let savedStdin = dup(STDIN_FILENO)
+        try #require(savedStdin >= 0, "dup(STDIN_FILENO) failed: \(errno)")
+        defer {
+            _ = dup2(savedStdin, STDIN_FILENO)
+            _ = close(savedStdin)
+        }
+
+        let pipe = try FileDescriptor.pipe()
+        // Point our own stdin at the pipe's read end so the child inherits it.
+        try #require(
+            dup2(pipe.readEnd.rawValue, STDIN_FILENO) >= 0,
+            "dup2 onto STDIN_FILENO failed: \(errno)"
+        )
+
+        // Send one line and close the write end so the child sees EOF.
+        try pipe.writeEnd.writeLine("hello from parent stdin")
+        try pipe.writeEnd.close()
+
+        let result = try await Subprocess.run(
+            .path("/bin/cat"),
+            arguments: [],
+            input: .standardInput,
+            output: .string(limit: 256),
+            error: .discarded
+        )
+        try pipe.readEnd.close()
+
+        #expect(result.terminationStatus.isSuccess)
+        #expect(result.standardOutput?.trimmingNewLineAndQuotes() == "hello from parent stdin")
+    }
+}
+
+// MARK: - Pseudo-Terminal Input
+extension SubprocessUnixTests {
+    @Test func testInheritStdinFromPseudoTerminal() async throws {
+        // Hand the child a pseudo-terminal replica as its standard input,
+        // proving an arbitrary inherited file descriptor (not a regular file or
+        // ordinary pipe) works as input.
+        //
+        // Not ported to Windows: there is no `openpty`/`termios` equivalent; the
+        // Windows pseudo-console (ConPTY) is an unrelated API.
+        var primaryFD: CInt = -1
+        var replicaFD: CInt = -1
+        try #require(
+            openpty(&primaryFD, &replicaFD, nil, nil, nil) == 0,
+            "openpty failed: \(errno)"
+        )
+        let primary = FileDescriptor(rawValue: primaryFD)
+        let replica = FileDescriptor(rawValue: replicaFD)
+
+        // Raw mode so bytes pass through verbatim (no echo or line editing).
+        var settings = termios()
+        try #require(tcgetattr(replicaFD, &settings) == 0, "tcgetattr failed: \(errno)")
+        cfmakeraw(&settings)
+        try #require(tcsetattr(replicaFD, TCSANOW, &settings) == 0, "tcsetattr failed: \(errno)")
+
+        let payload = "pty stdin works"
+        // Pre-fill the pty buffer; the child reads exactly this many bytes and
+        // then exits, closing its inherited replica.
+        try Array(payload.utf8).withUnsafeBytes { buffer in
+            _ = try primary.write(buffer)
+        }
+
+        let result = try await Subprocess.run(
+            .name("head"),
+            arguments: ["-c", "\(payload.utf8.count)"],
+            // The replica is owned by Subprocess (closed after spawn); we keep
+            // and close the primary ourselves.
+            input: .fileDescriptor(replica, closeAfterSpawningProcess: true),
+            output: .string(limit: 256),
+            error: .discarded
+        )
+        try primary.close()
+
+        #expect(result.terminationStatus.isSuccess)
+        #expect(result.standardOutput?.trimmingNewLineAndQuotes() == payload)
+    }
+}
+
 #endif // !os(Windows)

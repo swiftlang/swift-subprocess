@@ -3527,6 +3527,170 @@ extension SubprocessIntegrationTests {
     }
 }
 
+// MARK: - Streaming, Identity, and Input File Descriptor Tests
+extension SubprocessIntegrationTests {
+    @Test func testStreamingInputAndOutput() async throws {
+        // Stream input and output through one live process concurrently: a
+        // writer task feeds lines into standard input while a reader task reads
+        // the echoes back, in separate tasks (as in `testInteractiveShell`) so
+        // neither blocks the other.
+        #if os(Windows)
+        // A PowerShell loop that echoes each stdin line back and flushes so the
+        // reader sees it promptly.
+        let setup = TestSetup(
+            executable: .name("powershell.exe"),
+            arguments: [
+                "-NoProfile",
+                "-Command",
+                "while (($line = [Console]::In.ReadLine()) -ne $null) { [Console]::Out.WriteLine($line); [Console]::Out.Flush() }",
+            ]
+        )
+        #else
+        // `cat -u` echoes each line unbuffered, so the reader sees lines as they
+        // stream rather than only when the child exits.
+        let setup = TestSetup(
+            executable: .path("/bin/cat"),
+            arguments: ["-u"]
+        )
+        #endif
+
+        let lines = (0..<50).map { "line-\($0)" }
+        let result = try await _run(
+            setup,
+            input: .inputWriter,
+            output: .sequence,
+            error: .discarded
+        ) { execution in
+            return try await withThrowingTaskGroup(of: [String].self) { group in
+                // Writer: stream every line, then close stdin so the child exits.
+                group.addTask {
+                    for line in lines {
+                        _ = try await execution.standardInputWriter.write("\(line)\n")
+                    }
+                    try await execution.standardInputWriter.finish()
+                    return []
+                }
+                // Reader: collect the echoes concurrently until EOF.
+                group.addTask {
+                    var received: [String] = []
+                    for try await line in execution.standardOutput.strings() {
+                        let trimmed = line.trimmingNewLineAndQuotes()
+                        if !trimmed.isEmpty {
+                            received.append(trimmed)
+                        }
+                    }
+                    return received
+                }
+                var received: [String] = []
+                for try await partial in group where !partial.isEmpty {
+                    received = partial
+                }
+                return received
+            }
+        }
+        #expect(result.terminationStatus.isSuccess)
+        #expect(result.closureResult == lines)
+    }
+
+    @Test func testReadProcessIdentifier() async throws {
+        // The child reports its own process identifier. It must match the
+        // identifier Subprocess hands us via `execution.processIdentifier`.
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("powershell.exe"),
+            arguments: ["-NoProfile", "-Command", "Write-Output $PID"]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "echo $$"]
+        )
+        #endif
+        let result = try await _run(
+            setup,
+            input: .none,
+            output: .string(limit: 32),
+            error: .discarded
+        ) { execution in
+            return execution.processIdentifier.value
+        }
+        #expect(result.terminationStatus.isSuccess)
+        let reportedPid = try #require(result.standardOutput)
+            .trimmingNewLineAndQuotes()
+        #expect("\(result.closureResult)" == reportedPid)
+    }
+
+    @Test func testInputFromUnownedFileDescriptor() async throws {
+        // `closeAfterSpawningProcess: false` means the parent keeps ownership of
+        // the descriptor. The existing file-descriptor input tests all pass
+        // `true`, so this pins down the unowned case: after the run, the parent
+        // must still be able to close the descriptor itself.
+        let content = randomString(length: 64)
+        let fileURL = URL.temporaryDirectory
+            .appendingPathComponent("UnownedFDInput-\(UUID().uuidString).txt")
+        try content.write(to: fileURL, atomically: true, encoding: .utf8)
+        defer {
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+        let inputFD: FileDescriptor = try .open(
+            FilePath(fileURL._fileSystemPath),
+            .readOnly
+        )
+
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: ["/c", "findstr x*"]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/cat"),
+            arguments: []
+        )
+        #endif
+
+        let result = try await _run(
+            setup,
+            input: .fileDescriptor(inputFD, closeAfterSpawningProcess: false),
+            output: .string(limit: 256),
+            error: .discarded
+        )
+        #expect(result.terminationStatus.isSuccess)
+        #expect(result.standardOutput?.trimmingNewLineAndQuotes() == content)
+        // The parent retained ownership, so closing here must succeed. If
+        // Subprocess had wrongly closed it, this might throw `.badFileDescriptor`.
+        try inputFD.close()
+    }
+
+    #if SubprocessFoundation
+    func testProcessExitsBeforeInputComplete() async throws {
+        // An input source that never yields and never finishes, paired with a
+        // child that exits immediately.
+        let neverEndingInput = AsyncStream<Data> { _ in
+            // Never yield, never finish.
+        }
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: ["/c", "exit 0"]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "exit 0"]
+        )
+        #endif
+        let result = try await _run(
+            setup,
+            input: .sequence(neverEndingInput),
+            output: .discarded,
+            error: .discarded
+        )
+        #expect(result.terminationStatus == .exited(0))
+    }
+    #endif // SubprocessFoundation
+}
+
 // MARK: - Utilities
 extension String {
     func trimmingNewLineAndQuotes() -> String {

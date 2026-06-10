@@ -210,16 +210,16 @@ final class AsyncIO: Sendable {
         // Clean up the monitor thread.
         pthread_join(currentState.monitorThread, nil)
 
-        var closeError: Errno? = nil
+        var closeError: SubprocessError? = nil
         do {
-            try epollFd.close()
+            try _safelyClose(.fileDescriptor(epollFd))
         } catch {
-            closeError = error as? Errno
+            closeError = error
         }
         do {
-            try shutdownFd.close()
+            try _safelyClose(.fileDescriptor(shutdownFd))
         } catch {
-            closeError = error as? Errno
+            closeError = error
         }
 
         if let closeError {

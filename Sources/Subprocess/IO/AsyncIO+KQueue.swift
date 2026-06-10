@@ -225,21 +225,21 @@ final class AsyncIO: Sendable {
         }
 
         pthread_join(currentState.monitorThread, nil)
-        var closeError: Errno? = nil
+        var closeError: SubprocessError? = nil
         do {
-            try kqueueFd.close()
+            try _safelyClose(.fileDescriptor(kqueueFd))
         } catch {
-            closeError = error as? Errno
+            closeError = error
         }
         do {
-            try shutdownReadFd.close()
+            try _safelyClose(.fileDescriptor(shutdownReadFd))
         } catch {
-            closeError = error as? Errno
+            closeError = error
         }
         do {
-            try shutdownWriteFd.close()
+            try _safelyClose(.fileDescriptor(shutdownWriteFd))
         } catch {
-            closeError = error as? Errno
+            closeError = error
         }
 
         if let closeError {
