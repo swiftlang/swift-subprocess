@@ -251,10 +251,30 @@ extension InputProtocol {
 // MARK: - StandardInputWriter
 
 /// A writer that sends data to the standard input of a subprocess.
+///
+/// You obtain a `StandardInputWriter` from ``Execution/standardInputWriter``
+/// inside the body closure of a `run` function, when the input is
+/// ``InputProtocol/inputWriter``. Each `write` call sends its bytes to the
+/// subprocess right away — there's no intermediate buffer and no separate flush
+/// step. Call ``finish()`` after your final write so the subprocess sees
+/// end-of-file on its standard input.
+///
+/// - Important: The writer is valid only for the duration of the body closure.
+///   When the closure returns, `run` automatically calls ``finish()`` to close
+///   standard input. Don't store the writer or use it after the closure
+///   returns: a write at that point throws a ``SubprocessError`` whose code is
+///   ``SubprocessError/Code/failedToWriteToSubprocess``.
+///
+/// - Important: If you await the subprocess's entire standard output from within
+///   the body closure, call ``finish()`` *before* you await it. Many programs
+///   don't finish producing output until they see end-of-file on standard
+///   input, so waiting for all output without finishing first can deadlock.
 public final actor StandardInputWriter: Sendable {
 
     internal var diskIO: IODescriptor
     internal let processIdentifier: ProcessIdentifier
+
+    private var didFinish: Bool = false
 
     init(diskIO: consuming IODescriptor, processIdentifier: ProcessIdentifier) {
         self.diskIO = diskIO
@@ -264,11 +284,15 @@ public final actor StandardInputWriter: Sendable {
     /// Writes an array of bytes to the subprocess's standard input.
     /// - Parameter array: The bytes to write.
     /// - Throws: `SubprocessError` with error code `.failedToWriteToSubprocess`.
-    ///     See ``underlyingError`` for more details.
+    ///     See ``underlyingError`` for more details. Also throws this error if
+    ///     the writer has already finished (see ``finish()``).
     /// - Returns: The number of bytes written.
     public func write(
         _ array: [UInt8]
     ) async throws(SubprocessError) -> Int {
+        guard !self.didFinish else {
+            throw SubprocessError.standardInputWriterFinished
+        }
         return try await AsyncIO.shared.write(array, to: self.diskIO, for: self.processIdentifier)
     }
 
@@ -276,9 +300,13 @@ public final actor StandardInputWriter: Sendable {
     ///
     /// - Parameter span: The span to write.
     /// - Throws: `SubprocessError` with error code `.failedToWriteToSubprocess`.
-    ///     See ``underlyingError`` for more details.
+    ///     See ``underlyingError`` for more details. Also throws this error if
+    ///     the writer has already finished (see ``finish()``).
     /// - Returns: The number of bytes written.
     public func write(_ span: borrowing RawSpan) async throws(SubprocessError) -> Int {
+        guard !self.didFinish else {
+            throw SubprocessError.standardInputWriterFinished
+        }
         return try await AsyncIO.shared.write(span, to: self.diskIO, for: self.processIdentifier)
     }
 
@@ -287,7 +315,8 @@ public final actor StandardInputWriter: Sendable {
     ///   - string: The string to write.
     ///   - encoding: The encoding to use when converting the string to bytes.
     /// - Throws: `SubprocessError` with error code `.failedToWriteToSubprocess`.
-    ///     See ``underlyingError`` for more details.
+    ///     See ``underlyingError`` for more details. Also throws this error if
+    ///     the writer has already finished (see ``finish()``).
     /// - Returns: The number of bytes written.
     public func write<Encoding: Unicode.Encoding>(
         _ string: some StringProtocol,
@@ -299,10 +328,22 @@ public final actor StandardInputWriter: Sendable {
         return 0
     }
 
-    /// Signals that all writes are finished.
+    /// Signals that all writes are finished, closing standard input so the
+    /// subprocess sees end-of-file.
+    ///
+    /// `run` calls this automatically when the body closure returns, so you only
+    /// need to call it yourself when you want the subprocess to observe
+    /// end-of-file earlier. Calling `finish()` more than once is safe; subsequent calls do nothing.
+    /// After finishing, further writes throw a ``SubprocessError`` with the code
+    /// ``SubprocessError/Code/failedToWriteToSubprocess``.
+    ///
     /// - Throws: `SubprocessError` with error code `.asyncIOFailed`.
     ///     See ``underlyingError`` for more details.
     public func finish() async throws(SubprocessError) {
+        guard !self.didFinish else {
+            return
+        }
+        self.didFinish = true
         try self.diskIO.safelyClose()
     }
 }

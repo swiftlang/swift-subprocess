@@ -172,6 +172,14 @@ extension SubprocessError: CustomStringConvertible, CustomDebugStringConvertible
                 return "Failed to read bytes from the child process."
             }
         case .failedToWriteToSubprocess:
+            if let context = self.context[self.code],
+                case .string(let reason) = context
+            {
+                if let underlying = self.underlyingError {
+                    return "Failed to write bytes to the child process: \(reason) Underlying error: \(underlying)"
+                }
+                return "Failed to write bytes to the child process: \(reason)"
+            }
             if let underlying = self.underlyingError {
                 return "Failed to write bytes to the child process with underlying error: \(underlying)"
             } else {
@@ -353,12 +361,32 @@ extension SubprocessError {
     }
 
     internal static func failedToWriteToProcess(
-        withUnderlyingError underlyingError: UnderlyingError?
+        withUnderlyingError underlyingError: UnderlyingError?,
+        reason: String? = nil
     ) -> Self {
+        var context: [SubprocessError.Code: SubprocessError.Context] = [:]
+        if let reason = reason {
+            context[.failedToWriteToSubprocess] = .string(reason)
+        }
         return SubprocessError(
             code: .failedToWriteToSubprocess,
             underlyingError: underlyingError,
-            context: [:]
+            context: context
+        )
+    }
+
+    /// The standard input writer was used after it finished. The writer is only
+    /// valid inside the `run(_:)` body closure; `run()` closes standard input
+    /// automatically when the body returns, so it must not be stored or used
+    /// afterward.
+    internal static var standardInputWriterFinished: Self {
+        return .failedToWriteToProcess(
+            withUnderlyingError: nil,
+            reason: """
+                the standard input writer has already finished. The writer is only valid
+                inside the run(_:) body closure, which closes standard input automatically
+                when it returns; don't store the writer or use it after the closure returns.
+                """
         )
     }
 
