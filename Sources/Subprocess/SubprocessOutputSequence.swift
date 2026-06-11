@@ -119,6 +119,9 @@ public struct SubprocessOutputSequence: AsyncSequence, @unchecked Sendable {
 
     /// Splits the buffer into strings using the specified separator.
     ///
+    /// The separator characters are not included in the returned strings,
+    /// similar to how `.split(separator:)` works. See ``StringSequence``.
+    ///
     /// - Parameters:
     ///   - separator: The delimiter to split on. The default
     ///     value is `.lineBreaks`.
@@ -141,6 +144,9 @@ public struct SubprocessOutputSequence: AsyncSequence, @unchecked Sendable {
 
     /// Splits the buffer into strings with the given encoding
     /// and separator.
+    ///
+    /// The separator characters are not included in the returned strings,
+    /// similar to how `.split(separator:)` works. See ``StringSequence``.
     ///
     /// - Parameters:
     ///   - separator: The delimiter to split on. The default
