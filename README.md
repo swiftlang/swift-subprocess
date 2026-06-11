@@ -134,7 +134,7 @@ let result = try await run(
     error: .string(limit: 4096)
 ) { execution in
     var lineCount = 0
-    for try await _ in execution.standardOutput.lines() {
+    for try await _ in execution.standardOutput.strings() {
         lineCount += 1
     }
     return lineCount
@@ -155,10 +155,10 @@ try await run(
 ) { execution in
     try await withThrowingTaskGroup { group in
         group.addTask {
-            for try await line in execution.standardOutput.lines() { /* ... */ }
+            for try await line in execution.standardOutput.strings() { /* ... */ }
         }
         group.addTask {
-            for try await line in execution.standardError.lines() { /* ... */ }
+            for try await line in execution.standardError.strings() { /* ... */ }
         }
         group.addTask {
             _ = try await execution.standardInputWriter.write("Hello Subprocess")
@@ -171,12 +171,12 @@ try await run(
 
 In the closure-based API, output streams are delivered as an `SubprocessOutputSequence` — an asynchronous sequence of `Buffer` values. Each `Buffer` provides access to its bytes via `withUnsafeBytes(_:)` or the `bytes` property (a `RawSpan`).
 
-The preferred way to convert `Buffer` to `String` is to read output line by line using `.lines()`. You can optionally specify an encoding and buffering policy:
+The preferred way to convert `Buffer` to `String` is to read output line by line using `.strings()`. You can optionally specify an encoding and buffering policy:
 
 ```swift
-for try await line in execution.standardOutput.lines(
-    encoding: UTF16.self,
-    bufferingPolicy: .maxLineLength(1024)
+for try await line in execution.standardOutput.strings(
+    bufferingPolicy: .maxLineLength(1024),
+    as: UTF16.self
 ) {
     // ...
 }
