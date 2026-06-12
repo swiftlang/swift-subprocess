@@ -838,6 +838,10 @@ internal func _safelyClose(_ target: _CloseTarget) throws(SubprocessError) {
         }
     #else
     case .fileDescriptor(let fileDescriptor):
+        // Detach from epoll/queue before closing. A descriptor stays registered
+        // with epoll/kqueue across reads and writes so a stream of buffers costs one registration,
+        // not one per buffer.
+        AsyncIO.shared.removeRegistration(for: fileDescriptor)
         do {
             try fileDescriptor.close()
         } catch {

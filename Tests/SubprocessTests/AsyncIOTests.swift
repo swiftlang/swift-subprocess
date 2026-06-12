@@ -342,7 +342,7 @@ extension SubprocessAsyncIOTests {
     // byte is written. The reader drains in small, delayed chunks to keep the
     // pipe full and force many wait cycles. Asserts the write reports the full
     // count (proving the partial-write loop) and the bytes survive intact.
-    func testWriteCompletesUnderBackpressure() async throws {
+    @Test func testWriteCompletesUnderBackpressure() async throws {
         let payload = randomData(count: 512 * 1024)
         try await runReadWriteTest { readIO, readTestBed in
             var received: [UInt8] = []
@@ -435,7 +435,7 @@ extension SubprocessAsyncIOTests {
     // Ported intent: swift-nio concurrent read/write tests. Drives many
     // independent pipe round-trips through the shared `AsyncIO` at once to
     // stress its registration/signal machinery for races.
-    func testConcurrentReadWriteAcrossManyPipes() async throws {
+    @Test func testConcurrentReadWriteAcrossManyPipes() async throws {
         let pipeCount = 32
         try await withThrowingTaskGroup(of: Void.self) { group in
             for _ in 0..<pipeCount {

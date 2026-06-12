@@ -101,107 +101,110 @@ extension AsyncIO {
         var resultBuffer: [UInt8] = Array(
             repeating: 0, count: bufferLength
         )
-        let signalStream = self.registerFileDescriptor(
+        // Register the descriptor with the kqueue/epoll. It stays registered across reads
+        // and is only detached when the caller closes it (or on EOF/error/cancellation),
+        // so sustained streaming costs one `epoll_ctl`/`kevent` registration per descriptor
+        // instead of one per buffer.
+        let (signalStream, outcome) = self.registerFileDescriptor(
             fileDescriptor,
             processIdentifier: processIdentifier,
             for: .read
         )
-
-        do {
-            /// Outer loop: every iteration signals that the descriptor is ready
-            /// for more data.
-            for try await _ in signalStream {
-                /// Inner loop: repeatedly call `read()` and read more data until:
-                /// 1. We reach EOF (read length is 0), in which case return the result.
-                /// 2. We read `maxLength` bytes, in which case return the result.
-                /// 3. `read()` returns -1 and sets `errno` to `EAGAIN` or `EWOULDBLOCK`.
-                ///    In this case `break` out of the inner loop and `await` the next
-                ///    signal in the outer loop.
-                while true {
-                    let bytesRead: Int
-                    do {
-                        bytesRead = try resultBuffer.withUnsafeMutableBytes { bufferPointer in
-                            // Read directly into the buffer at the offset.
-                            return try fileDescriptor.read(
-                                into: bufferPointer,
-                                retryOnInterrupt: true
-                            )
-                        }
-                    } catch {
-                        // FileDescriptor.read only throws Errno
-                        let _errno = error as! Errno
-
-                        if self.shouldWaitForNextSignal(with: _errno.rawValue) {
-                            // No data available right now; wait for the next signal.
-                            break
-                        } else {
-                            // Throw all other errors.
-                            try self.removeRegistration(for: fileDescriptor)
-                            throw SubprocessError.failedToReadFromProcess(
-                                withUnderlyingError: _errno
-                            )
-                        }
-                    }
-
-                    if bytesRead > 0 {
-                        // Read some data. Return immediately so the caller can
-                        // process it without waiting for the buffer to fill.
-                        try self.removeRegistration(for: fileDescriptor)
-                        resultBuffer.removeLast(resultBuffer.count - bytesRead)
-                        return resultBuffer
-                    } else if bytesRead == 0 {
-                        // We reached EOF.
-                        try self.removeRegistration(for: fileDescriptor)
-                        return nil
-                    } else {
-                        // This branch is unreachable in practice.
-                        throw SubprocessError.failedToReadFromProcess(
-                            withUnderlyingError: nil
-                        )
-                    }
-                }
-            }
-
-            // The signal stream finished without delivering more data. This
-            // happens when `cancelAsyncIO` runs because the child has exited
-            // and we want to stop waiting for an EOF that may never come (the
-            // pipe could be held open by an inherited grandchild). Try a final
-            // non-blocking read so we don't drop bytes that were already in
-            // the kernel buffer when cancellation arrived; subsequent calls
-            // keep draining one chunk at a time and then return EOF.
-            try self.removeRegistration(for: fileDescriptor)
-            let drainedLength = resultBuffer.withUnsafeMutableBytes { bufferPtr in
-                // The descriptor was set to non-blocking in `setNonblocking`,
-                // so this `read` returns immediately even if no data is ready.
-                do {
-                    return try fileDescriptor.read(
-                        into: bufferPtr,
-                        retryOnInterrupt: true
-                    )
-                } catch {
-                    // EAGAIN, EWOULDBLOCK, or another error: no more data
-                    // is available right now.
-                    return 0
-                }
-            }
-            if drainedLength > 0 {
-                resultBuffer.removeLast(resultBuffer.count - drainedLength)
-                return resultBuffer
-            }
-
-            return nil
-        } catch {
-            try self.removeRegistration(for: fileDescriptor)
-            // Reset the error code to `.failedToRead` to match other platforms.
-            guard let originalError = error as? SubprocessError else {
-                throw SubprocessError.failedToReadFromProcess(
-                    withUnderlyingError: nil
-                )
-            }
+        switch outcome {
+        case .registered, .alreadyCancelled:
+            // `.alreadyCancelled` still drains: the loop below reads whatever
+            // is already buffered without awaiting, since the signal stream is
+            // already finished.
+            break
+        case .failed(let error):
             throw SubprocessError.failedToReadFromProcess(
-                withUnderlyingError: originalError.underlyingError
+                withUnderlyingError: error.underlyingError
             )
         }
+        var iterator = signalStream.makeAsyncIterator()
+
+        // Each iteration first attempts a non-blocking read, draining bytes
+        // that are already buffered, and only awaits a readiness signal when
+        // the read reports `EAGAIN`. Because the descriptor is registered edge-triggered,
+        // this "try first" step is what keeps a persistent registration correct:
+        // we never park while data is buffered, so a missed edge can't strand bytes.
+        readLoop: while true {
+            do {
+                let bytesRead = try resultBuffer.withUnsafeMutableBytes { bufferPointer in
+                    // Read directly into the buffer.
+                    return try fileDescriptor.read(
+                        into: bufferPointer,
+                        retryOnInterrupt: true
+                    )
+                }
+                if bytesRead > 0 {
+                    // Read some data. Return immediately so the caller can
+                    // process it without waiting for the buffer to fill. The
+                    // descriptor stays registered for the next read.
+                    resultBuffer.removeLast(resultBuffer.count - bytesRead)
+                    return resultBuffer
+                } else {
+                    // EOF: no more data will ever arrive. Detach now.
+                    self.removeRegistration(for: fileDescriptor)
+                    return nil
+                }
+            } catch {
+                // FileDescriptor.read only throws Errno
+                let _errno = error as! Errno
+                guard self.shouldWaitForNextSignal(with: _errno.rawValue) else {
+                    // Throw all other errors.
+                    self.removeRegistration(for: fileDescriptor)
+                    throw SubprocessError.failedToReadFromProcess(
+                        withUnderlyingError: _errno
+                    )
+                }
+                // No data available right now. Fall through to await the next signal
+            }
+
+            do {
+                if try await iterator.next() == nil {
+                    // The signal stream finished without delivering more data.
+                    // This happens when `cancelAsyncIO` runs because the child
+                    // has exited and we want to stop waiting for an EOF that may
+                    // never come (the pipe could be held open by an inherited
+                    // grandchild). Fall through to a final drain.
+                    break readLoop
+                }
+            } catch {
+                self.removeRegistration(for: fileDescriptor)
+                // Reset the error code to `.failedToRead` to match other platforms.
+                guard let originalError = error as? SubprocessError else {
+                    throw SubprocessError.failedToReadFromProcess(
+                        withUnderlyingError: nil
+                    )
+                }
+                throw SubprocessError.failedToReadFromProcess(
+                    withUnderlyingError: originalError.underlyingError
+                )
+            }
+        }
+
+        // Cancellation drain: `cancelAsyncIO` already removed the registration,
+        // so try one last non-blocking read to surface bytes that were in the
+        // kernel buffer when cancellation arrived.
+        let drainedLength = resultBuffer.withUnsafeMutableBytes { bufferPtr -> Int in
+            // The descriptor was set to non-blocking in `setNonblocking`, so
+            // this `read` returns immediately even if no data is ready.
+            do {
+                return try fileDescriptor.read(
+                    into: bufferPtr,
+                    retryOnInterrupt: true
+                )
+            } catch {
+                // EAGAIN, EWOULDBLOCK, or another error: no more data right now.
+                return 0
+            }
+        }
+        if drainedLength > 0 {
+            resultBuffer.removeLast(resultBuffer.count - drainedLength)
+            return resultBuffer
+        }
+        return nil
     }
 
     func write(
@@ -221,74 +224,84 @@ extension AsyncIO {
             return 0
         }
         let fileDescriptor = diskIO.descriptor()
-        let signalStream = self.registerFileDescriptor(
+        // Register the descriptor once. It stays registered for reuse across
+        // writes and is detached when stdin is closed, or on error/cancellation.
+        let (signalStream, outcome) = self.registerFileDescriptor(
             fileDescriptor,
             processIdentifier: processIdentifier,
             for: .write
         )
+        switch outcome {
+        case .registered:
+            break
+        case .alreadyCancelled:
+            // The subprocess has exited and its stdin no longer has a reader.
+            // Report a zero-length write rather than pushing bytes that nothing will consume.
+            return 0
+        case .failed(let error):
+            throw SubprocessError.failedToWriteToProcess(
+                withUnderlyingError: error.underlyingError
+            )
+        }
+        var iterator = signalStream.makeAsyncIterator()
+
         var writtenLength: Int = 0
-        do {
-            /// Outer loop: every iteration signals that the descriptor is ready
-            /// for more data.
-            for try await _ in signalStream {
-                /// Inner loop: repeatedly call `write()` and write more data until:
-                /// 1. We've written `span.byteCount` bytes.
-                /// 2. `FileDescriptor.write()` throws `Errno` with `EAGAIN` or
-                ///    `EWOULDBLOCK`. In this case `break` out of the inner loop and
-                ///    `await` the next signal in the outer loop.
-                while true {
-                    let written: Int
-                    do {
-                        written = try span.extracting(
-                            last: span.byteCount - writtenLength
-                        ).withUnsafeBytes {
-                            return try fileDescriptor.write(
-                                $0,
-                                retryOnInterrupt: true
-                            )
-                        }
-                    } catch {
-                        // FileDescriptor.write only throws Errno
-                        let _errno = error as! Errno
-
-                        if self.shouldWaitForNextSignal(with: _errno.rawValue) {
-                            // The pipe is full right now; wait for the next signal.
-                            break
-                        } else {
-                            // Throw all other errors.
-                            try self.removeRegistration(for: fileDescriptor)
-                            throw SubprocessError.failedToWriteToProcess(
-                                withUnderlyingError: _errno
-                            )
-                        }
-                    }
-
-                    writtenLength += written
-                    if writtenLength >= span.byteCount {
-                        // Wrote all data.
-                        try self.removeRegistration(for: fileDescriptor)
-                        return writtenLength
-                    }
+        // Each iteration first attempts a non-blocking write and only awaits a
+        // writability signal when the pipe is full (`EAGAIN`). The descriptor
+        // is registered edge-triggered, so we must never park while the pipe
+        // still has space.
+        writeLoop: while true {
+            do {
+                let written = try span.extracting(
+                    last: span.byteCount - writtenLength
+                ).withUnsafeBytes {
+                    return try fileDescriptor.write(
+                        $0,
+                        retryOnInterrupt: true
+                    )
                 }
+                writtenLength += written
+                if writtenLength >= span.byteCount {
+                    // Wrote all data. The descriptor stays registered for reuse.
+                    return writtenLength
+                }
+                // Wrote a partial chunk: the pipe is full now. Retry, which
+                // either writes more or reports `EAGAIN` and waits below.
+                continue writeLoop
+            } catch {
+                // FileDescriptor.write only throws Errno
+                let _errno = error as! Errno
+                guard self.shouldWaitForNextSignal(with: _errno.rawValue) else {
+                    // Throw all other errors.
+                    self.removeRegistration(for: fileDescriptor)
+                    throw SubprocessError.failedToWriteToProcess(
+                        withUnderlyingError: _errno
+                    )
+                }
+                // The pipe is full right now. Fall through to await the next ready signal.
             }
 
-            // The signal stream finished while data remained to write
-            // (typically because `cancelAsyncIO` ran after the child exited).
-            // Return whatever bytes the call already pushed so the caller
-            // observes a partial write rather than misreading silence as a
-            // successful zero-byte write.
-            try self.removeRegistration(for: fileDescriptor)
-            return writtenLength
-        } catch {
-            // Reset the error code to `.failedToWrite` to match other platforms.
-            guard let originalError = error as? SubprocessError else {
+            do {
+                if try await iterator.next() == nil {
+                    // The signal stream finished while data remained to write
+                    // (typically because `cancelAsyncIO` ran after the child
+                    // exited). Return whatever bytes the call already pushed so
+                    // the caller observes a partial write rather than misreading
+                    // silence as a successful zero-byte write.
+                    return writtenLength
+                }
+            } catch {
+                self.removeRegistration(for: fileDescriptor)
+                // Reset the error code to `.failedToWrite` to match other platforms.
+                guard let originalError = error as? SubprocessError else {
+                    throw SubprocessError.failedToWriteToProcess(
+                        withUnderlyingError: error as? SubprocessError.UnderlyingError
+                    )
+                }
                 throw SubprocessError.failedToWriteToProcess(
-                    withUnderlyingError: error as? SubprocessError.UnderlyingError
+                    withUnderlyingError: originalError.underlyingError
                 )
             }
-            throw SubprocessError.failedToWriteToProcess(
-                withUnderlyingError: originalError.underlyingError
-            )
         }
     }
 
@@ -338,6 +351,20 @@ internal struct Registration {
     typealias Record = (continuation: SignalStream.Continuation, processIdentifier: ProcessIdentifier)
     typealias CancelledContinuation = (continuation: SignalStream.Continuation, fileDescriptor: PlatformFileDescriptor)
 
+    /// The result of a single attempt to register a file descriptor.
+    enum RegisterResult {
+        /// The first time this descriptor was seen. The caller must still
+        /// attach it to the epoll / kqueue (`epoll_ctl(ADD)` / `kevent(EV_ADD)`).
+        case registered
+        /// The descriptor was already attached by a previous read or write;
+        /// the existing attachment is reused and only the continuation is
+        /// replaced, so the caller skips the registration syscall.
+        case updated
+        /// The owning process is already cancelled. The caller finishes the
+        /// supplied continuation immediately and skips the setup.
+        case alreadyCancelled
+    }
+
     private var fileDescriptorMap: [PlatformFileDescriptor: Record]
     private var processIdentifierMap: [ProcessIdentifier: Set<PlatformFileDescriptor>]
 
@@ -363,24 +390,33 @@ internal struct Registration {
     ///   - continuation: The continuation to resume when the descriptor
     ///     becomes ready or the I/O is cancelled.
     ///   - processIdentifier: The process that owns the descriptor.
-    /// - Returns: `true` if the registration was added; `false` if the
-    ///   process has already been cancelled. When the function returns
-    ///   `false`, the caller must finish the supplied continuation
-    ///   immediately and skip any further setup such as attaching the
-    ///   descriptor to `epoll` or `kqueue`.
+    /// - Returns: A ``RegisterResult`` describing what the caller must do next.
+    ///   When the result is ``RegisterResult/registered`` the caller attaches
+    ///   the descriptor to the multiplexer; for ``RegisterResult/updated`` the
+    ///   attachment already exists and is reused. For
+    ///   ``RegisterResult/alreadyCancelled`` the caller finishes the supplied
+    ///   continuation immediately and performs no further setup.
     mutating func register(
         fileDescriptor: PlatformFileDescriptor,
         continuation: SignalStream.Continuation,
         processIdentifier: ProcessIdentifier
-    ) -> Bool {
+    ) -> RegisterResult {
         if self.cancelledProcesses.contains(processIdentifier) {
-            return false
+            return .alreadyCancelled
+        }
+        if let existing = self.fileDescriptorMap[fileDescriptor] {
+            // The descriptor is already attached to the multiplexer. Finish the
+            // previous continuation so any stale awaiter unblocks, then replace
+            // it and reuse the existing attachment.
+            existing.continuation.finish()
+            self.fileDescriptorMap[fileDescriptor] = (continuation, processIdentifier)
+            return .updated
         }
         self.fileDescriptorMap[fileDescriptor] = (continuation, processIdentifier)
         var fileDescriptorSet = self.processIdentifierMap[processIdentifier] ?? Set()
         fileDescriptorSet.insert(fileDescriptor)
         self.processIdentifierMap[processIdentifier] = fileDescriptorSet
-        return true
+        return .registered
     }
 
     /// Removes the registration for `fileDescriptor`.
