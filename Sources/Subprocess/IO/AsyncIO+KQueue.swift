@@ -251,40 +251,55 @@ final class AsyncIO: Sendable {
         _ fileDescriptor: FileDescriptor,
         processIdentifier: ProcessIdentifier,
         for event: Event
-    ) -> SignalStream {
-        return SignalStream { (continuation: SignalStream.Continuation) -> () in
-            switch self.state {
-            case .success(let state):
-                if let nonBlockingFdError = self.setNonblocking(for: fileDescriptor) {
-                    continuation.finish(throwing: nonBlockingFdError)
-                    return
-                }
-                let filter: Int16
-                switch event {
-                case .read:
-                    filter = Int16(EVFILT_READ)
-                case .write:
-                    filter = Int16(EVFILT_WRITE)
-                }
+    ) -> (stream: SignalStream, outcome: RegistrationOutcome) {
+        // `.bufferingNewest(1)` latches a readiness edge that fires while no
+        // consumer is awaiting, so a wakeup is never dropped between a read's
+        // `EAGAIN` and its `await`.
+        let (stream, continuation) = SignalStream.makeStream(
+            bufferingPolicy: .bufferingNewest(1)
+        )
 
-                // Hold the lock across the map insert and `kevent` so a
-                // concurrent `cancelAsyncIO` cannot slip in between the
-                // two steps and observe a half-registered descriptor.
-                let outcome: RegistrationOutcome = _registration.withLock { storage in
-                    guard
-                        storage.register(
-                            fileDescriptor: fileDescriptor.rawValue,
-                            continuation: continuation,
-                            processIdentifier: processIdentifier
-                        )
-                    else {
-                        return .alreadyCancelled
-                    }
+        switch self.state {
+        case .failure(let setupError):
+            continuation.finish(throwing: setupError)
+            return (stream, .failed(setupError))
+        case .success(let state):
+            if let nonBlockingFdError = self.setNonblocking(for: fileDescriptor) {
+                continuation.finish(throwing: nonBlockingFdError)
+                return (stream, .failed(nonBlockingFdError))
+            }
+            let filter: Int16
+            switch event {
+            case .read:
+                filter = Int16(EVFILT_READ)
+            case .write:
+                filter = Int16(EVFILT_WRITE)
+            }
 
+            // Hold the lock across the map insert and `kevent` so a
+            // concurrent `cancelAsyncIO` cannot slip in between the
+            // two steps and observe a half-registered descriptor.
+            let outcome: RegistrationOutcome = _registration.withLock { storage in
+                switch storage.register(
+                    fileDescriptor: fileDescriptor.rawValue,
+                    continuation: continuation,
+                    processIdentifier: processIdentifier
+                ) {
+                case .alreadyCancelled:
+                    return .alreadyCancelled
+                case .updated:
+                    // Already attached to kqueue by a previous read or write;
+                    // reuse the existing registration and skip the syscall.
+                    return .registered
+                case .registered:
+                    // `EV_CLEAR` makes the filter edge-triggered: an event is
+                    // delivered only when new data arrives, so a persistent
+                    // registration doesn't spin the monitor thread while
+                    // buffered bytes sit unread between reads.
                     var kev = _makeKevent(
                         ident: UInt(fileDescriptor.rawValue),
                         filter: filter,
-                        flags: UInt16(EV_ADD | EV_ENABLE)
+                        flags: UInt16(EV_ADD | EV_CLEAR)
                     )
                     let rc = _kevent(
                         state.kqueueFileDescriptor,
@@ -306,34 +321,31 @@ final class AsyncIO: Sendable {
                     }
                     return .registered
                 }
-
-                switch outcome {
-                case .registered:
-                    break
-                case .alreadyCancelled:
-                    continuation.finish()
-                case .failed(let error):
-                    continuation.finish(throwing: error)
-                }
-            case .failure(let setupError):
-                continuation.finish(throwing: setupError)
-                return
             }
+
+            switch outcome {
+            case .registered:
+                break
+            case .alreadyCancelled:
+                continuation.finish()
+            case .failed(let error):
+                continuation.finish(throwing: error)
+            }
+            return (stream, outcome)
         }
     }
 
-    internal func removeRegistration(for fileDescriptor: FileDescriptor) throws(SubprocessError) {
-        switch self.state {
-        case .success(let state):
-            let c = _registration.withLock { store -> SignalStream.Continuation? in
-                guard
-                    let continuation = store.removeRegistration(
-                        for: fileDescriptor.rawValue
-                    )
-                else {
-                    return nil
-                }
+    internal func removeRegistration(for fileDescriptor: FileDescriptor) {
+        let continuation = _registration.withLock { store -> SignalStream.Continuation? in
+            guard
+                let continuation = store.removeRegistration(
+                    for: fileDescriptor.rawValue
+                )
+            else {
+                return nil
+            }
 
+            if case .success(let state) = self.state {
                 for filter in [EVFILT_READ, EVFILT_WRITE] {
                     var kev = _makeKevent(
                         ident: UInt(fileDescriptor.rawValue),
@@ -349,13 +361,10 @@ final class AsyncIO: Sendable {
                         nil
                     )
                 }
-
-                return continuation
             }
-            c?.finish()
-        case .failure(let setupFailure):
-            throw setupFailure
+            return continuation
         }
+        continuation?.finish()
     }
 
     internal func cancelAsyncIO(for processIdentifier: ProcessIdentifier) throws(SubprocessError) {
