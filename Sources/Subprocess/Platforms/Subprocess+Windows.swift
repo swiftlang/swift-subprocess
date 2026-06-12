@@ -988,11 +988,16 @@ extension Configuration {
         }
         // The environment string must be terminated by a double
         // null-terminator.  Otherwise, CreateProcess will fail with
-        // INVALID_PARMETER.
+        // INVALID_PARMETER. It must also be sorted alphabetically according to
+        // CreateProcessW's documentation:
+        // > To do so, the application must explicitly create these environment variable
+        // > strings, sort them alphabetically (because the system uses a sorted environment),
+        // > and put them into the environment block.
         let environmentString =
-            env.map {
-                $0.key.rawValue + "=" + $0.value
-            }.joined(separator: "\0") + "\0\0"
+            env
+            .sorted { $0.key < $1.key }
+            .map { $0.key.rawValue + "=" + $0.value }
+            .joined(separator: "\0") + "\0\0"
 
         // Prepare arguments
         let (
