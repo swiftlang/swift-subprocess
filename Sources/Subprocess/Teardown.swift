@@ -245,10 +245,18 @@ extension Execution {
             #endif // !os(Windows)
             case .kill:
                 #if os(Windows)
-                try? self.terminate(
-                    withExitCode: 0,
-                    toProcessGroup: killProcessGroup
-                )
+                // Teardown must always terminate the child. Group termination
+                // requires a Job Object; fall back to per-process termination
+                // when the child isn't in one, or when group termination fails.
+                if killProcessGroup {
+                    do {
+                        try self.terminate(withExitCode: 0, toProcessGroup: true)
+                    } catch {
+                        try? self.terminate(withExitCode: 0, toProcessGroup: false)
+                    }
+                } else {
+                    try? self.terminate(withExitCode: 0, toProcessGroup: false)
+                }
                 #else
                 try? self.send(signal: .kill, toProcessGroup: killProcessGroup)
                 #endif

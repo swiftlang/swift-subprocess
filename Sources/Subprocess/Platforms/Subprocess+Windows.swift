@@ -46,10 +46,13 @@ extension Configuration {
         // Create the Job Object up front. It persists across all candidate path
         // attempts, and is owned by this function until ownership transfers to
         // the `ProcessIdentifier` on the success path.
-        let jobHandle = try Self.createJobObject()
-        var jobHandleOwned = true
+        let jobHandle: HANDLE? =
+            self.platformOptions.jobObjectAssignment.createsJob
+            ? try Self.createJobObject()
+            : nil
+        var jobHandleOwned: Bool = jobHandle != nil
         defer {
-            if jobHandleOwned {
+            if jobHandleOwned, let jobHandle {
                 _ = CloseHandle(jobHandle)
             }
         }
@@ -124,11 +127,12 @@ extension Configuration {
                     // child after assigning it to the Job Object.
                     let userManagesResume = (createProcessFlags & DWORD(CREATE_SUSPENDED)) != 0
 
-                    // Subprocess assigns every spawned child to a Job Object
-                    // before any user code runs in the child. `CREATE_SUSPENDED`
-                    // makes the assignment atomic, so it is always set
-                    // regardless of what the configurator did.
-                    createProcessFlags |= DWORD(CREATE_SUSPENDED)
+                    // CREATE_SUSPENDED makes Job Object assignment atomic, so it's
+                    // forced on whenever a job will be created. With `.never` there's
+                    // no assignment to protect, so the child isn't force-suspended.
+                    if self.platformOptions.jobObjectAssignment.createsJob {
+                        createProcessFlags |= DWORD(CREATE_SUSPENDED)
+                    }
 
                     let spawnContext = SpawnContext(
                         startupInfo: startupInfo,
@@ -237,11 +241,13 @@ extension Configuration {
                 )
             }
 
+            let assignedJobHandle: HANDLE?
             do {
-                try Self.assignChildToJobObjectAndResume(
+                assignedJobHandle = try Self.assignChildToJobObjectAndResume(
                     jobHandle: jobHandle,
                     processInfo: processInfo,
-                    resumeThread: !userManagesResume
+                    assignment: self.platformOptions.jobObjectAssignment,
+                    resumeThread: self.platformOptions.jobObjectAssignment.createsJob && !userManagesResume
                 )
             } catch {
                 try self.safelyCloseMultiple(
@@ -255,14 +261,17 @@ extension Configuration {
                 throw error
             }
 
-            // Transfer ownership of the job handle to the `ProcessIdentifier`.
-            jobHandleOwned = false
+            // Ownership of the job (if the child is in one) transfers to
+            // ProcessIdentifier. If a job was created but the child isn't in
+            // it (`.bestEffort` failure), the original handle stays owned here
+            // and is closed by `defer`.
+            jobHandleOwned = assignedJobHandle == nil && jobHandle != nil
 
             let pid = ProcessIdentifier(
                 value: processInfo.dwProcessId,
                 processDescriptor: processInfo.hProcess,
                 threadHandle: processInfo.hThread,
-                jobHandle: jobHandle
+                jobHandle: assignedJobHandle
             )
 
             do {
@@ -388,6 +397,37 @@ public struct PlatformOptions: Sendable {
         public static let minimized: Self = .init(.minimized)
     }
 
+    /// Describes how Job Object assignment is handled.
+    public struct JobObjectAssignment: Sendable, Hashable {
+        internal enum Storage: Sendable, Hashable {
+            case always
+            case bestEffort
+            case never
+        }
+
+        internal let storage: Storage
+
+        /// Always assign the child to a Job Object, and throw
+        /// ``SubprocessError/spawnFailed`` if assignment fails.
+        ///
+        /// This is the default behavior.
+        public static let always: Self = .init(storage: .always)
+
+        /// Attempt to assign the child to a Job Object, and proceed
+        /// without one if assignment fails.
+        ///
+        /// Descendant tracking and targeting the descendant-group
+        /// teardown are unavailable for subprocesses for which
+        /// assignment fails.
+        public static let bestEffort: Self = .init(storage: .bestEffort)
+
+        /// Never assign the child to a Job Object.
+        ///
+        /// Use this when manually handling job management, or when
+        /// descendant-group teardown is not necessary.
+        public static let never: Self = .init(storage: .never)
+    }
+
     /// The user credentials for starting the process as another user.
     internal var userCredentials: UserCredentials? = nil
     /// The console behavior of the new process.
@@ -404,6 +444,11 @@ public struct PlatformOptions: Sendable {
     /// The process identifier of the new process group
     /// is the same as the process identifier.
     public var createProcessGroup: Bool = false
+    /// Describes how Job Object assignment is handled.
+    ///
+    /// Defaults to always assigning the child to a Job Object, and throwing
+    /// ``SubprocessError/spawnFailed`` if assignment fails.
+    public var jobObjectAssignment: JobObjectAssignment = .always
     /// An ordered list of steps to tear down the child
     /// process if the parent task is canceled before
     /// the child process terminates.
@@ -424,23 +469,26 @@ public struct PlatformOptions: Sendable {
     /// and startup info `STARTUPINFOW` before
     /// they are sent to `CreateProcessW()`.
     ///
-    /// - Important: Subprocess assigns every spawned child to
-    /// an internal Job Object before any user code runs in the child,
-    /// so teardown sequences targeting the process group can terminate
-    /// the child and all of its descendants together. To make this
-    /// assignment atomic, Subprocess always spawns children with
-    /// `CREATE_SUSPENDED` set in `dwCreationFlags`, regardless of the
-    /// value the configurator leaves in `dwCreationFlags`. By default,
-    /// Subprocess resumes the child after the assignment completes.
-    /// If the configurator sets `CREATE_SUSPENDED` in `dwCreationFlags`,
-    /// Subprocess treats this as a signal that user code will resume
-    /// the child explicitly, and therefore skips the internal `ResumeThread`
-    /// call. In that case the caller is responsible for calling
-    /// `ResumeThread` on the thread handle exposed through
-    /// `Execution.processIdentifier.threadHandle`. Otherwise, the child
-    /// will remain suspended indefinitely. If user code separately
-    /// assigns the child to its own Job Object after spawn, that
-    /// user-supplied job is nested inside Subprocess's job.
+    /// - Important: When `jobObjectAssignment` is `.always` or `.bestEffort`,
+    /// Subprocess assigns the spawned child to an internal Job Object before
+    /// any user code runs in the child, so teardown sequences targeting the
+    /// process group can terminate the child and all of its descendants
+    /// together. (See ``JobObjectAssignment`` for how `.bestEffort` behaves
+    /// when assignment fails.) To make the assignment atomic, Subprocess
+    /// spawns such children with `CREATE_SUSPENDED` set in `dwCreationFlags`,
+    /// regardless of the value the configurator leaves there, and by default
+    /// resumes the child once assignment completes. If user code separately
+    /// assigns the child to its own Job Object after spawn, that user-supplied
+    /// job is nested inside Subprocess's job. When `jobObjectAssignment` is
+    /// `.never`, Subprocess creates no Job Object and does not force
+    /// `CREATE_SUSPENDED`; the configurator's `dwCreationFlags` are used as-is.
+    /// Regardless of `jobObjectAssignment`, if the configurator sets
+    /// `CREATE_SUSPENDED` in `dwCreationFlags`, Subprocess treats this as a
+    /// signal that user code will resume the child explicitly and skips its
+    /// internal `ResumeThread` call. The caller is then responsible for
+    /// calling `ResumeThread` on the thread handle exposed through
+    /// `Execution.processIdentifier.threadHandle`; otherwise the child remains
+    /// suspended indefinitely.
     public var preSpawnProcessConfigurator:
         (
             @Sendable (
@@ -497,6 +545,35 @@ extension PlatformOptions.WindowStyle: CustomStringConvertible, CustomDebugStrin
     }
 }
 
+extension PlatformOptions.JobObjectAssignment {
+    /// Whether this mode creates and attempts to assign a Job Object.
+    internal var createsJob: Bool {
+        switch self.storage {
+        case .always, .bestEffort: return true
+        case .never: return false
+        }
+    }
+}
+
+extension PlatformOptions.JobObjectAssignment: CustomStringConvertible, CustomDebugStringConvertible {
+    /// A textual representation of the Job Object assignment mode.
+    public var description: String {
+        switch self.storage {
+        case .always:
+            return "always"
+        case .bestEffort:
+            return "bestEffort"
+        case .never:
+            return "never"
+        }
+    }
+
+    /// A debug-oriented textual representation of the Job Object assignment mode.
+    public var debugDescription: String {
+        return self.description
+    }
+}
+
 extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible {
     internal func description(withIndent indent: Int) -> String {
         let indent = String(repeating: " ", count: indent * 4)
@@ -506,6 +583,7 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
             \(indent)    consoleBehavior: \(self.consoleBehavior),
             \(indent)    windowStyle: \(self.windowStyle),
             \(indent)    createProcessGroup: \(self.createProcessGroup),
+            \(indent)    jobObjectAssignment: \(self.jobObjectAssignment),
             \(indent)    preSpawnProcessConfigurator: \(self.preSpawnProcessConfigurator == nil ? "not set" : "set")
             \(indent))
             """
@@ -600,12 +678,25 @@ extension Execution {
     ///   exit code is propagated to every process in the job. When `false`
     ///   (the default), terminates only the immediate child process, leaving
     ///   descendants unaffected.
+    /// - Throws: `SubprocessError` with error code `.processControlFailed`.
+    /// Passing `toProcessGroup: true` throws when the subprocess isn't assigned
+    /// to a Job Object (`jobObjectAssignment` was `.never`, or `.bestEffort`
+    /// and assignment failed).
     public func terminate(
         withExitCode exitCode: DWORD,
         toProcessGroup: Bool = false
     ) throws(SubprocessError) {
         if toProcessGroup {
-            guard TerminateJobObject(self.processIdentifier.jobHandle, exitCode) else {
+            guard let jobHandle = self.processIdentifier.jobHandle else {
+                // No Job Object assigned, so there's no descendant group to
+                // terminate. Throw rather than silently degrading to per-process.
+                throw SubprocessError.processControlFailed(
+                    .terminate,
+                    reason: "The subprocess is not assigned to a Job Object. Set PlatformOptions.jobObjectAssignment to .always or .bestEffort to enable process-group termination.",
+                    underlyingError: nil
+                )
+            }
+            guard TerminateJobObject(jobHandle, exitCode) else {
                 throw SubprocessError.processControlFailed(
                     .terminate,
                     underlyingError: SubprocessError.WindowsError(win32Error: GetLastError())
@@ -912,14 +1003,17 @@ public struct ProcessIdentifier: Sendable, Hashable {
     public nonisolated(unsafe) let processDescriptor: HANDLE
     /// The main thread handle for this execution.
     public nonisolated(unsafe) let threadHandle: HANDLE
-    /// The Job Object handle that contains this process and any descendants.
-    internal nonisolated(unsafe) let jobHandle: HANDLE
+    /// The Job Object handle that contains this process and any descendants,
+    /// or `nil` if the process isn't assigned to a Job Object, either because
+    /// `PlatformOptions.jobObjectAssignment` was `.never`, or because it was
+    /// `.bestEffort` and assignment failed.
+    internal nonisolated(unsafe) let jobHandle: HANDLE?
 
     internal init(
         value: DWORD,
         processDescriptor: HANDLE,
         threadHandle: HANDLE,
-        jobHandle: HANDLE
+        jobHandle: HANDLE?
     ) {
         self.value = value
         self.processDescriptor = processDescriptor
@@ -934,8 +1028,10 @@ public struct ProcessIdentifier: Sendable, Hashable {
         guard CloseHandle(self.processDescriptor) else {
             fatalError("Failed to close process HANDLE: \(SubprocessError.WindowsError(win32Error: GetLastError()))")
         }
-        guard CloseHandle(self.jobHandle) else {
-            fatalError("Failed to close job HANDLE: \(SubprocessError.WindowsError(win32Error: GetLastError()))")
+        if let jobHandle = self.jobHandle {
+            guard CloseHandle(jobHandle) else {
+                fatalError("Failed to close job HANDLE: \(SubprocessError.WindowsError(win32Error: GetLastError()))")
+            }
         }
     }
 }
@@ -1174,58 +1270,66 @@ extension Configuration {
         return jobHandle
     }
 
-    /// Assigns the child process to the Job Object and, if requested, resumes
-    /// the child process thread.
+    /// Assigns the child process to the Job Object as specified by `assignment`
+    /// and, if requested, resumes the child process thread.
     ///
     /// When `resumeThread` is `false`, the caller is responsible for resuming
     /// the child using `ResumeThread` on the thread handle exposed through
     /// `Execution.processIdentifier.threadHandle`. The child remains
     /// suspended until then.
+    ///
+    /// The returned handle will be `nil` if `assignment` is `.never`, or if it
+    /// is `.bestEffort` and assignment failed.
     private static func assignChildToJobObjectAndResume(
-        jobHandle: HANDLE,
+        jobHandle: HANDLE?,
         processInfo: PROCESS_INFORMATION,
+        assignment: PlatformOptions.JobObjectAssignment,
         resumeThread: Bool
-    ) throws(SubprocessError) {
-        // `CreateProcessW` succeeded. The child is suspended. Assign it to
-        // the Job Object before resuming, so it cannot run any user code
-        // outside the job.
-        guard AssignProcessToJobObject(jobHandle, processInfo.hProcess) else {
-            let assignError = SubprocessError.WindowsError(win32Error: GetLastError())
-            _ = TerminateProcess(processInfo.hProcess, 1)
-            _ = CloseHandle(processInfo.hThread)
-            _ = CloseHandle(processInfo.hProcess)
+    ) throws(SubprocessError) -> HANDLE? {
+        var assignedJob: HANDLE? = nil
 
-            // Detect the most common cause of assignment failure: the parent
-            // process itself is in a non-nestable Job Object.
-            var isParentInJob: WindowsBool = false
-            var reason: String = "Failed to assign child process to Job Object"
-            if IsProcessInJob(GetCurrentProcess(), nil, &isParentInJob),
-                isParentInJob.boolValue
-            {
-                reason += " (likely because the parent process is in a Job Object that does not allow nesting)"
+        // A job handle exists only if assignment is `.always` or `.bestEffort`.
+        if let jobHandle {
+            if AssignProcessToJobObject(jobHandle, processInfo.hProcess) {
+                assignedJob = jobHandle
+            } else if case .always = assignment.storage {
+                let assignError = SubprocessError.WindowsError(win32Error: GetLastError())
+                _ = TerminateProcess(processInfo.hProcess, 1)
+                _ = CloseHandle(processInfo.hThread)
+                _ = CloseHandle(processInfo.hProcess)
+
+                // Detect the most common cause of assignment failure: the parent
+                // process itself is in a non-nestable Job Object.
+                var isParentInJob: WindowsBool = false
+                var reason = "Failed to assign child process to Job Object"
+                if IsProcessInJob(GetCurrentProcess(), nil, &isParentInJob),
+                    isParentInJob.boolValue
+                {
+                    reason += " (likely because the parent process is in a Job Object that does not allow nesting)"
+                }
+
+                throw SubprocessError.spawnFailed(
+                    withUnderlyingError: assignError,
+                    reason: reason
+                )
             }
-
-            throw SubprocessError.spawnFailed(
-                withUnderlyingError: assignError,
-                reason: reason
-            )
+            // `.bestEffort` failure: proceed without a job; fall through to resume.
         }
 
-        guard resumeThread else {
-            // The user opted into managing the resume themselves.
-            return
+        if resumeThread {
+            guard ResumeThread(processInfo.hThread) != DWORD(bitPattern: -1) else {
+                let resumeError = SubprocessError.WindowsError(win32Error: GetLastError())
+                _ = TerminateProcess(processInfo.hProcess, 1)
+                _ = CloseHandle(processInfo.hThread)
+                _ = CloseHandle(processInfo.hProcess)
+                throw SubprocessError.spawnFailed(
+                    withUnderlyingError: resumeError,
+                    reason: "Failed to resume child process thread after Job Object assignment"
+                )
+            }
         }
 
-        guard ResumeThread(processInfo.hThread) != DWORD(bitPattern: -1) else {
-            let resumeError = SubprocessError.WindowsError(win32Error: GetLastError())
-            _ = TerminateProcess(processInfo.hProcess, 1)
-            _ = CloseHandle(processInfo.hThread)
-            _ = CloseHandle(processInfo.hProcess)
-            throw SubprocessError.spawnFailed(
-                withUnderlyingError: resumeError,
-                reason: "Failed to resume child process thread after Job Object assignment"
-            )
-        }
+        return assignedJob
     }
 
     private func generateWindowsCommandAndArguments(

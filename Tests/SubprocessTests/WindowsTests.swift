@@ -435,6 +435,58 @@ extension SubprocessWindowsTests {
         }
         #expect(result.terminationStatus.isSuccess)
     }
+
+    @Test func testJobObjectAssignmentNeverDoesNotSuspendChild() async throws {
+        // Complement of `testPreSpawnConfiguratorCanOptIntoManualResume`. With
+        // `.never`, Subprocess creates no Job Object and does not force
+        // `CREATE_SUSPENDED`, so the child runs immediately and `ResumeThread`
+        // reports a previous suspend count of `0`.
+        var platformOptions = PlatformOptions()
+        platformOptions.jobObjectAssignment = .never
+
+        let result = try await Subprocess.run(
+            self.cmdExe,
+            arguments: ["/c", "type con"],
+            platformOptions: platformOptions,
+            input: .none,
+            output: .discarded,
+            error: .discarded
+        ) { execution in
+            let previousSuspendCount = ResumeThread(execution.processIdentifier.threadHandle)
+            #expect(previousSuspendCount == 0)
+            try execution.terminate(withExitCode: 0)
+        }
+        #expect(result.terminationStatus.isSuccess)
+    }
+
+    @Test func testJobObjectAssignmentNeverDisablesGroupTermination() async throws {
+        var platformOptions = PlatformOptions()
+        platformOptions.jobObjectAssignment = .never
+
+        let result = try await Subprocess.run(
+            self.cmdExe,
+            // Intentionally hangs so the child is alive for the body.
+            arguments: ["/c", "type con"],
+            platformOptions: platformOptions,
+            input: .none,
+            output: .discarded,
+            error: .discarded
+        ) { execution in
+            // No Job Object means group termination has no group to target.
+            let error = try #require(throws: SubprocessError.self) {
+                try execution.terminate(withExitCode: 0, toProcessGroup: true)
+            }
+            #expect(error.code == .processControlFailed)
+
+            // Per-process termination still works.
+            try execution.terminate(withExitCode: 0, toProcessGroup: false)
+        }
+        guard case .exited(let code) = result.terminationStatus else {
+            Issue.record("Process should have exited")
+            return
+        }
+        #expect(code == 0)
+    }
 }
 
 // MARK: - Batch File Argument Escaping (BatBadBut)
