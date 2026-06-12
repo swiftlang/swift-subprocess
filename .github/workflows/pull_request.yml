@@ -71,7 +71,7 @@ jobs:
       image: ubuntu:24.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Run Test
         run: bash -c './scripts/test-using-qemu.sh ${{ matrix.dist-kern }} -- swift test'
 
