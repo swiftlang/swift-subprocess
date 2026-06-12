@@ -3728,6 +3728,88 @@ extension SubprocessIntegrationTests {
     #endif // SubprocessFoundation
 }
 
+// MARK: - Resource Management Tests
+
+#if !os(Android) // Exit tests are not supported on Android
+/// The number of open resources (file descriptors on POSIX, kernel handles on Windows) held by the current process.
+private func openResourceCount() -> Int? {
+    #if os(Windows)
+    var count: DWORD = 0
+    guard GetProcessHandleCount(GetCurrentProcess(), &count) else {
+        return nil
+    }
+    return Int(count)
+    #else
+    // Count open fds by probing each descriptor number up to the soft limit.
+    // This is portable across every POSIX target (Linux, Android, Darwin, the BSDs)
+    let limit = Int(min(_subprocess_nofile_soft_limit(), UInt64(4096)))
+    var count = 0
+    for fd in 0..<limit where fcntl(CInt(fd), F_GETFD) != -1 {
+        count += 1
+    }
+    return count
+    #endif
+}
+
+extension SubprocessIntegrationTests {
+    /// Run many subprocesses sequentially to make sure Subprocess does not leak fds.
+    ///
+    /// This test runs inside an exit test for two reasons:
+    ///
+    /// 1) Isolated process means no sibling test suites share its fd/handle table. That makes the
+    /// resource count deterministic and lets us assert a strict threshold
+    /// instead of relying on sampling/timing heuristics.
+    ///
+    /// 2) IODescriptor deinit now `fatalError`s if the descriptor is not closed. An exit test will
+    /// help us catch fd leaks without crashing the whole test suite.
+    @Test func testManySequentialRunsDoNotLeakResources() async throws {
+        await #expect(processExitsWith: .success) {
+            #if os(Windows)
+            let executable: Executable = .name("cmd.exe")
+            func makeArguments(_ i: Int) -> Arguments { ["/c", "echo", "hello-\(i)"] }
+            #else
+            let executable: Executable = .name("echo")
+            func makeArguments(_ i: Int) -> Arguments { ["hello-\(i)"] }
+            #endif
+
+            // Warm up once so lazily-created singletons (the process-monitor
+            // thread, AsyncIO's epoll/IOCP machinery, etc.) are allocated before
+            // we sample the baseline.
+            _ = try await Subprocess.run(executable, arguments: makeArguments(0), output: .string(limit: .max))
+            guard let before = openResourceCount() else {
+                #if compiler(>=6.3)
+                try Test.cancel("Cannot determine the number of open resources")
+                #else
+                return
+                #endif
+            }
+
+            let iterations = 500
+            for i in 0..<iterations {
+                let result = try await Subprocess.run(
+                    executable,
+                    arguments: makeArguments(i),
+                    output: .string(limit: .max)
+                )
+                precondition(result.terminationStatus.isSuccess)
+                precondition(result.standardOutput?.contains("hello-\(i)") == true)
+            }
+
+            guard let after = openResourceCount() else {
+                #if compiler(>=6.3)
+                try Test.cancel("Cannot determine the number of open resources")
+                #else
+                return
+                #endif
+            }
+            let delta = after - before
+
+            precondition(delta <= 0, "Subprocess leaked \(delta) resources while iterating \(iterations) times.")
+        }
+    }
+}
+#endif // !os(Android)
+
 // MARK: - Utilities
 extension String {
     func trimmingNewLineAndQuotes() -> String {
