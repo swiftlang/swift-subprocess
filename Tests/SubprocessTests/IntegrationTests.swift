@@ -1067,6 +1067,43 @@ extension SubprocessIntegrationTests {
     }
 }
 
+// MARK: - Standard Input Writer Lifetime Tests
+
+extension SubprocessIntegrationTests {
+    @Test func testStandardInputWriterRejectsWritesAfterFinish() async throws {
+        #if os(Windows)
+        let setup = TestSetup(
+            executable: .name("cmd.exe"),
+            arguments: ["/c", "findstr x*"]
+        )
+        #else
+        let setup = TestSetup(
+            executable: .path("/bin/cat"),
+            arguments: []
+        )
+        #endif
+        let result = try await _run(
+            setup,
+            input: .inputWriter,
+            output: .string(limit: 1024),
+            error: .discarded
+        ) { execution in
+            let writer = execution.standardInputWriter
+            _ = try await writer.write("Hello, world!\n")
+            try await writer.finish()
+            // Writing after finish() must throw, not silently no-op or crash.
+            let afterFinishError = await #expect(throws: SubprocessError.self) {
+                _ = try await writer.write("after finish")
+            }
+            #expect(afterFinishError?.code == .failedToWriteToSubprocess)
+            // finish() is idempotent.
+            try await writer.finish()
+        }
+        #expect(result.terminationStatus.isSuccess)
+        #expect((result.standardOutput ?? "").contains("Hello, world!"))
+    }
+}
+
 // MARK: - Output Tests
 extension SubprocessIntegrationTests {
     @Test func testDiscardedOutput() async throws {

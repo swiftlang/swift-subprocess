@@ -66,7 +66,12 @@ extension Execution where Input == CustomWriteInput {
     /// A writer that sends data to the subprocess's standard input.
     ///
     /// Call ``StandardInputWriter/finish()`` after the last write so the
-    /// subprocess sees end-of-file on its standard input.
+    /// subprocess sees end-of-file on its standard input. If you don't, `run`
+    /// finishes the writer for you when the body closure returns.
+    ///
+    /// Like the ``Execution`` value itself, the writer is valid only for the
+    /// duration of the body closure. Don't store it or use it after the closure
+    /// returns. See ``StandardInputWriter`` for details.
     public var standardInputWriter: StandardInputWriter {
         return self.inputWriter!
     }
