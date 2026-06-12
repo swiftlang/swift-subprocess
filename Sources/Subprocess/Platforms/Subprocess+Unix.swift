@@ -501,35 +501,12 @@ extension Configuration {
                 let spawnContext = SpawnContext(
                     argv: argv, env: env, uidPtr: uidPtr, gidPtr: gidPtr, processGroupIDPtr: processGroupIDPtr
                 )
-                let (pid, processDescriptor, spawnError) = try await runOnBackgroundThread { () throws(SubprocessError) in
-                    return try possibleExecutablePath._withCString { exePath throws(SubprocessError) in
-                        return try (self.workingDirectory?.string).withOptionalCString { workingDir in
-                            return supplementaryGroups.withOptionalUnsafeBufferPointer { sgroups in
-                                return fileDescriptors.withUnsafeBufferPointer { fds in
-                                    var pid: pid_t = 0
-                                    var processDescriptor: PlatformFileDescriptor = .invalidDescriptor
-
-                                    let rc = _subprocess_fork_exec(
-                                        &pid,
-                                        &processDescriptor,
-                                        exePath,
-                                        workingDir,
-                                        fds.baseAddress!,
-                                        spawnContext.argv,
-                                        spawnContext.env,
-                                        spawnContext.uidPtr,
-                                        spawnContext.gidPtr,
-                                        spawnContext.processGroupIDPtr,
-                                        CInt(supplementaryGroups?.count ?? 0),
-                                        sgroups?.baseAddress,
-                                        self.platformOptions.createSession ? 1 : 0
-                                    )
-                                    return (pid, processDescriptor, rc)
-                                }
-                            }
-                        }
-                    }
-                }
+                let (pid, processDescriptor, spawnError) = try await self.forkExecRetryingTransientFailure(
+                    executablePath: possibleExecutablePath,
+                    fileDescriptors: fileDescriptors,
+                    spawnContext: spawnContext,
+                    supplementaryGroups: supplementaryGroups
+                )
                 // Spawn error
                 if spawnError != 0 {
                     if [ENOENT, EACCES, ENOTDIR].contains(spawnError) {
@@ -603,6 +580,68 @@ extension Configuration {
                 self.executable.description,
                 underlyingError: Errno(rawValue: ENOENT)
             )
+        }
+    }
+
+    /// Invokes `_subprocess_fork_exec()` on the shared background worker thread,
+    /// retrying a transient fork-side `EAGAIN` with bounded, jittered backoff.
+    ///
+    /// `EAGAIN` from `clone3()`/`fork()` means the kernel could not create the
+    /// task because a per-uid or system task-count limit was momentarily
+    /// reached. The condition is transient, so a bounded number of retries is
+    /// attempted before the error is surfaced unchanged.
+    ///
+    /// Only a fork-side `EAGAIN` is retried, identified by the shim returning
+    /// without a process descriptor (`.invalidDescriptor`): the kernel created
+    /// nothing, so re-attempting is clean. An exec-side failure carries a
+    /// valid descriptor for a child the shim has already reaped and is left
+    /// for the caller to handle as before.
+    ///
+    /// The backoff runs here, in the async context between worker-thread
+    /// invocations, not inside the shim. The shim holds a process-wide fork
+    /// lock with signals blocked, and the worker is a single shared executor,
+    /// so sleeping in either would stall every other spawn.
+    private func forkExecRetryingTransientFailure(
+        executablePath: String,
+        fileDescriptors: [CInt],
+        spawnContext: SpawnContext,
+        supplementaryGroups: [gid_t]?
+    ) async throws(SubprocessError) -> (pid_t, PlatformFileDescriptor, CInt) {
+        return try await self.runSpawnAttemptsRetryingTransientFailure {
+            () async throws(SubprocessError) -> (pid_t, PlatformFileDescriptor, CInt) in
+            return try await runOnBackgroundThread { () throws(SubprocessError) in
+                return try executablePath._withCString { exePath throws(SubprocessError) in
+                    return try (self.workingDirectory?.string).withOptionalCString { workingDir in
+                        return supplementaryGroups.withOptionalUnsafeBufferPointer { sgroups in
+                            return fileDescriptors.withUnsafeBufferPointer { fds in
+                                var pid: pid_t = 0
+                                var processDescriptor: PlatformFileDescriptor = .invalidDescriptor
+                                let rc = _subprocess_fork_exec(
+                                    &pid,
+                                    &processDescriptor,
+                                    exePath,
+                                    workingDir,
+                                    fds.baseAddress!,
+                                    spawnContext.argv,
+                                    spawnContext.env,
+                                    spawnContext.uidPtr,
+                                    spawnContext.gidPtr,
+                                    spawnContext.processGroupIDPtr,
+                                    CInt(supplementaryGroups?.count ?? 0),
+                                    sgroups?.baseAddress,
+                                    self.platformOptions.createSession ? 1 : 0
+                                )
+                                return (pid, processDescriptor, rc)
+                            }
+                        }
+                    }
+                }
+            }
+        } shouldRetryTransientFailure: { outcome in
+            // Retry only a transient fork-side EAGAIN: `.invalidDescriptor` means
+            // the kernel created nothing, so re-attempting is clean.
+            let (_, processDescriptor, spawnError) = outcome
+            return spawnError == EAGAIN && processDescriptor == .invalidDescriptor
         }
     }
 }
