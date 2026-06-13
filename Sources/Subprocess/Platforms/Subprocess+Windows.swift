@@ -575,10 +575,13 @@ internal func waitForProcessTermination(
 @Sendable
 internal func reapProcess(
     with processIdentifier: ProcessIdentifier
-) throws(SubprocessError) -> TerminationStatus {
+) throws(SubprocessError) -> (TerminationStatus, ResourceUsage) {
     // Windows keeps the exit code reachable through the process HANDLE
     // until the HANDLE is closed, so there is no zombie to reap. We just
     // need to read the exit code via `GetExitCodeProcess`.
+    // Collect resource usage while the process handle is still valid
+    let resourceUsage = ResourceUsage(processHandle: processIdentifier.processDescriptor)
+
     var status: DWORD = 0
     guard GetExitCodeProcess(processIdentifier.processDescriptor, &status) else {
         throw SubprocessError.failedToMonitor(
@@ -586,7 +589,7 @@ internal func reapProcess(
         )
     }
 
-    return .exited(status)
+    return (.exited(status), resourceUsage)
 }
 
 // MARK: - Subprocess Control

@@ -395,6 +395,7 @@ public func run<
     return ExecutionResult(
         processIdentifier: capturedResult.processIdentifier,
         terminationStatus: terminationStatus,
+        resourceUsage: outcome.resourceUsage,
         closureResult: capturedResult.closureResult,
         standardOutput: capturedResult.output,
         standardError: capturedResult.error
