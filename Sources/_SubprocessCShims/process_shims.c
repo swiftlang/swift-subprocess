@@ -104,6 +104,15 @@ vm_size_t _subprocess_vm_size(void) {
 }
 #endif
 
+#if TARGET_OS_MAC || TARGET_OS_UNIX
+static void _subprocess_reap_pid(pid_t pid) {
+    siginfo_t info;
+    int rc;
+    do {
+        rc = waitid(P_PID, pid, &info, WEXITED);
+    } while (rc == -1 && errno == EINTR);
+}
+#endif
 
 // MARK: - Darwin (posix_spawn)
 #if TARGET_OS_MAC
@@ -231,18 +240,25 @@ static int _subprocess_spawn_prefork(
                 // exec worked!
                 close(pipefd[0]);
                 return 0;
-            } else if (read_rc > 0) {
-                // Child exec failed and reported back
-                close(pipefd[0]);
+            }
+            // Capture errno now, before close()/waitid() can overwrite it.
+            int read_errno = errno;
+            if (read_rc < 0 && read_errno == EINTR) {
+                // Interrupted by a signal. Retry the read. Do not reap here;
+                // the child is reaped exactly once below.
+                continue;
+            }
+            // Setup or exec failed and the child has _exit()'d; reap it to
+            // avoid a zombie. The plain (non-prefork) path delegates to
+            // posix_spawn(), which reaps its own child on failure, so only
+            // this manual-fork path needs an explicit reap.
+            _subprocess_reap_pid(childPid);
+            close(pipefd[0]);
+            if (read_rc > 0) {
+                // Child reported its errno back
                 return childError;
             } else {
-                // Read failed
-                if (errno == EINTR) {
-                    continue;
-                } else {
-                    close(pipefd[0]);
-                    return errno;
-                }
+                return read_errno;
             }
         }
     }
@@ -520,14 +536,6 @@ static void _set_cloexec_to_open_fds(const char *fd_dir) {
 // This function is only used on non-Linux systems.
 static int _highest_possibly_open_fd(void) {
     return sysconf(_SC_OPEN_MAX);
-}
-
-static void _subprocess_reap_pid(pid_t pid) {
-    siginfo_t info;
-    int rc;
-    do {
-        rc = waitid(P_PID, pid, &info, WEXITED);
-    } while (rc == -1 && errno == EINTR);
 }
 
 int _subprocess_fork_exec(
