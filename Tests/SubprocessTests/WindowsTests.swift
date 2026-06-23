@@ -570,6 +570,24 @@ extension SubprocessWindowsTests {
     }
 }
 
+// MARK: - Environment.Key Case-Insensitive Comparison
+extension SubprocessWindowsTests {
+    @Test func testEnvironmentKeyComparableMatchesEquatable() {
+        let upper: Environment.Key = "PATH"
+        let lower: Environment.Key = "path"
+        #expect(upper == lower)
+        #expect(!(upper < lower))
+        #expect(!(lower < upper))
+        #expect(!(upper > lower))
+        #expect(!(lower > upper))
+    }
+
+    @Test func testEnvironmentKeySortsCaseInsensitively() {
+        let keys: [Environment.Key] = ["Banana", "apple", "Kiwi"]
+        #expect(keys.sorted().map(\.rawValue) == ["apple", "Banana", "Kiwi"])
+    }
+}
+
 // MARK: - User Utils
 extension SubprocessWindowsTests {
     private func withTemporaryUser(
