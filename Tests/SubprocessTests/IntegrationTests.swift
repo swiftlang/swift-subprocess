@@ -2710,6 +2710,85 @@ extension SubprocessIntegrationTests {
 }
 #endif // !os(Windows)
 
+// MARK: - Spawn retry tests
+#if !os(Windows)
+extension SubprocessIntegrationTests {
+    @Test func retriesUntilSuccess() async throws {
+        let counter = CallCounter()
+        let failuresBeforeSuccess = 3
+        let configuration = Configuration(executable: .name("true"))
+
+        let outcome = try await configuration.runSpawnAttemptsRetryingTransientFailure {
+            () async throws(SubprocessError) -> FakeSpawnOutcome in
+            let attempt = counter.increment()
+            return attempt <= failuresBeforeSuccess ? .transientFailure : .success
+        } shouldRetryTransientFailure: { outcome in
+            outcome == .transientFailure
+        }
+
+        #expect(outcome == .success)
+        #expect(counter.count == failuresBeforeSuccess + 1)
+    }
+
+    @Test func surfacesFailureAtCap() async throws {
+        let counter = CallCounter()
+        let configuration = Configuration(executable: .name("true"))
+
+        let outcome = try await configuration.runSpawnAttemptsRetryingTransientFailure {
+            () async throws(SubprocessError) -> FakeSpawnOutcome in
+            counter.increment()
+            return .transientFailure
+        } shouldRetryTransientFailure: { outcome in
+            outcome == .transientFailure
+        }
+
+        #expect(outcome == .transientFailure)
+        #expect(counter.count == 6 /* Configuration.maxSpawnAttempts */)
+    }
+
+    @Test func noRetryWhenNotTransient() async throws {
+        let counter = CallCounter()
+        let configuration = Configuration(executable: .name("true"))
+
+        let outcome = try await configuration.runSpawnAttemptsRetryingTransientFailure {
+            () async throws(SubprocessError) -> FakeSpawnOutcome in
+            counter.increment()
+            return .success
+        } shouldRetryTransientFailure: { outcome in
+            outcome == .transientFailure
+        }
+
+        #expect(outcome == .success)
+        #expect(counter.count == 1)
+    }
+
+    @Test func cancellationStopsRetrying() async throws {
+        let counter = CallCounter()
+        let configuration = Configuration(executable: .name("true"))
+
+        // No `await` between creating the task and cancelling it, so the task
+        // body cannot start until this function suspends at `task.value`, by
+        // which point cancellation is already requested. The first backoff
+        // therefore throws `CancellationError`, which the driver turns into
+        // the pending outcome rather than propagating.
+        let task = Task {
+            try await configuration.runSpawnAttemptsRetryingTransientFailure {
+                () async throws(SubprocessError) -> FakeSpawnOutcome in
+                counter.increment()
+                return .transientFailure
+            } shouldRetryTransientFailure: { outcome in
+                outcome == .transientFailure
+            }
+        }
+        task.cancel()
+
+        let outcome = try await task.value
+        #expect(outcome == .transientFailure)
+        #expect(counter.count < 6 /* Configuration.maxSpawnAttempts */)
+    }
+}
+#endif // !os(Windows)
+
 // MARK: - Other Tests
 extension SubprocessIntegrationTests {
     @Test func testTerminateProcess() async throws {
@@ -3927,3 +4006,32 @@ extension FileDescriptor {
         return result
     }
 }
+
+#if !os(Windows)
+/// A thread-safe call counter. The retry driver invokes `attempt` sequentially,
+/// but the cancellation test runs the driver inside a child `Task`, so the
+/// counter must be safe to capture into a `@Sendable` closure.
+private final class CallCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    @discardableResult
+    func increment() -> Int {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        self.value += 1
+        return self.value
+    }
+
+    var count: Int {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        return self.value
+    }
+}
+
+private enum FakeSpawnOutcome: Sendable, Equatable {
+    case transientFailure
+    case success
+}
+#endif // !os(Windows)

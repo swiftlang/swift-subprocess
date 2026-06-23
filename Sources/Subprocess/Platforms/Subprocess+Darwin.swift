@@ -424,29 +424,11 @@ extension Configuration {
                     uidPtr: uidPtr,
                     gidPtr: gidPtr
                 )
-                let (spawnError, pid) = try await runOnBackgroundThread {
-                    return possibleExecutablePath._withCString { exePath in
-                        return supplementaryGroups.withOptionalUnsafeBufferPointer { sgroups in
-                            var pid: pid_t = 0
-                            var _fileActions = spawnContext.fileActions
-                            var _spawnAttributes = spawnContext.spawnAttributes
-                            let rc = _subprocess_spawn(
-                                &pid,
-                                exePath,
-                                &_fileActions,
-                                &_spawnAttributes,
-                                spawnContext.argv,
-                                spawnContext.env,
-                                spawnContext.uidPtr,
-                                spawnContext.gidPtr,
-                                Int32(supplementaryGroups?.count ?? 0),
-                                sgroups?.baseAddress,
-                                self.platformOptions.createSession ? 1 : 0
-                            )
-                            return (rc, pid)
-                        }
-                    }
-                }
+                let (spawnError, pid) = try await self.spawnRetryingTransientFailure(
+                    executablePath: possibleExecutablePath,
+                    spawnContext: spawnContext,
+                    supplementaryGroups: supplementaryGroups
+                )
                 // Spawn error
                 if spawnError != 0 {
                     if [ENOENT, EACCES, ENOTDIR].contains(spawnError) {
@@ -508,6 +490,56 @@ extension Configuration {
                 self.executable.description,
                 underlyingError: Errno(rawValue: ENOENT)
             )
+        }
+    }
+
+    /// Invokes `_subprocess_spawn` on the shared background worker thread,
+    /// retrying a transient fork-side `EAGAIN` with bounded, jittered backoff.
+    ///
+    /// `posix_spawn` is used directly only when no pre-fork setup is required;
+    /// in that path an `EAGAIN` is the internal fork failing with no child
+    /// created; this is the clean, retryable case, and the existing error
+    /// handling already treats a non-prefork failure as leaving nothing to
+    /// reap. When pre-fork setup is required, a failure can carry a child, so
+    /// it is left for the caller to handle as before rather than retried.
+    private func spawnRetryingTransientFailure(
+        executablePath: String,
+        spawnContext: SpawnContext,
+        supplementaryGroups: [gid_t]?
+    ) async throws(SubprocessError) -> (CInt, pid_t) {
+        let requiresPreFork =
+            self.platformOptions.userID != nil
+            || self.platformOptions.groupID != nil
+            || (supplementaryGroups?.count ?? 0) > 0
+            || self.platformOptions.createSession
+        return try await self.runSpawnAttemptsRetryingTransientFailure {
+            () async throws(SubprocessError) -> (CInt, pid_t) in
+            return try await runOnBackgroundThread {
+                return executablePath._withCString { exePath in
+                    return supplementaryGroups.withOptionalUnsafeBufferPointer { sgroups in
+                        var pid: pid_t = 0
+                        var _fileActions = spawnContext.fileActions
+                        var _spawnAttributes = spawnContext.spawnAttributes
+                        let rc = _subprocess_spawn(
+                            &pid,
+                            exePath,
+                            &_fileActions,
+                            &_spawnAttributes,
+                            spawnContext.argv,
+                            spawnContext.env,
+                            spawnContext.uidPtr,
+                            spawnContext.gidPtr,
+                            Int32(supplementaryGroups?.count ?? 0),
+                            sgroups?.baseAddress,
+                            self.platformOptions.createSession ? 1 : 0
+                        )
+                        return (rc, pid)
+                    }
+                }
+            }
+        } shouldRetryTransientFailure: { outcome in
+            let (spawnError, _) = outcome
+            return !requiresPreFork && spawnError == EAGAIN
         }
     }
 }

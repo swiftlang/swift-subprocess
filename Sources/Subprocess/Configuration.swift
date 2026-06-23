@@ -732,6 +732,68 @@ extension Configuration {
             return self._errorReadEnd.take()
         }
     }
+
+    #if !os(Windows)
+    /// The maximum number of `fork`/`exec` attempts, including the first one,
+    /// before a transient, retryable spawn failure is surfaced to the caller.
+    private static let maxSpawnAttempts = 6
+    /// The base spawn-retry backoff in nanoseconds. The delay doubles each
+    /// attempt up to ``spawnRetryBackoffCapNanoseconds``, with jitter applied.
+    private static let spawnRetryBackoffBaseNanoseconds: UInt64 = 1_000_000
+    /// The maximum spawn-retry backoff in nanoseconds.
+    private static let spawnRetryBackoffCapNanoseconds: UInt64 = 100_000_000
+
+    /// A jittered, capped exponential backoff (in nanoseconds) for the given
+    /// spawn attempt.
+    internal static func spawnRetryBackoffNanoseconds(forAttempt attempt: Int) -> UInt64 {
+        let shift = UInt64(min(attempt - 1, 16))
+        let ceiling = min(
+            spawnRetryBackoffCapNanoseconds,
+            spawnRetryBackoffBaseNanoseconds << shift
+        )
+        // Equal jitter: half fixed, half random, to de-synchronize concurrent
+        // retriers without collapsing the delay toward zero.
+        let half = ceiling / 2
+        return half + UInt64.random(in: 0...half)
+    }
+
+    /// Runs `attempt`, retrying while `shouldRetryTransientFailure` returns
+    /// `true`, up to ``maxSpawnAttempts``, with bounded jittered backoff
+    /// between attempts.
+    ///
+    /// `EAGAIN` from `clone3`/`fork`/`posix_spawn` means the kernel could not
+    /// create the task because a per-uid or system task-count limit was
+    /// momentarily reached. The condition is transient, so a bounded number of
+    /// retries is attempted before the failure is surfaced unchanged. Each
+    /// platform decides which failures are the clean, retryable fork-side case.
+    ///
+    /// The backoff runs here, in the async context between attempts, never
+    /// inside the spawn helper: that helper holds a process-wide fork lock with
+    /// signals blocked and runs on a single shared worker thread, so sleeping
+    /// there would stall every other spawn. On cancellation during the backoff,
+    /// retrying stops and the pending outcome is surfaced rather than throwing a
+    /// cancellation error into the spawn path.
+    internal func runSpawnAttemptsRetryingTransientFailure<Outcome: Sendable>(
+        _ attempt: () async throws(SubprocessError) -> Outcome,
+        shouldRetryTransientFailure shouldRetry: (Outcome) -> Bool
+    ) async throws(SubprocessError) -> Outcome {
+        var attemptNumber = 1
+        while true {
+            let outcome = try await attempt()
+            guard shouldRetry(outcome), attemptNumber < Self.maxSpawnAttempts else {
+                return outcome
+            }
+            do {
+                try await Task.sleep(
+                    nanoseconds: Self.spawnRetryBackoffNanoseconds(forAttempt: attemptNumber)
+                )
+            } catch {
+                return outcome
+            }
+            attemptNumber += 1
+        }
+    }
+    #endif
 }
 
 internal enum StringOrRawBytes: Sendable, Hashable {
