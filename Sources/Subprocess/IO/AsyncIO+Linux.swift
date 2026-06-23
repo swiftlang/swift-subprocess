@@ -350,7 +350,7 @@ final class AsyncIO: Sendable {
     internal func cancelAsyncIO(for processIdentifier: ProcessIdentifier) throws(SubprocessError) {
         switch self.state {
         case .success(let state):
-            let cancelledContinuations = _registration.withLock { storage -> [SignalStream.Continuation] in
+            let cancelledContinuations = try _registration.withLock { storage throws(SubprocessError) -> [SignalStream.Continuation] in
                 let previousRegistrations = storage.cancel(processIdentifier: processIdentifier)
                 guard !previousRegistrations.isEmpty else {
                     return []
@@ -359,13 +359,18 @@ final class AsyncIO: Sendable {
                 for registration in previousRegistrations {
                     toBeCancelled.append(registration.continuation)
 
-                    // Best-effort detach; ignore `ENOENT` (already gone).
-                    _ = epoll_ctl(
+                    let rc = epoll_ctl(
                         state.epollFileDescriptor,
                         EPOLL_CTL_DEL,
                         registration.fileDescriptor,
                         nil
                     )
+                    if rc != 0 && errno != ENOENT {
+                        throw SubprocessError.asyncIOFailed(
+                            reason: "failed to remove \(registration.fileDescriptor) from epoll list",
+                            underlyingError: Errno(rawValue: errno)
+                        )
+                    }
                 }
                 return toBeCancelled
             }

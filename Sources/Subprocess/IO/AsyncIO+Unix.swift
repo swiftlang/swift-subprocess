@@ -404,18 +404,20 @@ internal struct Registration {
         if self.cancelledProcesses.contains(processIdentifier) {
             return .alreadyCancelled
         }
-        if let existing = self.fileDescriptorMap[fileDescriptor] {
+
+        if let existing = self.fileDescriptorMap.updateValue(
+            (continuation, processIdentifier),
+            forKey: fileDescriptor
+        ) {
             // The descriptor is already attached to the multiplexer. Finish the
             // previous continuation so any stale awaiter unblocks, then replace
             // it and reuse the existing attachment.
             existing.continuation.finish()
-            self.fileDescriptorMap[fileDescriptor] = (continuation, processIdentifier)
             return .updated
         }
-        self.fileDescriptorMap[fileDescriptor] = (continuation, processIdentifier)
-        var fileDescriptorSet = self.processIdentifierMap[processIdentifier] ?? Set()
-        fileDescriptorSet.insert(fileDescriptor)
-        self.processIdentifierMap[processIdentifier] = fileDescriptorSet
+
+        self.processIdentifierMap[processIdentifier, default: Set()].insert(fileDescriptor)
+
         return .registered
     }
 
