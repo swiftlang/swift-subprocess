@@ -480,6 +480,9 @@ extension Configuration {
                     processGroupIDPtr = .allocate(capacity: 1)
                     processGroupIDPtr?.pointee = gid_t(processGroupID)
                 }
+                defer {
+                    processGroupIDPtr?.deallocate()
+                }
                 // Setup Arguments
                 let argv: [UnsafeMutablePointer<CChar>?] = self.arguments.createArgs(
                     withExecutablePath: possibleExecutablePath
