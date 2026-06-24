@@ -586,6 +586,14 @@ extension SubprocessWindowsTests {
         let keys: [Environment.Key] = ["Banana", "apple", "Kiwi"]
         #expect(keys.sorted().map(\.rawValue) == ["apple", "Banana", "Kiwi"])
     }
+
+    @Test func testEnvironmentKeyOrdinalSortMatchesWindowsBlockOrder() {
+        // Windows sorts the environment block case-insensitively in uppercase
+        // ordinal order, so '_' (0x5F) sorts after letters. "APPDATA" must
+        // therefore precede "APP_NAME".
+        let keys: [Environment.Key] = ["APP_NAME", "APPDATA"]
+        #expect(keys.sorted().map(\.rawValue) == ["APPDATA", "APP_NAME"])
+    }
 }
 
 // MARK: - User Utils

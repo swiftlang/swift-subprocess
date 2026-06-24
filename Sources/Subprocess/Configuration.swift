@@ -592,7 +592,28 @@ extension Environment.Key {
     /// The value used for equality, hashing, and ordering.
     private var _comparisonValue: String {
         #if os(Windows)
-        return self.rawValue.lowercased()
+        // Windows treats environment-variable names case-insensitively and
+        // requires the environment block to be sorted in case-insensitive,
+        // ordinal order without regard to locale. Its ordinal case-insensitive
+        // comparison folds to uppercase, so '_' (0x5F), and the other scalars
+        // between 'Z' and 'a', sort after letters. Folding to uppercase here
+        // (a–z → A–Z) lands letters in 0x41–0x5A and matches that order;
+        // folding to lowercase would sort '_' before letters.
+        //
+        // The fold is ASCII-only and applies no Unicode case mapping, so unlike
+        // `uppercased()` it never expands a scalar ("ß" stays "ß", not "SS")
+        // and is stable across Unicode versions. It does not case-fold
+        // non-ASCII scalars the way Windows does, which is immaterial because
+        // environment-variable names are ASCII in practice.
+        return String(
+            String.UnicodeScalarView(
+                self.rawValue.unicodeScalars.map { scalar in
+                    (scalar.value >= 0x61 && scalar.value <= 0x7A)
+                        ? Unicode.Scalar(scalar.value - 0x20)! // a–z → A–Z; always valid
+                        : scalar
+                }
+            )
+        )
         #else
         return self.rawValue
         #endif
