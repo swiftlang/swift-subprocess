@@ -535,6 +535,21 @@ extension Configuration {
                         errorRead: errorReadFileDescriptor,
                         errorWrite: errorWriteFileDescriptor
                     )
+                    // A fork/clone3 that succeeded but failed to execve still
+                    // produced a process descriptor. The fork-vs-exec retry
+                    // discriminator has already run on this outcome, so closing
+                    // it here cannot make the exec-side failure look fork-side.
+                    // Unlike the branch above, close best-effort (mirroring
+                    // ProcessIdentifier.close()) so the spawn error remains as
+                    // the thrown error. Descriptor-less fallbacks returned
+                    // .invalidDescriptor and need no close. This comes after
+                    // the safelyCloseMultiple call, since if that throws, the
+                    // worst case here is one pidfd leaking; otherwise, if this
+                    // came first and throws, the worst case would be six fds
+                    // never closing and their deinit methods fatal-erroring.
+                    if processDescriptor != .invalidDescriptor {
+                        try? _safelyClose(.fileDescriptor(FileDescriptor(rawValue: processDescriptor)))
+                    }
                     throw SubprocessError.spawnFailed(withUnderlyingError: Errno(rawValue: spawnError))
                 }
                 // After spawn finishes, close all child side fds
