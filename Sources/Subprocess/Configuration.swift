@@ -588,10 +588,20 @@ extension Environment.Key {
 
 extension Environment.Key: CodingKeyRepresentable {}
 
+extension Environment.Key {
+    /// The value used for equality, hashing, and ordering.
+    private var _comparisonValue: String {
+        #if os(Windows)
+        return self.rawValue.lowercased()
+        #else
+        return self.rawValue
+        #endif
+    }
+}
+
 extension Environment.Key: Comparable {
     public static func < (lhs: Self, rhs: Self) -> Bool {
-        // Even on windows use a stable sort order.
-        lhs.rawValue < rhs.rawValue
+        lhs._comparisonValue < rhs._comparisonValue
     }
 }
 
@@ -607,11 +617,7 @@ extension Environment.Key: Encodable {
 
 extension Environment.Key: Equatable {
     public static func == (_ lhs: Self, _ rhs: Self) -> Bool {
-        #if os(Windows)
-        lhs.rawValue.lowercased() == rhs.rawValue.lowercased()
-        #else
-        lhs.rawValue == rhs.rawValue
-        #endif
+        lhs._comparisonValue == rhs._comparisonValue
     }
 }
 
@@ -629,11 +635,7 @@ extension Environment.Key: Decodable {
 
 extension Environment.Key: Hashable {
     public func hash(into hasher: inout Hasher) {
-        #if os(Windows)
-        self.rawValue.lowercased().hash(into: &hasher)
-        #else
-        self.rawValue.hash(into: &hasher)
-        #endif
+        self._comparisonValue.hash(into: &hasher)
     }
 }
 
