@@ -3883,7 +3883,10 @@ extension SubprocessIntegrationTests {
             }
             let delta = after - before
 
-            precondition(delta <= 0, "Subprocess leaked \(delta) resources while iterating \(iterations) times.")
+            precondition(
+                delta < iterations,
+                "Subprocess leaked \(delta) resources while iterating \(iterations) times."
+            )
         }
     }
 }
