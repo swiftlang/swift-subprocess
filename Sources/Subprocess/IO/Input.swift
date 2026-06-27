@@ -284,8 +284,8 @@ public final actor StandardInputWriter: Sendable {
     /// Writes an array of bytes to the subprocess's standard input.
     /// - Parameter array: The bytes to write.
     /// - Throws: `SubprocessError` with error code `.failedToWriteToSubprocess`.
-    ///     See ``underlyingError`` for more details. Also throws this error if
-    ///     the writer has already finished (see ``finish()``).
+    ///     See ``SubprocessError/underlyingError`` for more details. Also throws
+    ///     this error if the writer has already finished (see ``finish()``).
     /// - Returns: The number of bytes written.
     public func write(
         _ array: [UInt8]
@@ -300,8 +300,8 @@ public final actor StandardInputWriter: Sendable {
     ///
     /// - Parameter span: The span to write.
     /// - Throws: `SubprocessError` with error code `.failedToWriteToSubprocess`.
-    ///     See ``underlyingError`` for more details. Also throws this error if
-    ///     the writer has already finished (see ``finish()``).
+    ///     See ``SubprocessError/underlyingError`` for more details. Also throws
+    ///     this error if the writer has already finished (see ``finish()``).
     /// - Returns: The number of bytes written.
     public func write(_ span: borrowing RawSpan) async throws(SubprocessError) -> Int {
         guard !self.didFinish else {
@@ -315,8 +315,8 @@ public final actor StandardInputWriter: Sendable {
     ///   - string: The string to write.
     ///   - encoding: The encoding to use when converting the string to bytes.
     /// - Throws: `SubprocessError` with error code `.failedToWriteToSubprocess`.
-    ///     See ``underlyingError`` for more details. Also throws this error if
-    ///     the writer has already finished (see ``finish()``).
+    ///     See ``SubprocessError/underlyingError`` for more details. Also throws
+    ///     this error if the writer has already finished (see ``finish()``).
     /// - Returns: The number of bytes written.
     public func write<Encoding: Unicode.Encoding>(
         _ string: some StringProtocol,
@@ -338,7 +338,7 @@ public final actor StandardInputWriter: Sendable {
     /// ``SubprocessError/Code/failedToWriteToSubprocess``.
     ///
     /// - Throws: `SubprocessError` with error code `.asyncIOFailed`.
-    ///     See ``underlyingError`` for more details.
+    ///     See ``SubprocessError/underlyingError`` for more details.
     public func finish() async throws(SubprocessError) {
         guard !self.didFinish else {
             return
