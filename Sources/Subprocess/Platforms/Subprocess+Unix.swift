@@ -99,8 +99,8 @@ extension Execution {
     ///   - signal: The signal to send.
     ///   - shouldSendToProcessGroup: Whether this signal should be sent to
     ///     the entire process group.
-    /// - Throws: `SubprocessError` with error code `.processControlFailed`.
-    ///     See `.underlyingError` for more details.
+    /// - Throws: ``SubprocessError`` with error code ``SubprocessError/Code/processControlFailed``.
+    ///     See ``SubprocessError/underlyingError`` for more details.
     public func send(
         signal: Signal,
         toProcessGroup shouldSendToProcessGroup: Bool = false
