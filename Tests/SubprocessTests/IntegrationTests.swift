@@ -921,6 +921,8 @@ extension SubprocessIntegrationTests {
         let expected: Data = try Data(
             contentsOf: URL(filePath: theMysteriousIsland.string)
         )
+        // TODO: Pass `expected.span` directly to `_run()`.
+        // https://github.com/swiftlang/swift/issues/90259
         let ptr = expected.withUnsafeBytes { return $0 }
         let span: Span<UInt8> = Span(_unsafeBytes: ptr)
         let catResult = try await _run(

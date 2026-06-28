@@ -37,21 +37,14 @@ public func _overrideLifetime<
     dependent
 }
 
-extension Span where Element: BitwiseCopyable {
-    internal var _bytes: RawSpan {
-        @_lifetime(copy self)
-        @_alwaysEmitIntoClient
-        get {
-            let rawSpan = RawSpan(_elements: self)
-            return _overrideLifetime(of: rawSpan, copyingFrom: self)
-        }
-    }
-}
-
 extension Array where Element: BitwiseCopyable {
     // swift-format-ignore
     // Access the storage backing this Buffer
     internal var _bytes: RawSpan {
+        // `Array.span` (SE-0456) is gated to macOS 26 and does not back-deploy,
+        // but Subprocess deploys to macOS 13, so hand-roll the `RawSpan`. There
+        // is no back-deployed `Array.span`. Replace with `self.span.bytes` once
+        // the deployment floor reaches macOS 26.
         @_lifetime(borrow self)
         borrowing get {
             let ptr = self.withUnsafeBytes { $0 }

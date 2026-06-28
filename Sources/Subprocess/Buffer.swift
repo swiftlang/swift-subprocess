@@ -63,14 +63,8 @@ extension SubprocessOutputSequence.Buffer {
         }
     }
 
-    // swift-format-ignore
     // Access the storage backing this Buffer
     public var bytes: RawSpan {
-        @_lifetime(borrow self)
-        borrowing get {
-            let ptr = self.data.withUnsafeBytes { $0 }
-            let bytes = RawSpan(_unsafeBytes: ptr)
-            return _overrideLifetime(of: bytes, to: self)
-        }
+        return self.data._bytes
     }
 }
