@@ -292,7 +292,16 @@ final class AsyncIO: @unchecked Sendable {
         let bytesRead: DWORD
         do {
             guard let next = try await iterator.next() else {
-                return .finished
+                // `next()` resolved to `nil` because the owning task was cancelled
+                // (`group.cancelAll()` on child termination), not because the read
+                // failed. The `ReadFile` issued above may have already completed,
+                // with its bytes sitting in `resultBuffer`. Those bytes have been
+                // pulled out of the pipe, so the post-cancellation drain cannot
+                // recover them: dropping them here loses exactly one buffer.
+                return self.reconcileOverlappedAfterCancellation(
+                    handle: handle,
+                    overlapped: &overlapped
+                )
             }
             bytesRead = next
         } catch {
@@ -308,6 +317,88 @@ final class AsyncIO: @unchecked Sendable {
             return .finished
         }
         return .read(Int(truncatingIfNeeded: bytesRead))
+    }
+
+    /// Reconciles an overlapped `ReadFile` whose awaiting task was cancelled
+    /// before its completion was delivered through the signal stream.
+    ///
+    /// When the capture task is cancelled, the `ReadFile` this function's caller
+    /// issued is in one of three states, and returning `.finished`
+    /// unconditionally is wrong for two of the three states: for a completed
+    /// read it silently drops the bytes already moved out of the pipe, and for
+    /// a pending read it abandons an operation whose buffer the kernel may still
+    /// be writing into (use-after-free once that buffer goes out of scope). The
+    /// third state, a completed-empty or aborted read, is the one an
+    /// unconditional `.finished` handles correctly. The pending case is reached
+    /// when a surviving descendant holds the write end open and the read is
+    /// parked at cancellation (the same condition as
+    /// `drainBufferedDataAfterCancellation()`).
+    ///
+    /// - Important: `overlapped` must reference the same storage passed to the
+    /// `ReadFile` call, and `resultBuffer` (owned by the caller) must outlive
+    /// this call. On the pending path this function blocks until the cancelled
+    /// read has fully unwound, guaranteeing the kernel is done with both before
+    /// they are freed.
+    private func reconcileOverlappedAfterCancellation(
+        handle: HANDLE,
+        overlapped: inout _OVERLAPPED
+    ) -> OverlappedReadOutcome {
+        var transferred: DWORD = 0
+
+        // Did the read already complete?
+        if GetOverlappedResult(handle, &overlapped, &transferred, false) {
+            // Completed. If it carried bytes, they are in `resultBuffer` and must
+            // be surfaced; the drain can't re-read them (already out of pipe).
+            if transferred > 0 {
+                return .read(Int(truncatingIfNeeded: transferred))
+            }
+            // Completed with zero bytes: EOF-like. Let the caller fall through
+            // to the drain (which will see broken pipe/empty and finish).
+            return .finished
+        }
+
+        let gle = GetLastError()
+        if gle == ERROR_IO_INCOMPLETE {
+            // The read is still pending. Returning now would let `resultBuffer`
+            // and `overlapped` go out of scope while the kernel may still write
+            // into them, so cancel this specific operation and block until it
+            // has fully unwound.
+            //
+            // With `overlapped.hEvent` `NULL`, the wait below falls back to
+            // signaling on `handle` itself. Microsoft discourages that only
+            // because a handle carrying several concurrent overlapped
+            // operations can't disambiguate which one completed. This handle
+            // never does: stdout is read-only and reads on it are strictly
+            // sequential (the capture loop awaits each read before issuing the
+            // next), so at most one operation is in flight, and `ReadFile`
+            // resets the handle to nonsignaled at issue, so no prior read's
+            // signal can satisfy this wait early. `drainBufferedDataAfterCancellation()`
+            // issues its own read and can therefore afford a private event with
+            // the IOCP-suppressing low bit; this operation was already issued
+            // IOCP-bound, so it reuses the handle's own signal instead.
+            _ = CancelIoEx(handle, &overlapped)
+            // Wait for the cancelled operation to finish unwinding. After this
+            // returns (success or failure), the kernel is done with the buffer.
+            //
+            // The pipes are byte-mode (`PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT`),
+            // so a read never sits partially filled: it completes the moment any
+            // byte is available, or stays pending with nothing transferred. So
+            // a cancelled pending read almost always reports zero bytes and falls
+            // through to the drain; the `transferred > 0` arm is defensive. It
+            // fires only in the narrow window where the read produces bytes
+            // between the two checks (byte pipes fill from the front, so the
+            // reported count is a contiguous prefix).
+            if GetOverlappedResult(handle, &overlapped, &transferred, true),
+                transferred > 0
+            {
+                return .read(Int(truncatingIfNeeded: transferred))
+            }
+            return .finished
+        }
+
+        // Any other status: no bytes to recover here. The drain handles anything
+        // still buffered.
+        return .finished
     }
 
     /// Reads bytes already buffered in the pipe after the owning process has
