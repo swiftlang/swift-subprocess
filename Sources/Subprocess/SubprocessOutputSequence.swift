@@ -210,7 +210,8 @@ extension SubprocessOutputSequence {
     ///
     /// By default, the sequence splits on Unicode line break
     /// characters. You can supply a custom separator with the
-    /// ``Separator/unicodeScalarSequence(_:)`` factory method.
+    /// ``Separator/unicodeScalarSequence(_:)-(Sequence<Unicode.Scalar>)``
+    /// factory method.
     ///
     /// The following Unicode characters are recognized as line
     /// breaks:
@@ -229,9 +230,9 @@ extension SubprocessOutputSequence {
     /// strings, similar to how `.split(separator:)` works.
     ///
     /// When you use a custom separator created with
-    /// ``Separator/unicodeScalarSequence(_:)``, the sequence performs a
-    /// code-unit-level comparison without Unicode normalization.
-    /// See ``Separator/unicodeScalarSequence(_:)`` for details.
+    /// ``Separator/unicodeScalarSequence(_:)-(Sequence<Unicode.Scalar>)``, the
+    /// sequence performs a code-unit-level comparison without Unicode normalization.
+    /// See ``Separator/unicodeScalarSequence(_:)-(Sequence<Unicode.Scalar>)`` for details.
     public struct StringSequence<Encoding: _UnicodeEncoding & Sendable>: AsyncSequence, Sendable {
         /// The element type for the asynchronous sequence.
         public typealias Element = String
