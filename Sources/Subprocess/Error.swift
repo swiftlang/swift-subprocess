@@ -103,6 +103,7 @@ extension SubprocessError.Code {
 
 // MARK: - Underlying types
 extension SubprocessError {
+    /// The platform-specific error type for low-level subprocess failures.
     #if os(Windows)
     public typealias UnderlyingError = WindowsError
     #else

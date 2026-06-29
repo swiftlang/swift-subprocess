@@ -23,6 +23,7 @@ public import SystemPackage
 
 /// A type that serves as the output target for a subprocess.
 public protocol OutputProtocol: Sendable, ~Copyable {
+    /// The Swift value this output type produces after collecting subprocess output.
     associatedtype OutputType: Sendable
 
     /// Converts the output from a span to the expected output type.
