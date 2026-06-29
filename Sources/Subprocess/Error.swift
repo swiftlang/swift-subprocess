@@ -45,7 +45,7 @@ public struct SubprocessError: Swift.Error, Sendable, Hashable {
     /// The underlying error that caused this error.
     public let underlyingError: UnderlyingError?
 
-    /// Context associated with this error for better error message
+    /// Context associated with this error for better error messages.
     private let context: [Code: Context]
 }
 
@@ -81,9 +81,9 @@ extension SubprocessError {
 extension SubprocessError.Code {
     /// The subprocess failed to spawn.
     public static var spawnFailed: Self { .init(.spawnFailed) }
-    /// The target executable isn't found.
+    /// The subprocess failed to find or execute the target executable.
     public static var executableNotFound: Self { .init(.executableNotFound) }
-    /// The working directory isn't valid, or the subprocess failed to change the working directory.
+    /// The subprocess failed to change the working directory because it is invalid or inaccessible.
     public static var failedToChangeWorkingDirectory: Self { .init(.failedToChangeWorkingDirectory) }
     /// The subprocess failed to monitor the child process's exit status.
     public static var failedToMonitorProcess: Self { .init(.failedToMonitorProcess) }
@@ -375,10 +375,11 @@ extension SubprocessError {
         )
     }
 
-    /// The standard input writer was used after it finished. The writer is only
-    /// valid inside the `run(_:)` body closure; `run()` closes standard input
-    /// automatically when the body returns, so it must not be stored or used
-    /// afterward.
+    /// The standard input writer was used after it finished.
+    ///
+    /// The writer is only valid inside the `run(_:)` body closure; `run()` closes
+    /// standard input automatically when the body returns, so it must not be stored
+    /// or used afterward.
     internal static var standardInputWriterFinished: Self {
         return .failedToWriteToProcess(
             withUnderlyingError: nil,

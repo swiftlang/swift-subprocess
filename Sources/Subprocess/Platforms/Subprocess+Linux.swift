@@ -212,9 +212,9 @@ private func shutdown() {
     pthread_join(storage.monitorThread, nil)
 }
 
-/// See the following page for the complete list of `async-signal-safe` functions
+/// See the following page for the complete list of async-signal-safe functions:
 /// https://man7.org/linux/man-pages/man7/signal-safety.7.html
-/// Only these functions can be used in the signal handler below
+/// Only these functions can be used in the signal handler below.
 private func signalHandler(_ signalNumber: CInt) {
     let savedErrno = errno
     var one: UInt8 = 1
@@ -563,7 +563,7 @@ private func _notifyAllKnownChildProcesses(_ signalFd: CInt, context: MonitorThr
 
 internal func _isWaitprocessDescriptorSupported() -> Bool {
     // waitid(P_PIDFD) is only supported on Linux kernel 5.4 and above
-    // Prob whether the current system supports it by calling it with self pidfd
+    // Probe whether the current system supports it by calling it with self pidfd
     // and checking for EINVAL (waitid sets errno to EINVAL if it does not
     // recognize the id type).
     var siginfo = siginfo_t()

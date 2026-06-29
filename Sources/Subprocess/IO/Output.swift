@@ -97,7 +97,7 @@ public struct FileDescriptorOutput: OutputProtocol, ErrorOutputProtocol {
     }
 }
 
-/// An output type that collects the subprocess's output as a `String` with the given encoding.
+/// An output type that collects the subprocess's output as decoded text using the given encoding.
 public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol, ErrorOutputProtocol {
     /// The type for this output.
     public typealias OutputType = String?
@@ -117,7 +117,7 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol, ErrorOut
     }
 }
 
-/// An output type that collects the subprocess's output as a `[UInt8]` array.
+/// An output type that collects the subprocess's output as a byte array.
 public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
     /// The output type for this output option.
     public typealias OutputType = [UInt8]
@@ -165,7 +165,7 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
         return result
     }
 
-    /// Creates an array from a `RawSpan`.
+    /// Creates a byte array from a contiguous region of raw memory.
     public func output(from span: RawSpan) throws -> [UInt8] {
         span.withUnsafeBytes { Array($0) }
     }
@@ -208,7 +208,7 @@ extension OutputProtocol where Self == FileDescriptorOutput {
 
     /// Creates a subprocess output that writes to the current process's standard output.
     ///
-    /// The file descriptor isn't closed afterwards.
+    /// The file descriptor isn't closed afterward.
     public static var currentStandardOutput: Self {
         return Self.fileDescriptor(
             .standardOutput,
@@ -224,7 +224,7 @@ extension OutputProtocol where Self == FileDescriptorOutput {
 
     /// Creates a subprocess output that writes to the current process's standard error.
     ///
-    /// The file descriptor isn't closed afterwards.
+    /// The file descriptor isn't closed afterward.
     public static var currentStandardError: Self {
         return Self.fileDescriptor(
             .standardError,
@@ -275,8 +275,7 @@ extension OutputProtocol where Self == BytesOutput {
 }
 
 extension OutputProtocol where Self == SequenceOutput {
-    /// Creates a subprocess output that the body closure reads from
-    /// ``Execution/standardOutput`` or ``Execution/standardError``.
+    /// Creates a subprocess output that a body closure reads as an asynchronous sequence of buffers.
     ///
     /// Use this output with a `run` overload that takes a body closure.
     public static var sequence: Self {
@@ -327,7 +326,7 @@ extension ErrorOutputProtocol where Self == CombinedErrorOutput {
     ///
     /// This is useful when you want to capture or redirect both output streams
     /// together, making it possible to process all subprocess output as a unified
-    /// stream rather than handling standard output and standard error separately
+    /// stream rather than handling standard output and standard error separately.
     ///
     /// - Returns: A `CombinedErrorOutput` instance that merges standard error
     ///   with standard output.

@@ -326,7 +326,7 @@ public struct PlatformOptions: Sendable {
         public var domain: String?
     }
 
-    /// `ConsoleBehavior` describes how the console appears
+    /// Describes how the console appears
     /// when spawning a new process.
     public struct ConsoleBehavior: Sendable, Hashable {
         internal enum Storage: Sendable, Hashable {
@@ -346,6 +346,7 @@ public struct PlatformOptions: Sendable {
         public static let createNew: Self = .init(.createNew)
         /// For console processes, the new process does not
         /// inherit its parent's console (the default).
+        ///
         /// The new process can call the `AllocConsole`
         /// function at a later time to create a console.
         public static let detach: Self = .init(.detach)
@@ -353,7 +354,7 @@ public struct PlatformOptions: Sendable {
         public static let inherit: Self = .init(.inherit)
     }
 
-    /// `WindowStyle` describes how the window appears
+    /// Describes how the window appears
     /// when spawning a new process.
     public struct WindowStyle: Sendable, Hashable {
         internal enum Storage: Sendable, Hashable {
@@ -592,7 +593,7 @@ internal func reapProcess(
 // MARK: - Subprocess Control
 
 extension Execution {
-    /// Terminate the current subprocess with the given exit code
+    /// Terminate the current subprocess with the given exit code.
     /// - Parameters:
     ///   - exitCode: The exit code to use for the subprocess.
     ///   - toProcessGroup: When `true`, terminates the subprocess and any
@@ -621,7 +622,7 @@ extension Execution {
         }
     }
 
-    /// Suspend the current subprocess
+    /// Suspend the current subprocess.
     public func suspend() throws(SubprocessError) {
         let NTSuspendProcess: (@convention(c) (HANDLE) -> LONG)? =
             unsafeBitCast(
@@ -645,7 +646,7 @@ extension Execution {
         }
     }
 
-    /// Resume the current subprocess after suspension
+    /// Resume the current subprocess after suspension.
     public func resume() throws(SubprocessError) {
         let NTResumeProcess: (@convention(c) (HANDLE) -> LONG)? =
             unsafeBitCast(
@@ -721,8 +722,10 @@ extension Executable {
     }
 
     /// `CreateProcessW` allows users to specify the executable path via
-    /// `lpApplicationName` or via `lpCommandLine`. However, only `lpCommandLine` supports
-    /// path searching, whereas `lpApplicationName` does not. In order to support the
+    /// `lpApplicationName` or via `lpCommandLine`.
+    ///
+    /// However, only `lpCommandLine` supports
+    /// path searching, whereas `lpApplicationName` does not. To support the
     /// "argument 0 override" feature, Subprocess must use `lpApplicationName` instead of
     /// relying on `lpCommandLine` (so we can potentially set a different value for `lpCommandLine`).
     ///
@@ -736,7 +739,7 @@ extension Executable {
     /// 5. The Windows directory.
     /// 6. The directories that are listed in the PATH environment variable.
     ///
-    /// For more info:
+    /// For more information:
     /// https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw
     internal func possibleExecutablePaths(
         withPathValue pathValue: String?
@@ -833,7 +836,7 @@ extension Executable {
                     storage: &possiblePaths
                 )
 
-                // 5. 16 bit Systen Directory
+                // 5. 16 bit System Directory
                 // Windows documentation stats that "No such standard function
                 // (similar to GetSystemDirectory) exists for the 16-bit system folder".
                 // Use "\(windowsDirectory)\System" instead
@@ -1319,7 +1322,7 @@ extension Configuration {
     /// Builds a `cmd.exe` command line that runs a batch file with arguments
     /// escaped to survive both `cmd.exe` and `CommandLineToArgvW` parsing.
     ///
-    /// This logic was taken from Rust standard library's `make_bat_command_line`, which hardened these after
+    /// This logic was taken from the Rust standard library's `make_bat_command_line`, which was hardened after
     /// CVE-2024-24576 / CVE-2024-43402.
     /// https://github.com/rust-lang/rust/blob/master/library/std/src/sys/args/windows.rs
     ///
@@ -1357,9 +1360,11 @@ extension Configuration {
     }
 
     /// Escapes a single argument destined for a batch file run through
-    /// `cmd.exe`. Applies the `CommandLineToArgvW` quoting ("step 1"), then
-    /// prefixes every `cmd.exe` metacharacter,  including the quotes step 1
-    /// added,  with `^` ("step 2"). After `cmd.exe` consumes the carets, the
+    /// `cmd.exe`.
+    ///
+    /// Applies the `CommandLineToArgvW` quoting ("step 1"), then
+    /// prefixes every `cmd.exe` metacharacter, including the quotes step 1
+    /// added, with `^` ("step 2"). After `cmd.exe` consumes the carets, the
     /// child program decodes exactly the original argument.
     ///
     /// Both steps are from Daniel Colascione's "Everyone quotes command line
@@ -1410,7 +1415,9 @@ extension Configuration {
 
     /// Quotes a single argument so the `CommandLineToArgvW` / C runtime parser
     /// in the child decodes it back to the original string (Colascione's
-    /// "step 1"). Taken from SCF.
+    /// "step 1").
+    ///
+    /// Taken from SCF.
     /// See https://learn.microsoft.com/en-us/archive/blogs/twistylittlepassagesallalike/everyone-quotes-command-line-arguments-the-wrong-way
     private static func quoteWindowsCommandArgument(_ arg: String) -> String {
         // Windows escaping, adapted from Daniel Colascione's "Everyone quotes
@@ -1551,10 +1558,10 @@ extension Optional where Wrapped == String {
 }
 
 extension String {
-    /// Invokes `body` with a resolved and potentially `\\?\`-prefixed version of the pointee,
+    /// Invokes `body` with a resolved and potentially `\\?\`-prefixed version of the path,
     /// to ensure long paths greater than MAX_PATH (260) characters are handled correctly.
     ///
-    /// - parameter relative: Returns the original path without transforming through GetFullPathNameW + PathCchCanonicalizeEx, if the path is relative.
+    /// - parameter relative: If `true`, returns the original path without transforming through GetFullPathNameW + PathCchCanonicalizeEx, if the path is relative.
     /// - seealso: https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation
     internal func withNTPathRepresentation<Result: Sendable>(
         _ body: (UnsafePointer<WCHAR>) throws(SubprocessError) -> Result
@@ -1686,7 +1693,8 @@ extension UInt8 {
     }
 }
 
-/// Calls a Win32 API function that fills a (potentially long path) null-terminated string buffer by continually attempting to allocate more memory up until the true max path is reached.
+/// Calls a Win32 API function that fills a (potentially long path) null-terminated string buffer by continually attempting to allocate more memory until the true max path is reached.
+///
 /// This is especially useful for protecting against race conditions like with GetCurrentDirectoryW where the measured length may no longer be valid on subsequent calls.
 /// - parameter initialSize: Initial size of the buffer (including the null terminator) to allocate to hold the returned string.
 /// - parameter maxSize: Maximum size of the buffer (including the null terminator) to allocate to hold the returned string.

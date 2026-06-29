@@ -41,20 +41,17 @@ public struct PlatformOptions: Sendable {
     public var qualityOfService: QualityOfService = .default
     /// The user ID for the subprocess.
     public var userID: uid_t? = nil
-    /// The real and effective group ID and the saved
-    /// set-group-ID of the subprocess, equivalent to calling
-    /// `setgid()` on the child process.
+    /// The real, effective, and saved set-group-ID for the subprocess.
     ///
-    /// The group ID controls permissions, particularly
-    /// for file access.
+    /// Setting this value is equivalent to calling `setgid()` on the child process.
+    /// The group ID controls permissions, particularly for file access.
     public var groupID: gid_t? = nil
     /// The list of supplementary group IDs for the subprocess.
     public var supplementaryGroups: [gid_t]? = nil
-    /// The process group for the subprocess, equivalent to
-    /// calling `setpgid()` on the child process.
+    /// The process group for the subprocess.
     ///
-    /// The process group ID groups related processes for
-    /// controlling signals.
+    /// Equivalent to calling `setpgid()` on the child process.
+    /// The process group ID groups related processes for controlling signals.
     public var processGroupID: pid_t? = nil
     /// A Boolean value that indicates whether to create a session
     /// and detach from the terminal.
@@ -102,24 +99,30 @@ extension PlatformOptions {
     /// there’s resource contention.
     public enum QualityOfService: Int, Sendable {
         /// Work directly involved in providing an
-        /// interactive UI. For example, processing control
+        /// interactive UI.
+        ///
+        /// For example, processing control
         /// events or drawing to the screen.
         case userInteractive = 0x21
         /// Work that the user explicitly requested and for which results
         /// must be immediately presented to allow for further user interaction.
+        ///
         /// For example, loading an email after a user selects
         /// it in a message list.
         case userInitiated = 0x19
         /// Work whose results the user is unlikely to be
-        /// immediately waiting for. This work may have been
+        /// immediately waiting for.
+        ///
+        /// This work may have been
         /// requested by the user or initiated automatically, and often
         /// operates at user-visible timescales using a non-modal
         /// progress indicator. For example, periodic content updates
         /// or bulk file operations, such as media import.
         case utility = 0x11
         /// Work that isn’t user-initiated or visible.
+        ///
         /// In general, the user is unaware that this work is even happening.
-        /// For example, pre-fetching content, search indexing, backups,
+        /// For example, prefetching content, search indexing, backups,
         /// or syncing of data with external systems.
         case background = 0x09
         /// No explicit quality-of-service information.
@@ -493,9 +496,9 @@ extension Configuration {
         }
     }
 
-    /// Invokes `_subprocess_spawn` on the shared background worker thread,
-    /// retrying a transient fork-side `EAGAIN` with bounded, jittered backoff.
+    /// Spawns a child process on the background worker thread, retrying transient failures with bounded jittered backoff.
     ///
+    /// Calls `_subprocess_spawn()` on the shared background worker thread.
     /// `posix_spawn` is used directly only when no pre-fork setup is required;
     /// in that path an `EAGAIN` is the internal fork failing with no child
     /// created; this is the clean, retryable case, and the existing error
