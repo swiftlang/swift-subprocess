@@ -188,7 +188,7 @@ public func run<
         output: output,
         error: error
     ) { execution in
-        _ = try await execution.standardInputWriter.write(input._bytes)
+        _ = try await execution.standardInputWriter.write(input.bytes)
         try await execution.standardInputWriter.finish()
     }
 }
