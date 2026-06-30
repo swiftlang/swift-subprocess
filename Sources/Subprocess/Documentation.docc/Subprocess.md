@@ -27,7 +27,7 @@ take a trailing closure: the closure receives an ``Execution`` value you use to
 write to standard input, stream standard output and standard error, and signal 
 or tear down the process.
 
-There are three independent parameters for the input, output, and errors, so a 
+There are three independent parameters for input, output, and errors, so a 
 single call can mix collecting and streaming. Input, output, and errors conform 
 to ``InputProtocol``, ``OutputProtocol``, or ``ErrorOutputProtocol``, 
 respectively.
