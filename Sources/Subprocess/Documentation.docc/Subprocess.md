@@ -44,7 +44,7 @@ sequence of buffers you can iterate directly or read line by line. The
 ``Execution``, ``SubprocessOutputSequence``, and ``StandardInputWriter`` values 
 are valid only for the duration of the body closure; don't let them escape it.
 
-If the task running a subprocess is cancelled, Subprocess can run a configurable 
+If the task running a subprocess is canceled, Subprocess can run a configurable 
 teardown sequence (for example, a graceful shutdown followed by a forced kill) 
 before the call returns. You describe that sequence with ``TeardownStep`` values, 
 and you can trigger one yourself from the body closure.
