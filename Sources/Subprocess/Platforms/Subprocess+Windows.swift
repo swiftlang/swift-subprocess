@@ -593,7 +593,7 @@ internal func reapProcess(
 // MARK: - Subprocess Control
 
 extension Execution {
-    /// Terminate the current subprocess with the given exit code.
+    /// Terminates the current subprocess with the given exit code.
     /// - Parameters:
     ///   - exitCode: The exit code to use for the subprocess.
     ///   - toProcessGroup: When `true`, terminates the subprocess and any
@@ -622,7 +622,7 @@ extension Execution {
         }
     }
 
-    /// Suspend the current subprocess.
+    /// Suspends the current subprocess.
     public func suspend() throws(SubprocessError) {
         let NTSuspendProcess: (@convention(c) (HANDLE) -> LONG)? =
             unsafeBitCast(
@@ -646,7 +646,7 @@ extension Execution {
         }
     }
 
-    /// Resume the current subprocess after suspension.
+    /// Resumes the current subprocess after suspension.
     public func resume() throws(SubprocessError) {
         let NTResumeProcess: (@convention(c) (HANDLE) -> LONG)? =
             unsafeBitCast(
