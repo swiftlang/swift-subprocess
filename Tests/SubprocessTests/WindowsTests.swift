@@ -570,7 +570,7 @@ extension SubprocessWindowsTests {
     }
 }
 
-// MARK: - Environment.Key Case-Insensitive Comparison
+// MARK: - Environment
 extension SubprocessWindowsTests {
     @Test func testEnvironmentKeyComparableMatchesEquatable() {
         let upper: Environment.Key = "PATH"
@@ -593,6 +593,45 @@ extension SubprocessWindowsTests {
         // therefore precede "APP_NAME".
         let keys: [Environment.Key] = ["APP_NAME", "APPDATA"]
         #expect(keys.sorted().map(\.rawValue) == ["APPDATA", "APP_NAME"])
+    }
+
+    @Test func testRejectInvalidEnvironment() async throws {
+        func _runTest(withEnvironment environment: Environment, errorReason: String) async {
+            let expectedError: SubprocessError = .spawnFailed(
+                withUnderlyingError: nil,
+                reason: errorReason
+            )
+
+            await #expect(throws: expectedError) {
+                _ = try await Subprocess.run(
+                    self.cmdExe,
+                    environment: environment,
+                    output: .discarded
+                )
+            }
+        }
+
+        await _runTest(
+            withEnvironment: .inherit.updating(["key=": "value"]),
+            errorReason: "Environment key 'key=' must not contain '='."
+        )
+
+        await _runTest(
+            withEnvironment: .inherit.updating(["key\0": "value"]),
+            errorReason: "Environment key 'key\0' must not contain null bytes."
+        )
+
+        await _runTest(
+            withEnvironment: .inherit.updating(["key": "value\0"]),
+            errorReason: "Environment value 'value\0' must not contain null bytes."
+        )
+
+        let longKey = randomString(length: 32767 / 2 + 1)
+        let longValue = randomString(length: 32767 / 2 + 1)
+        await _runTest(
+            withEnvironment: .inherit.updating([.init(longKey): longValue]),
+            errorReason: "Environment key and value pair must not exceed 32,767 characters."
+        )
     }
 }
 

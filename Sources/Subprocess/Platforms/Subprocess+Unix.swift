@@ -147,7 +147,7 @@ extension Execution {
     }
 }
 
-// MARK: - Environment Resolution
+// MARK: - Environment Resolution and Validation
 extension Environment {
     internal func pathValue() -> String? {
         switch self.config {
@@ -254,6 +254,84 @@ extension Environment {
         defer { values.forEach { free($0) } }
         return body(values)
     }
+
+    /// POSIX standard imposes restrictions on environment keys and values:
+    /// 1. Names shall not contain the character '='.
+    /// 2. Names shall not begin with a digit.
+    /// 3. Names and values shall be composed of characters from the portable character set except NUL
+    /// See https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/V1_chap08.html
+    internal func validate() throws(SubprocessError) {
+        let equals = UInt8(ascii: "=")
+        let nul = UInt8(ascii: "\0")
+        let digit0 = UInt8(ascii: "0")
+        let digit9 = UInt8(ascii: "9")
+
+        func _validateError(_ reason: String) -> SubprocessError {
+            return .spawnFailed(withUnderlyingError: nil, reason: reason)
+        }
+
+        func _validate(_ dict: [Key: String?]) throws(SubprocessError) {
+            for (key, value) in dict {
+                let keyBytes = key.rawValue.utf8
+                // Rule 1/3: key shall not contain = nor null bytes
+                let ruleOneViolation = keyBytes.contains {
+                    $0 == equals || $0 == nul
+                }
+                if ruleOneViolation {
+                    throw _validateError("Environment key '\(key)' must not contain '=' or null bytes.")
+                }
+                // Rule 2: key shall not begin with a digit
+                if let first = keyBytes.first, (digit0...digit9).contains(first) {
+                    throw _validateError("Environment key '\(key)' must not begin with a digit.")
+                }
+                // Rule 3: value shall not contain null bytes
+                if let value, value.utf8.contains(nul) {
+                    throw _validateError("Environment value '\(value)' must not contain null bytes.")
+                }
+            }
+        }
+
+        func _validate(rawBytes rawBytesArray: [[UInt8]]) throws(SubprocessError) {
+            for rawBytes in rawBytesArray {
+                // Each entry is passed to `strdup` in `createEnv()`, which stops
+                // at the first null byte. A single trailing null terminator is
+                // allowed, but reject any earlier null byte since it would
+                // silently truncate the entry.
+                var bytes = rawBytes
+                if bytes.last == nul {
+                    bytes = bytes.dropLast()
+                }
+                // Rule 1/3: entry shall not contain null bytes
+                if bytes.contains(nul) {
+                    throw _validateError(
+                        "Environment entry '\(String(decoding: bytes, as: UTF8.self))' must not contain null bytes."
+                    )
+                }
+                // Each entry is a key and value pair joined by '='
+                guard let equalsIndex = bytes.firstIndex(of: equals) else {
+                    throw _validateError(
+                        "Environment entry '\(String(decoding: bytes, as: UTF8.self))' must contain '='."
+                    )
+                }
+                // Rule 2: key shall not begin with a digit
+                let keyBytes = bytes[bytes.startIndex..<equalsIndex]
+                if let first = keyBytes.first, (digit0...digit9).contains(first) {
+                    throw _validateError(
+                        "Environment key '\(String(decoding: keyBytes, as: UTF8.self))' must not begin with a digit."
+                    )
+                }
+            }
+        }
+
+        switch self.config {
+        case .inherit(let updates):
+            try _validate(updates)
+        case .custom(let custom):
+            try _validate(custom.mapValues { Optional($0) })
+        case .rawBytes(let rawBytesArray):
+            try _validate(rawBytes: rawBytesArray)
+        }
+    }
 }
 
 // MARK: Args Creation
@@ -342,6 +420,8 @@ extension Configuration {
         _ work: (PreSpawnArgs) async throws -> Result
     ) async throws -> Result {
         // Prepare environment
+        try self.environment.validate()
+
         let env = self.environment.createEnv()
         defer {
             for ptr in env { ptr?.deallocate() }
@@ -460,7 +540,7 @@ extension Configuration {
         var outputPipeBox: CreatedPipe? = consume outputPipe
         var errorPipeBox: CreatedPipe? = consume errorPipe
 
-        return try await self.preSpawn { args throws -> SpawnResult in
+        func spawnFunc(_ args: PreSpawnArgs) async throws -> SpawnResult {
             let (env, uidPtr, gidPtr, supplementaryGroups) = args
 
             var _inputPipe = inputPipeBox.take()!
@@ -598,6 +678,25 @@ extension Configuration {
                 self.executable.description,
                 underlyingError: Errno(rawValue: ENOENT)
             )
+        }
+
+        do {
+            return try await self.preSpawn(spawnFunc)
+        } catch {
+            var _inputPipe = inputPipeBox.take()
+            var _outputPipe = outputPipeBox.take()
+            var _errorPipe = errorPipeBox.take()
+            // If any part of spawning failed, make sure we clean up pipes
+            try? self.safelyCloseMultiple(
+                inputRead: _inputPipe?.readFileDescriptor(),
+                inputWrite: _inputPipe?.writeFileDescriptor(),
+                outputRead: _outputPipe?.readFileDescriptor(),
+                outputWrite: _outputPipe?.writeFileDescriptor(),
+                errorRead: _errorPipe?.readFileDescriptor(),
+                errorWrite: _errorPipe?.writeFileDescriptor()
+            )
+
+            throw error
         }
     }
 

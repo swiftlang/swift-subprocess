@@ -43,6 +43,22 @@ extension Configuration {
         let errorReadFileDescriptor: IODescriptor? = errorPipe.readFileDescriptor()
         let errorWriteFileDescriptor: IODescriptor? = errorPipe.writeFileDescriptor()
 
+        // Validate the environment once before spawning. If validation fails,
+        // clean up the file descriptors before propagating the error.
+        do {
+            try self.environment.validate()
+        } catch {
+            try self.safelyCloseMultiple(
+                inputRead: inputReadFileDescriptor,
+                inputWrite: inputWriteFileDescriptor,
+                outputRead: outputReadFileDescriptor,
+                outputWrite: outputWriteFileDescriptor,
+                errorRead: errorReadFileDescriptor,
+                errorWrite: errorWriteFileDescriptor
+            )
+            throw error
+        }
+
         // Create the Job Object up front. It persists across all candidate path
         // attempts, and is owned by this function until ownership transfers to
         // the `ProcessIdentifier` on the success path.
@@ -900,6 +916,51 @@ extension Environment {
         defer { values.forEach { free($0) } }
         return body(values)
     }
+
+    /// Windows documentation states the following restrictions on environments:
+    /// 1. The name of an environment variable cannot include an equal sign (=).
+    /// 2. The maximum size of a user-defined environment variable is 32,767 characters.
+    /// See https://learn.microsoft.com/en-us/windows/win32/procthread/environment-variables
+    internal func validate() throws(SubprocessError) {
+        let equals = UInt8(ascii: "=")
+        let nul = UInt8(ascii: "\0")
+
+        func _validateError(_ reason: String) -> SubprocessError {
+            return .spawnFailed(withUnderlyingError: nil, reason: reason)
+        }
+
+        func _validate(_ dict: [Key: String?]) throws(SubprocessError) {
+            for (key, value) in dict {
+                // Rule 1: key shall not contain =
+                if key.rawValue.utf8.contains(equals) {
+                    throw _validateError("Environment key '\(key)' must not contain '='.")
+                }
+                // Key and value shall not contain null bytes, otherwise the
+                // null-separated environment block would be silently truncated.
+                if key.rawValue.utf8.contains(nul) {
+                    throw _validateError("Environment key '\(key)' must not contain null bytes.")
+                }
+                if let value, value.utf8.contains(nul) {
+                    throw _validateError("Environment value '\(value)' must not contain null bytes.")
+                }
+
+                // Rule 2: the serialized "key=value" entry must not exceed
+                // 32,767 UTF-16 code units, accounting for the '=' separator
+                // and the null terminator.
+                let entryLength = key.rawValue.utf16.count + 1 + (value?.utf16.count ?? 0) + 1
+                if entryLength > 32767 {
+                    throw _validateError("Environment key and value pair must not exceed 32,767 characters.")
+                }
+            }
+        }
+
+        switch self.config {
+        case .inherit(let updates):
+            try _validate(updates)
+        case .custom(let custom):
+            try _validate(custom)
+        }
+    }
 }
 
 // MARK: - ProcessIdentifier
@@ -971,7 +1032,7 @@ extension Configuration {
             env = Environment.currentEnvironmentValues()
             for (key, value) in updateValues {
                 if let value {
-                    // Update env with ew value
+                    // Update env with new value
                     env.updateValue(value, forKey: key)
                 } else {
                     // If `value` is `nil`, unset this value from env
