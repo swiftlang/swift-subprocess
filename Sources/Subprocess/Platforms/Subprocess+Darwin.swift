@@ -50,7 +50,7 @@ public struct PlatformOptions: Sendable {
     public var supplementaryGroups: [gid_t]? = nil
     /// The process group for the subprocess.
     ///
-    /// Equivalent to calling `setpgid()` on the child process.
+    /// This is equivalent to calling `setpgid()` on the child process.
     /// The process group ID groups related processes for controlling signals.
     public var processGroupID: pid_t? = nil
     /// A Boolean value that indicates whether to create a session
