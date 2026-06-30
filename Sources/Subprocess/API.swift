@@ -312,10 +312,7 @@ public func run<
                 var diskIO = outputIOBox.take()
                 try diskIO?.safelyClose()
             } else {
-                // Hand the descriptor to the child task through a reference box
-                // rather than capturing a `var diskIO: IODescriptor?`. See `_IODescriptorBox`.
-                // Workaround for https://github.com/swiftlang/swift/issues/89932
-                let diskIO = _IODescriptorBox(outputIOBox.take())
+                var diskIO = outputIOBox.take()
                 group.addTask {
                     let result = try await output.captureOutput(
                         from: diskIO.take(), for: processIdentifier
@@ -335,10 +332,7 @@ public func run<
                 var diskIO = errorIOBox.take()
                 try diskIO?.safelyClose()
             } else {
-                // Route through a reference box to avoid capturing a move-only
-                // `var` in the escaping closure. See `_IODescriptorBox`.
-                // Workaround for https://github.com/swiftlang/swift/issues/89932
-                let diskIO = _IODescriptorBox(errorIOBox.take())
+                var diskIO = errorIOBox.take()
                 group.addTask {
                     let result = try await error.captureOutput(
                         from: diskIO.take(), for: processIdentifier
@@ -423,29 +417,4 @@ private struct _RunOutcome<
     let closureResult: ClosureResult
     let output: Output.OutputType
     let error: Error.OutputType
-}
-
-/// A reference box that carries a (noncopyable, non-`Sendable`)
-/// `IODescriptor` into a child task.
-///
-/// `run` hands the output/error descriptor to a `group.addTask` closure. The
-/// language-level way to move a noncopyable into an escaping closure is to
-/// capture a `var IODescriptor?` and `take()` it inside, but that captured
-/// `var` lowers to a `${ var Optional<IODescriptor> }` box whose debug info
-/// crashes the SIL verifier on some nightly toolchains: https://github.com/swiftlang/swift/issues/89932
-/// Holding the descriptor behind a class reference keeps that box off the closure's frame. the
-/// descriptor lives in heap storage and the task drains it via `take()`.
-///
-/// TODO: Remove when https://github.com/swiftlang/swift/issues/89932 is fixed.
-private final class _IODescriptorBox {
-    private var diskIO: IODescriptor?
-
-    init(_ diskIO: consuming IODescriptor?) {
-        self.diskIO = diskIO
-    }
-
-    /// Moves the descriptor out of the box, leaving it empty.
-    func take() -> IODescriptor? {
-        return self.diskIO.take()
-    }
 }
