@@ -68,9 +68,7 @@ let package = Package(
                 "TestResources",
                 .product(name: "SystemPackage", package: "swift-system"),
             ],
-            swiftSettings: [
-                .enableExperimentalFeature("Span")
-            ] + packageSwiftSettings
+            swiftSettings: packageSwiftSettings
         ),
 
         .target(
