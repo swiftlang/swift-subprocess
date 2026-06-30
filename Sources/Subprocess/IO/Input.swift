@@ -283,7 +283,7 @@ public final actor StandardInputWriter: Sendable {
 
     /// Writes an array of bytes to the subprocess's standard input.
     /// - Parameter array: The bytes to write.
-    /// - Throws: `SubprocessError` with error code `.failedToWriteToSubprocess`.
+    /// - Throws: ``SubprocessError`` with error code ``SubprocessError/Code/failedToWriteToSubprocess``.
     ///     See ``SubprocessError/underlyingError`` for more details. Also throws
     ///     this error if the writer has already finished (see ``finish()``).
     /// - Returns: The number of bytes written.
@@ -299,7 +299,7 @@ public final actor StandardInputWriter: Sendable {
     /// Writes a raw span to the subprocess's standard input.
     ///
     /// - Parameter span: The span to write.
-    /// - Throws: `SubprocessError` with error code `.failedToWriteToSubprocess`.
+    /// - Throws: ``SubprocessError`` with error code ``SubprocessError/Code/failedToWriteToSubprocess``.
     ///     See ``SubprocessError/underlyingError`` for more details. Also throws
     ///     this error if the writer has already finished (see ``finish()``).
     /// - Returns: The number of bytes written.
@@ -314,7 +314,7 @@ public final actor StandardInputWriter: Sendable {
     /// - Parameters:
     ///   - string: The string to write.
     ///   - encoding: The encoding to use when converting the string to bytes.
-    /// - Throws: `SubprocessError` with error code `.failedToWriteToSubprocess`.
+    /// - Throws: ``SubprocessError`` with error code ``SubprocessError/Code/failedToWriteToSubprocess``.
     ///     See ``SubprocessError/underlyingError`` for more details. Also throws
     ///     this error if the writer has already finished (see ``finish()``).
     /// - Returns: The number of bytes written.
@@ -337,7 +337,7 @@ public final actor StandardInputWriter: Sendable {
     /// After finishing, further writes throw a ``SubprocessError`` with the code
     /// ``SubprocessError/Code/failedToWriteToSubprocess``.
     ///
-    /// - Throws: `SubprocessError` with error code `.asyncIOFailed`.
+    /// - Throws: ``SubprocessError`` with error code ``SubprocessError/Code/asyncIOFailed``.
     ///     See ``SubprocessError/underlyingError`` for more details.
     public func finish() async throws(SubprocessError) {
         guard !self.didFinish else {
