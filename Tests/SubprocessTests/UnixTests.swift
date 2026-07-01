@@ -810,6 +810,60 @@ extension SubprocessUnixTests {
             }
         }
     }
+
+    @Test func testRejectInvalidEnvironment() async throws {
+        func _runTest(withEnvironment environment: Environment, errorReason: String) async {
+            let expectedError: SubprocessError = .spawnFailed(
+                withUnderlyingError: nil,
+                reason: errorReason
+            )
+
+            await #expect(throws: expectedError) {
+                _ = try await Subprocess.run(
+                    .path("/bin/echo"),
+                    environment: environment,
+                    output: .discarded
+                )
+            }
+        }
+
+        await _runTest(
+            withEnvironment: .inherit.updating(["key=": "value"]),
+            errorReason: "Environment key 'key=' must not contain '=' or null bytes."
+        )
+
+        await _runTest(
+            withEnvironment: .inherit.updating(["key\0": "value"]),
+            errorReason: "Environment key 'key\0' must not contain '=' or null bytes."
+        )
+
+        await _runTest(
+            withEnvironment: .inherit.updating(["0key": "value"]),
+            errorReason: "Environment key '0key' must not begin with a digit."
+        )
+
+        await _runTest(
+            withEnvironment: .inherit.updating(["key": "value\0"]),
+            errorReason: "Environment value 'value\0' must not contain null bytes."
+        )
+
+        // Raw bytes: a trailing null terminator is allowed, but an embedded
+        // null byte must be rejected since `strdup` would silently truncate it.
+        await _runTest(
+            withEnvironment: .custom([Array("key=va\0lue".utf8)]),
+            errorReason: "Environment entry 'key=va\0lue' must not contain null bytes."
+        )
+
+        await _runTest(
+            withEnvironment: .custom([Array("keyvalue\0".utf8)]),
+            errorReason: "Environment entry 'keyvalue' must contain '='."
+        )
+
+        await _runTest(
+            withEnvironment: .custom([Array("0key=value\0".utf8)]),
+            errorReason: "Environment key '0key' must not begin with a digit."
+        )
+    }
 }
 
 // MARK: - Utils

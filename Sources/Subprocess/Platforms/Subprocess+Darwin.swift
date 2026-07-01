@@ -205,7 +205,7 @@ extension Configuration {
         var outputPipeBox: CreatedPipe? = consume outputPipe
         var errorPipeBox: CreatedPipe? = consume errorPipe
 
-        return try await self.preSpawn { args throws -> SpawnResult in
+        func spawnFunc(_ args: PreSpawnArgs) async throws -> SpawnResult {
             let (env, uidPtr, gidPtr, supplementaryGroups) = args
             var _inputPipe = inputPipeBox.take()!
             var _outputPipe = outputPipeBox.take()!
@@ -412,7 +412,21 @@ extension Configuration {
                 }
                 // Run additional config
                 if let spawnConfig = self.platformOptions.preSpawnProcessConfigurator {
-                    try spawnConfig(&spawnAttributes, &fileActions)
+                    do {
+                        try spawnConfig(&spawnAttributes, &fileActions)
+                    } catch {
+                        // If the configurator throws, make sure we clean up
+                        // the file descriptors before propagating the error.
+                        try self.safelyCloseMultiple(
+                            inputRead: inputReadFileDescriptor,
+                            inputWrite: inputWriteFileDescriptor,
+                            outputRead: outputReadFileDescriptor,
+                            outputWrite: outputWriteFileDescriptor,
+                            errorRead: errorReadFileDescriptor,
+                            errorWrite: errorWriteFileDescriptor
+                        )
+                        throw error
+                    }
                 }
 
                 // Spawn
@@ -490,6 +504,25 @@ extension Configuration {
                 self.executable.description,
                 underlyingError: Errno(rawValue: ENOENT)
             )
+        }
+
+        do {
+            return try await self.preSpawn(spawnFunc)
+        } catch {
+            var _inputPipe = inputPipeBox.take()
+            var _outputPipe = outputPipeBox.take()
+            var _errorPipe = errorPipeBox.take()
+            // If any part of spawning failed, make sure we clean up pipes
+            try? self.safelyCloseMultiple(
+                inputRead: _inputPipe?.readFileDescriptor(),
+                inputWrite: _inputPipe?.writeFileDescriptor(),
+                outputRead: _outputPipe?.readFileDescriptor(),
+                outputWrite: _outputPipe?.writeFileDescriptor(),
+                errorRead: _errorPipe?.readFileDescriptor(),
+                errorWrite: _errorPipe?.writeFileDescriptor()
+            )
+
+            throw error
         }
     }
 
