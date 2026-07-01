@@ -330,7 +330,7 @@ final class AsyncIO: @unchecked Sendable {
     /// be writing into (use-after-free once that buffer goes out of scope). The
     /// third state, a completed-empty or aborted read, is the one an
     /// unconditional `.finished` handles correctly. The pending case is reached
-    /// when a surviving descendant holds the write end open and the read is
+    /// when a surviving launched process holds the write end open and the read is
     /// parked at cancellation (the same condition as
     /// `drainBufferedDataAfterCancellation()`).
     ///
@@ -404,9 +404,9 @@ final class AsyncIO: @unchecked Sendable {
     /// Reads bytes already buffered in the pipe after the owning process has
     /// been cancelled, without routing through the completion port.
     ///
-    /// Bytes the child already wrote remain in the pipe and must not be
+    /// Bytes the subprocess already wrote remain in the pipe and must not be
     /// dropped, but a fresh read awaited through the monitor could hang: a
-    /// surviving descendant can hold the write end open, so EOF may never
+    /// surviving launched process can hold the write end open, so EOF may never
     /// arrive. `PeekNamedPipe` neither consumes data nor blocks, so it gates
     /// the read; `ReadFile` is issued only when bytes are present, which
     /// then completes promptly.

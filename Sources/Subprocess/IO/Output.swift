@@ -38,7 +38,7 @@ extension OutputProtocol {
     public var maxSize: Int { 128 * 1024 }
 }
 
-/// An output type that discards output from the child process.
+/// An output type that discards output from the subprocess.
 ///
 /// On Unix-like systems, ``DiscardedOutput`` redirects standard output
 /// to `/dev/null`. On Windows, it redirects to `NUL`.
@@ -66,7 +66,7 @@ public struct DiscardedOutput: OutputProtocol, ErrorOutputProtocol {
 /// An output type that writes to a specified file descriptor.
 ///
 /// You can choose to have the subprocess automatically close
-/// the file descriptor after it spawns.
+/// the file descriptor after it launches.
 public struct FileDescriptorOutput: OutputProtocol, ErrorOutputProtocol {
     /// The type for this output.
     public typealias OutputType = Void
@@ -199,7 +199,7 @@ extension OutputProtocol where Self == FileDescriptorOutput {
     /// Creates a subprocess output that writes to a file descriptor.
     ///
     /// Set `closeAfterSpawningProcess` to `true` to close the file
-    /// descriptor after the subprocess spawns.
+    /// descriptor after the subprocess launches.
     public static func fileDescriptor(
         _ fd: FileDescriptor,
         closeAfterSpawningProcess: Bool
@@ -243,7 +243,7 @@ extension OutputProtocol where Self == FileDescriptorOutput {
 extension OutputProtocol where Self == StringOutput<UTF8> {
     /// Creates a subprocess output that collects output as a UTF-8 string.
     ///
-    /// The subprocess throws an error if the child process
+    /// The subprocess throws an error if the process
     /// produces more bytes than `limit`.
     public static func string(limit: Int) -> Self {
         return .init(limit: limit, encoding: UTF8.self)
@@ -254,7 +254,7 @@ extension OutputProtocol {
     /// Creates a subprocess output that collects output as
     /// a string using the given encoding, up to `limit` bytes.
     ///
-    /// The subprocess throws an error if the child process
+    /// The subprocess throws an error if the process
     /// produces more bytes than `limit`.
     public static func string<Encoding: Unicode.Encoding>(
         limit: Int,
@@ -268,7 +268,7 @@ extension OutputProtocol where Self == BytesOutput {
     /// Creates a subprocess output that collects output as bytes,
     /// up to `limit` bytes.
     ///
-    /// The subprocess throws an error if the child process
+    /// The subprocess throws an error if the process
     /// produces more bytes than `limit`.
     public static func bytes(limit: Int) -> Self {
         return .init(limit: limit)
@@ -296,7 +296,7 @@ public protocol ErrorOutputProtocol: OutputProtocol {}
 /// output with the standard output stream.
 ///
 /// When `CombinedErrorOutput` is used as the error output for a subprocess, both
-/// standard output and standard error from the child process are merged into a
+/// standard output and standard error from the subprocess are merged into a
 /// single output stream. This is equivalent to using shell redirection like `2>&1`.
 ///
 /// This output type is useful when you want to capture or redirect both output
@@ -322,7 +322,7 @@ extension ErrorOutputProtocol where Self == CombinedErrorOutput {
     /// Creates an error output that combines standard error with standard output.
     ///
     /// When using `combinedWithOutput`, both standard output and standard error from
-    /// the child process are merged into a single output stream. This is equivalent
+    /// the subprocess are merged into a single output stream. This is equivalent
     /// to using shell redirection like `2>&1`.
     ///
     /// This is useful when you want to capture or redirect both output streams

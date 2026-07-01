@@ -73,7 +73,7 @@ public struct NoInput: InputProtocol {
 /// An input type that reads from a specified file descriptor.
 ///
 /// You can choose to have the subprocess automatically close
-/// the file descriptor after it spawns.
+/// the file descriptor after it launches.
 public struct FileDescriptorInput: InputProtocol {
     private let fileDescriptor: FileDescriptor
     private let closeAfterSpawningProcess: Bool
@@ -175,7 +175,7 @@ extension InputProtocol where Self == FileDescriptorInput {
     /// Creates a subprocess input from a file descriptor.
     ///
     /// Set `closeAfterSpawningProcess` to `true` to close the file
-    /// descriptor after the subprocess spawns.
+    /// descriptor after the subprocess launches.
     public static func fileDescriptor(
         _ fd: FileDescriptor,
         closeAfterSpawningProcess: Bool

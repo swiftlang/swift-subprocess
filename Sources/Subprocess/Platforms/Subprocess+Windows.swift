@@ -312,7 +312,7 @@ extension Configuration {
 /// The collection of platform-specific settings
 /// to configure the subprocess when running.
 public struct PlatformOptions: Sendable {
-    /// The credentials to use when spawning the subprocess
+    /// The credentials to use when launching the subprocess
     /// as a different user.
     internal struct UserCredentials: Sendable, Hashable {
         /// The name of the user.
@@ -327,7 +327,7 @@ public struct PlatformOptions: Sendable {
     }
 
     /// Describes how the console appears
-    /// when spawning a new process.
+    /// when launching a new process.
     public struct ConsoleBehavior: Sendable, Hashable {
         internal enum Storage: Sendable, Hashable {
             case createNew
@@ -342,20 +342,20 @@ public struct PlatformOptions: Sendable {
         }
 
         /// The subprocess has a new console, instead of
-        /// inheriting its parent's console (the default).
+        /// inheriting the calling process's console (the default).
         public static let createNew: Self = .init(.createNew)
         /// For console processes, the new process does not
-        /// inherit its parent's console (the default).
+        /// inherit the calling process's console (the default).
         ///
         /// The new process can call the `AllocConsole`
         /// function at a later time to create a console.
         public static let detach: Self = .init(.detach)
-        /// The subprocess inherits its parent's console.
+        /// The subprocess inherits the calling process's console.
         public static let inherit: Self = .init(.inherit)
     }
 
     /// Describes how the window appears
-    /// when spawning a new process.
+    /// when launching a new process.
     public struct WindowStyle: Sendable, Hashable {
         internal enum Storage: Sendable, Hashable {
             case normal
@@ -393,7 +393,7 @@ public struct PlatformOptions: Sendable {
     internal var userCredentials: UserCredentials? = nil
     /// The console behavior of the new process.
     ///
-    /// Defaults to inheriting the console from the parent process.
+    /// Defaults to inheriting the console from the calling process.
     public var consoleBehavior: ConsoleBehavior = .inherit
     /// The window style to use when the process starts.
     public var windowStyle: WindowStyle = .normal
@@ -401,46 +401,46 @@ public struct PlatformOptions: Sendable {
     /// group for the new process.
     ///
     /// The process group includes all processes
-    /// that are descendants of this root process.
+    /// that this root process launches, directly or indirectly.
     /// The process identifier of the new process group
     /// is the same as the process identifier.
     public var createProcessGroup: Bool = false
-    /// An ordered list of steps to tear down the child
-    /// process if the parent task is canceled before
-    /// the child process terminates.
+    /// An ordered list of steps to tear down the subprocess
+    /// if the calling task is canceled before
+    /// the subprocess terminates.
     ///
     /// The sequence always ends by forcefully terminating the process.
     public var teardownSequence: [TeardownStep] = []
     /// A closure that configures platform-specific
-    /// spawning constructs.
+    /// process-launching constructs.
     ///
     /// Use this closure to directly configure or override
-    /// the underlying platform-specific spawn settings that the
+    /// the underlying platform-specific launch settings that the
     /// library uses internally, when higher-level APIs aren't
     /// available for such modifications.
     ///
     /// On Windows, Subprocess uses `CreateProcessW()` as the
-    /// underlying spawning mechanism. This closure allows
+    /// underlying process-launching mechanism. This closure allows
     /// modification of the `dwCreationFlags` creation flag
     /// and startup info `STARTUPINFOW` before
     /// they are sent to `CreateProcessW()`.
     ///
-    /// - Important: Subprocess assigns every spawned child to
-    /// an internal Job Object before any user code runs in the child,
+    /// - Important: Subprocess assigns every launched subprocess to
+    /// an internal Job Object before any user code runs in the subprocess,
     /// so teardown sequences targeting the process group can terminate
-    /// the child and all of its descendants together. To make this
-    /// assignment atomic, Subprocess always spawns children with
+    /// the subprocess and everything it launches together. To make this
+    /// assignment atomic, Subprocess always launches subprocesses with
     /// `CREATE_SUSPENDED` set in `dwCreationFlags`, regardless of the
     /// value the configurator leaves in `dwCreationFlags`. By default,
-    /// Subprocess resumes the child after the assignment completes.
+    /// Subprocess resumes the subprocess after the assignment completes.
     /// If the configurator sets `CREATE_SUSPENDED` in `dwCreationFlags`,
     /// Subprocess treats this as a signal that user code will resume
-    /// the child explicitly, and therefore skips the internal `ResumeThread`
+    /// the subprocess explicitly, and therefore skips the internal `ResumeThread`
     /// call. In that case the caller is responsible for calling
     /// `ResumeThread` on the thread handle exposed through
-    /// `Execution.processIdentifier.threadHandle`. Otherwise, the child
+    /// `Execution.processIdentifier.threadHandle`. Otherwise, the subprocess
     /// will remain suspended indefinitely. If user code separately
-    /// assigns the child to its own Job Object after spawn, that
+    /// assigns the subprocess to its own Job Object after launch, that
     /// user-supplied job is nested inside Subprocess's job.
     public var preSpawnProcessConfigurator:
         (
@@ -455,7 +455,7 @@ public struct PlatformOptions: Sendable {
 }
 
 extension PlatformOptions.ConsoleBehavior: CustomStringConvertible, CustomDebugStringConvertible {
-    /// A textual representation of how the console appears when spawning a
+    /// A textual representation of how the console appears when launching a
     /// new process.
     public var description: String {
         switch self.storage {
@@ -469,14 +469,14 @@ extension PlatformOptions.ConsoleBehavior: CustomStringConvertible, CustomDebugS
     }
 
     /// A debug-oriented textual representation of how the console appears when
-    /// spawning a new process.
+    /// launching a new process.
     public var debugDescription: String {
         return self.description
     }
 }
 
 extension PlatformOptions.WindowStyle: CustomStringConvertible, CustomDebugStringConvertible {
-    /// A textual representation of how the window appears when spawning a
+    /// A textual representation of how the window appears when launching a
     /// new process.
     public var description: String {
         switch self.storage {
@@ -492,7 +492,7 @@ extension PlatformOptions.WindowStyle: CustomStringConvertible, CustomDebugStrin
     }
 
     /// A debug-oriented textual representation of how the window appears when
-    /// spawning a new process.
+    /// launching a new process.
     public var debugDescription: String {
         return self.description
     }
@@ -596,11 +596,11 @@ extension Execution {
     /// Terminates the current subprocess with the given exit code.
     /// - Parameters:
     ///   - exitCode: The exit code to use for the subprocess.
-    ///   - toProcessGroup: When `true`, terminates the subprocess and any
-    ///   descendants by terminating the Job Object that contains them. The
+    ///   - toProcessGroup: When `true`, terminates the subprocess and everything
+    ///   it launches by terminating the Job Object that contains them. The
     ///   exit code is propagated to every process in the job. When `false`
-    ///   (the default), terminates only the immediate child process, leaving
-    ///   descendants unaffected.
+    ///   (the default), terminates only the immediate subprocess, leaving
+    ///   the processes it launched unaffected.
     public func terminate(
         withExitCode exitCode: DWORD,
         toProcessGroup: Bool = false
@@ -733,7 +733,7 @@ extension Executable {
     /// `lpCommandLine`. Specifically, it follows the steps listed in `CreateProcessW`'s documentation:
     ///
     /// 1. The directory from which the application loaded.
-    /// 2. The current directory for the parent process.
+    /// 2. The current directory for the calling process.
     /// 3. The 32-bit Windows system directory.
     /// 4. The 16-bit Windows system directory.
     /// 5. The Windows directory.
@@ -915,7 +915,7 @@ public struct ProcessIdentifier: Sendable, Hashable {
     public nonisolated(unsafe) let processDescriptor: HANDLE
     /// The main thread handle for this execution.
     public nonisolated(unsafe) let threadHandle: HANDLE
-    /// The Job Object handle that contains this process and any descendants.
+    /// The Job Object handle that contains this process and everything it launches.
     internal nonisolated(unsafe) let jobHandle: HANDLE
 
     internal init(
@@ -1158,12 +1158,12 @@ extension Configuration {
         return try await body(&info)
     }
 
-    /// Creates a Job Object that will contain a spawned child process and
-    /// any descendants.
+    /// Creates a Job Object that will contain a launched subprocess and
+    /// everything it launches.
     ///
     /// - Important: The handle is created with default security attributes,
-    /// which makes it non-inheritable. Descendants must not receive a duplicate
-    /// of the handle, so the parent can retain exclusive control over the job's
+    /// which makes it non-inheritable. Launched processes must not receive a duplicate
+    /// of the handle, so the calling process can retain exclusive control over the job's
     /// lifetime.
     private static func createJobObject() throws(SubprocessError) -> HANDLE {
         guard let jobHandle = CreateJobObjectW(nil, nil),
@@ -1177,12 +1177,12 @@ extension Configuration {
         return jobHandle
     }
 
-    /// Assigns the child process to the Job Object and, if requested, resumes
-    /// the child process thread.
+    /// Assigns the subprocess to the Job Object and, if requested, resumes
+    /// the subprocess thread.
     ///
     /// When `resumeThread` is `false`, the caller is responsible for resuming
-    /// the child using `ResumeThread` on the thread handle exposed through
-    /// `Execution.processIdentifier.threadHandle`. The child remains
+    /// the subprocess using `ResumeThread` on the thread handle exposed through
+    /// `Execution.processIdentifier.threadHandle`. The subprocess remains
     /// suspended until then.
     private static func assignChildToJobObjectAndResume(
         jobHandle: HANDLE,
@@ -1365,7 +1365,7 @@ extension Configuration {
     /// Applies the `CommandLineToArgvW` quoting ("step 1"), then
     /// prefixes every `cmd.exe` metacharacter, including the quotes step 1
     /// added, with `^` ("step 2"). After `cmd.exe` consumes the carets, the
-    /// child program decodes exactly the original argument.
+    /// launched program decodes exactly the original argument.
     ///
     /// Both steps are from Daniel Colascione's "Everyone quotes command line
     /// arguments the wrong way":
@@ -1414,7 +1414,7 @@ extension Configuration {
     }
 
     /// Quotes a single argument so the `CommandLineToArgvW` / C runtime parser
-    /// in the child decodes it back to the original string (Colascione's
+    /// in the launched program decodes it back to the original string (Colascione's
     /// "step 1").
     ///
     /// Taken from SCF.
@@ -1640,7 +1640,7 @@ extension String {
     }
 
     /// Returns `true` if this path names a Windows batch file (`.bat` or
-    /// `.cmd`), which `CreateProcessW` executes by spawning `cmd.exe`.
+    /// `.cmd`), which `CreateProcessW` executes by launching `cmd.exe`.
     ///
     /// Trailing spaces and dots are ignored first, because Windows strips them
     /// when resolving a path: `deploy.bat. .` still runs as a batch file. Not

@@ -43,36 +43,36 @@ public struct PlatformOptions: Sendable {
     public var userID: uid_t? = nil
     /// The real, effective, and saved set-group-ID for the subprocess.
     ///
-    /// Setting this value is equivalent to calling `setgid()` on the child process.
+    /// Setting this value is equivalent to calling `setgid()` on the subprocess.
     /// The group ID controls permissions, particularly for file access.
     public var groupID: gid_t? = nil
     /// The list of supplementary group IDs for the subprocess.
     public var supplementaryGroups: [gid_t]? = nil
     /// The process group for the subprocess.
     ///
-    /// This is equivalent to calling `setpgid()` on the child process.
+    /// This is equivalent to calling `setpgid()` on the subprocess.
     /// The process group ID groups related processes for controlling signals.
     public var processGroupID: pid_t? = nil
     /// A Boolean value that indicates whether to create a session
     /// and detach from the terminal.
     public var createSession: Bool = false
-    /// An ordered list of steps to tear down the child
-    /// process if the parent task is canceled before
-    /// the child process terminates.
+    /// An ordered list of steps to tear down the subprocess
+    /// if the calling task is canceled before
+    /// the subprocess terminates.
     ///
     /// The sequence always ends by sending a `.kill` signal.
     public var teardownSequence: [TeardownStep] = []
     /// A closure that configures platform-specific
-    /// spawning constructs.
+    /// process-launching constructs.
     ///
     /// Use this closure to directly configure or override
-    /// the underlying platform-specific spawn settings that the
+    /// the underlying platform-specific launch settings that the
     /// library uses internally, when higher-level APIs aren't
     /// available for such modifications.
     ///
     /// On Darwin, Subprocess uses `posix_spawn()` as the
-    /// underlying spawning mechanism. This closure allows
-    /// modification of the `posix_spawnattr_t` spawn attribute
+    /// underlying process-launching mechanism. This closure allows
+    /// modification of the `posix_spawnattr_t` attribute
     /// and file actions `posix_spawn_file_actions_t` before
     /// they are sent to `posix_spawn()`.
     public var preSpawnProcessConfigurator:
@@ -496,7 +496,7 @@ extension Configuration {
         }
     }
 
-    /// Spawns a child process on the background worker thread, retrying transient failures with bounded jittered backoff.
+    /// Spawns a subprocess on the background worker thread, retrying transient failures with bounded jittered backoff.
     ///
     /// Calls `_subprocess_spawn()` on the shared background worker thread.
     /// `posix_spawn` is used directly only when no pre-fork setup is required;

@@ -110,9 +110,9 @@ where Output.OutputType: CustomDebugStringConvertible, Error.OutputType: CustomD
 // MARK: - ExecutionOutcome
 
 /// The outcome of a subprocess execution, containing the closure's return
-/// value and the termination status of the child process.
+/// value and the termination status of the subprocess.
 internal struct ExecutionOutcome<Result: Sendable & ~Copyable>: Sendable, ~Copyable {
-    /// The termination status of the child process.
+    /// The termination status of the subprocess.
     internal let terminationStatus: TerminationStatus
     /// The value returned by the closure passed to the `run` method.
     internal let value: Result

@@ -39,7 +39,7 @@ public struct DataOutput: OutputProtocol, ErrorOutputProtocol {
 extension OutputProtocol where Self == DataOutput {
     /// Creates a subprocess output that collects the process's binary output, up to the specified byte limit.
     ///
-    /// The subprocess throws an error if the child process
+    /// The subprocess throws an error if the process
     /// produces more bytes than `limit`.
     public static func data(limit: Int) -> Self {
         return .init(limit: limit)

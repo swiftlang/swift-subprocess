@@ -28,7 +28,7 @@ import Musl
 #endif
 
 /// A collection of configuration parameters to use when
-/// spawning a subprocess.
+/// running a subprocess.
 public struct Configuration: Sendable {
     /// The executable to run.
     public var executable: Executable
@@ -39,7 +39,7 @@ public struct Configuration: Sendable {
     /// The working directory to use when running the executable.
     ///
     /// If this property is `nil`, the subprocess inherits the working
-    /// directory from the parent process.
+    /// directory from the calling process.
     public var workingDirectory: FilePath?
     /// The platform-specific options to use when
     /// running the subprocess.
@@ -471,7 +471,7 @@ public struct Environment: Sendable, Hashable {
     /// Returns an updated environment with the given overrides applied.
     ///
     /// Keys with `nil` values in `newValue` remove the corresponding entry
-    /// from the environment before passing it to the child process.
+    /// from the environment before passing it to the subprocess.
     public func updating(_ newValue: [Key: String?]) -> Self {
         switch config {
         case .inherit(var overrides):
@@ -723,10 +723,10 @@ extension TerminationStatus: CustomStringConvertible, CustomDebugStringConvertib
 // MARK: - Internal
 
 extension Configuration {
-    /// The result of spawning a child process, containing parent-side file descriptors.
+    /// The result of launching a subprocess, containing caller-side file descriptors.
     ///
-    /// After `spawn()` finishes, it closes child-side file descriptors
-    /// (input read, output write, error write). The parent-side file descriptors
+    /// After `spawn()` finishes, it closes subprocess-side file descriptors
+    /// (input read, output write, error write). The caller-side file descriptors
     /// are returned in this value to perform actual reads.
     internal struct SpawnResult: ~Copyable {
         let processIdentifier: ProcessIdentifier
@@ -963,11 +963,11 @@ internal func _safelyClose(_ target: _CloseTarget) throws(SubprocessError) {
 
 /// An IO descriptor wraps a platform-specific file descriptor, which establishes a
 /// connection to the standard input/output (IO) system during the process of
-/// spawning a child process.
+/// launching a subprocess.
 ///
 /// Unlike a file descriptor, the `IODescriptor` does not support
-/// data read/write operations; its primary function is to facilitate the spawning of
-/// child processes by providing a platform-specific file descriptor.
+/// data read/write operations; its primary function is to facilitate the launching of
+/// subprocesses by providing a platform-specific file descriptor.
 internal struct IODescriptor: ~Copyable {
     #if canImport(WinSDK)
     typealias Descriptor = HANDLE
@@ -1070,13 +1070,13 @@ internal struct CreatedPipe: ~Copyable, Sendable {
     internal enum Purpose: CustomStringConvertible {
         /// This pipe is used for standard input.
         ///
-        /// This option maps to `PIPE_ACCESS_OUTBOUND` on Windows where child only reads,
-        /// parent only writes.
+        /// This option maps to `PIPE_ACCESS_OUTBOUND` on Windows where the subprocess only reads,
+        /// the caller only writes.
         case input
         /// This pipe is used for standard output and standard error.
         ///
         /// This option maps to `PIPE_ACCESS_INBOUND` on Windows where
-        /// child only writes, parent only reads.
+        /// the subprocess only writes, the caller only reads.
         case output
 
         var description: String {
@@ -1268,7 +1268,7 @@ extension Optional where Wrapped == String {
 }
 
 /// Runs the body closure, then runs the on-cleanup closure if the body closure throws an error
-/// or if the parent task is cancelled.
+/// or if the calling task is cancelled.
 ///
 /// In the latter case, `onCleanup` may be run concurrently with `body`.
 /// The `body` closure is guaranteed to run exactly once.

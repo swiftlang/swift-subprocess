@@ -18,7 +18,7 @@ public import SystemPackage
 // MARK: - Collected Result
 
 /// Runs an executable asynchronously and returns the collected output
-/// of the child process.
+/// of the subprocess.
 ///
 /// - Parameters:
 ///   - executable: The executable to run.
@@ -60,7 +60,7 @@ public func run<
 }
 
 /// Runs an executable asynchronously and returns the collected output
-/// of the child process.
+/// of the subprocess.
 ///
 /// - Parameters:
 ///   - executable: The executable to run.
@@ -125,7 +125,7 @@ public func run<
 ///     an ``Execution`` value that's valid only for the duration of the call.
 ///     Don't let the execution value escape the closure.
 /// - Returns: An ``ExecutionResult`` that contains the closure's return value and
-///   the termination status of the child process.
+///   the termination status of the subprocess.
 public func run<
     Result: ~Copyable,
     Input: InputProtocol,
@@ -233,7 +233,7 @@ public func run<
 ///     an ``Execution`` value that's valid only for the duration of the call.
 ///     Don't let the execution value escape the closure.
 /// - Returns: An ``ExecutionResult`` that contains the closure's return value and
-///   the termination status of the child process.
+///   the termination status of the subprocess.
 public func run<
     Result: ~Copyable,
     Input: InputProtocol,

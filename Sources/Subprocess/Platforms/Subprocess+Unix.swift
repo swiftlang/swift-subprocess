@@ -67,7 +67,7 @@ public struct Signal: Hashable, Sendable {
     /// `.suspend` signal.
     public static var resume: Self { .init(rawValue: SIGCONT) }
     /// The `.kill` signal is sent to a process to cause it to
-    /// terminate immediately (kill).
+    /// terminate immediately.
     ///
     /// In contrast to `.terminate`
     /// and `.interrupt`, this signal cannot be caught or ignored,
@@ -100,7 +100,7 @@ public struct Signal: Hashable, Sendable {
 }
 
 extension Execution {
-    /// Sends the given signal to the child process.
+    /// Sends the given signal to the subprocess.
     /// - Parameters:
     ///   - signal: The signal to send.
     ///   - shouldSendToProcessGroup: A Boolean value that indicates whether this signal should be sent to
@@ -607,7 +607,7 @@ extension Configuration {
         }
     }
 
-    /// Spawns a child process on the background worker thread, retrying transient failures with bounded jittered backoff.
+    /// Spawns a subprocess on the background worker thread, retrying transient failures with bounded jittered backoff.
     ///
     /// Calls `_subprocess_fork_exec()` on the shared background worker thread.
     ///
@@ -713,22 +713,22 @@ public struct PlatformOptions: Sendable {
     public var userID: uid_t? = nil
     /// The real, effective, and saved set-group-ID for the subprocess.
     ///
-    /// Setting this value is equivalent to calling `setgid()` on the child process.
+    /// Setting this value is equivalent to calling `setgid()` on the subprocess.
     /// The group ID controls permissions, particularly for file access.
     public var groupID: gid_t? = nil
     /// The list of supplementary group IDs for the subprocess.
     public var supplementaryGroups: [gid_t]? = nil
     /// The process group for the subprocess.
     ///
-    /// Equivalent to calling `setpgid()` on the child process.
+    /// Equivalent to calling `setpgid()` on the subprocess.
     /// The process group ID groups related processes for controlling signals.
     public var processGroupID: pid_t? = nil
     /// A Boolean value that indicates whether to create a session
     /// and detach from the terminal.
     public var createSession: Bool = false
-    /// An ordered list of steps to tear down the child
-    /// process if the parent task is canceled before
-    /// the child process terminates.
+    /// An ordered list of steps to tear down the subprocess
+    /// if the calling task is canceled before
+    /// the subprocess terminates.
     ///
     /// The sequence always ends by sending a `.kill` signal.
     public var teardownSequence: [TeardownStep] = []
