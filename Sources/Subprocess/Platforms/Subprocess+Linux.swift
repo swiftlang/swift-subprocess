@@ -155,15 +155,18 @@ internal func waitForProcessTermination(
     }
 }
 
-#if canImport(Musl)
-extension pthread_t: @retroactive @unchecked Sendable {}
-#endif
-
-private enum ProcessMonitorState {
-    struct Storage {
+private enum ProcessMonitorState: Sendable {
+    struct Storage: Sendable {
         let epollFileDescriptor: CInt
         let shutdownFileDescriptor: CInt
+        // `pthread_t` is a non-`Sendable` pointer on musl but a `Sendable`
+        // integer on glibc/Bionic; scope the opt-out to musl so it isn't
+        // flagged as unnecessary on the integer platforms.
+        #if canImport(Musl)
+        nonisolated(unsafe) let monitorThread: pthread_t
+        #else
         let monitorThread: pthread_t
+        #endif
         var continuations: [PlatformFileDescriptor: [CheckedContinuation<Void, any Error>]]
     }
 

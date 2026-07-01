@@ -55,10 +55,17 @@ final class AsyncIO: Sendable {
         }
     }
 
-    private struct State {
+    private struct State: Sendable {
         let epollFileDescriptor: CInt
         let shutdownFileDescriptor: CInt
+        // `pthread_t` is a non-`Sendable` pointer on musl but a `Sendable`
+        // integer on glibc/Bionic; scope the opt-out to musl so it isn't
+        // flagged as unnecessary on the integer platforms.
+        #if canImport(Musl)
+        nonisolated(unsafe) let monitorThread: pthread_t
+        #else
         let monitorThread: pthread_t
+        #endif
     }
 
     static let shared: AsyncIO = AsyncIO()
