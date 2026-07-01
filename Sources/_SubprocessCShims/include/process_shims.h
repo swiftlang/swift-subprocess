@@ -37,12 +37,22 @@
 #include <sys/wait.h>
 #endif // TARGET_OS_LINUX || TARGET_OS_FREEBSD
 
+// musl provides no identifying macro, so it is spelled as Linux that is
+// neither glibc nor Bionic. Correct only after a libc header (<pthread.h>
+// above) has put __GLIBC__ in scope, which is why this lives here and not in
+// target_conditionals.h.
+#if TARGET_OS_LINUX && !defined(__GLIBC__) && !defined(__ANDROID__)
+#define TARGET_LIBC_MUSL 1
+#else
+#define TARGET_LIBC_MUSL 0
+#endif // TARGET_LIBC_MUSL
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 int _subprocess_pthread_create(
-#if TARGET_OS_MAC || defined(__FreeBSD__) || defined(__OpenBSD__)
+#if TARGET_OS_MAC || defined(__FreeBSD__) || defined(__OpenBSD__) || TARGET_LIBC_MUSL
     pthread_t _Nullable * _Nonnull ptr,
 #else
     pthread_t * _Nonnull ptr,
