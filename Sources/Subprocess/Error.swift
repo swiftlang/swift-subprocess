@@ -112,7 +112,7 @@ extension SubprocessError {
     private enum Context: Sendable, Hashable {
         case string(String)
         case int(Int)
-        case processControlOperation(ProcessControlOperation)
+        case processControlOperation(ProcessControlOperation, reason: String?)
     }
 
     internal enum ProcessControlOperation: Sendable, Hashable {
@@ -207,22 +207,26 @@ extension SubprocessError: CustomStringConvertible, CustomDebugStringConvertible
             }
 
         case .processControlFailed:
-            if let context = self.context[self.code],
-                case .processControlOperation(let operation) = context
-            {
-                switch operation {
-                case .sendSignal(let signal):
-                    return "Failed to send signal \(signal) to child process"
-                case .terminate:
-                    return "Failed to terminate child process."
-                case .suspend:
-                    return "Failed to suspend child process."
-                case .resume:
-                    return "Failed to resume child process."
-                }
-            } else {
+            guard let context = self.context[self.code],
+                case .processControlOperation(let operation, let reason) = context
+            else {
                 return "Failed to control child process state"
             }
+            var message: [String]
+            switch operation {
+            case .sendSignal(let signal):
+                message = ["Failed to send signal \(signal) to child process."]
+            case .terminate:
+                message = ["Failed to terminate child process."]
+            case .suspend:
+                message = ["Failed to suspend child process."]
+            case .resume:
+                message = ["Failed to resume child process."]
+            }
+            if let reason {
+                message.append("Reason: \(reason)")
+            }
+            return message.joined(separator: " ")
         }
     }
 
@@ -298,11 +302,15 @@ extension SubprocessError {
         )
     }
 
-    internal static func processControlFailed(_ operation: ProcessControlOperation, underlyingError: UnderlyingError?) -> Self {
+    internal static func processControlFailed(
+        _ operation: ProcessControlOperation,
+        reason: String? = nil,
+        underlyingError: UnderlyingError?
+    ) -> Self {
         return SubprocessError(
             code: .processControlFailed,
             underlyingError: underlyingError,
-            context: [.processControlFailed: .processControlOperation(operation)]
+            context: [.processControlFailed: .processControlOperation(operation, reason: reason)]
         )
     }
 
