@@ -298,7 +298,7 @@ final class AsyncIO: @unchecked Sendable {
                 // with its bytes sitting in `resultBuffer`. Those bytes have been
                 // pulled out of the pipe, so the post-cancellation drain cannot
                 // recover them: dropping them here loses exactly one buffer.
-                return self.reconcileOverlappedAfterCancellation(
+                return self.reconcileReadOverlappedAfterCancellation(
                     handle: handle,
                     overlapped: &overlapped
                 )
@@ -339,7 +339,7 @@ final class AsyncIO: @unchecked Sendable {
     /// this call. On the pending path this function blocks until the cancelled
     /// read has fully unwound, guaranteeing the kernel is done with both before
     /// they are freed.
-    private func reconcileOverlappedAfterCancellation(
+    private func reconcileReadOverlappedAfterCancellation(
         handle: HANDLE,
         overlapped: inout _OVERLAPPED
     ) -> OverlappedReadOutcome {
@@ -399,6 +399,73 @@ final class AsyncIO: @unchecked Sendable {
         // Any other status: no bytes to recover here. The drain handles anything
         // still buffered.
         return .finished
+    }
+
+    /// Reconciles an overlapped `WriteFile` whose awaiting task was cancelled
+    /// before its completion was delivered through the signal stream.
+    ///
+    /// On cancellation, the `WriteFile` this function's caller issued is in
+    /// one of three states. If it already finished, the kernel has released
+    /// both the source buffer and `overlapped`, and there is nothing to do. If
+    /// it is still pending, the kernel is reading from the caller's `span`
+    /// storage and will still write the result into `overlapped`; returning
+    /// now would end the borrow on `span` and pop `overlapped` off the stack
+    /// while the kernel is mid-operation (use-after-free of the kernel's read
+    /// source). This cancels that specific operation and blocks until it has
+    /// fully unwound, so both are provably idle before they are freed.
+    ///
+    /// Unlike the read counterpart, this returns nothing. Whatever
+    /// `GetOverlappedResult` reports as transferred on the cancelled write is
+    /// deliberately not folded into the caller's returned count: cancellation
+    /// here means the only reader of this pipe has terminated, so nothing will
+    /// consume those bytes, and whether any landed before or after the cancel
+    /// is a race upon which the caller cannot act. The count is left as the
+    /// total confirmed through the completion port, truncated by cancellation.
+    ///
+    /// - Important: `overlapped` must reference the same storage passed to the
+    /// `WriteFile` call, and the `span` that call read from must outlive this
+    /// call. On the pending path this function blocks until the cancelled write
+    /// has fully unwound, guaranteeing the kernel is done with both before the
+    /// borrow is released.
+    private func reconcileWriteOverlappedAfterCancellation(
+        handle: HANDLE,
+        overlapped: inout _OVERLAPPED
+    ) {
+        var transferred: DWORD = 0
+
+        // Already finished (completed, aborted, or broken pipe)? The kernel
+        // has released the source buffer and `overlapped`; nothing to reclaim.
+        if GetOverlappedResult(handle, &overlapped, &transferred, false) {
+            return
+        }
+        guard GetLastError() == ERROR_IO_INCOMPLETE else {
+            // `ERROR_OPERATION_ABORTED`, `ERROR_BROKEN_PIPE`, or any other
+            // terminal status: the operation is done and the buffer is idle.
+            return
+        }
+
+        // The write is still pending. Returning now would let `span`'s storage
+        // and `overlapped` go out of scope while the kernel is still reading
+        // the former and poised to write the latter, so cancel this specific
+        // operation and block until it has fully unwound.
+        //
+        // With `overlapped.hEvent` `NULL`, the wait below falls back to
+        // signaling on `handle` itself. Microsoft discourages that only because
+        // a handle carrying several concurrent overlapped operations can't
+        // disambiguate which one completed. This handle never does that: stdin
+        // is write-only and writes on it are strictly sequential (the
+        // `StandardInputWriter` actor serializes them), so at most one
+        // operation is in flight, and `WriteFile` resets the handle to
+        // nonsignaled at issue, so no earlier write's signal can satisfy this
+        // wait early. The operation was issued IOCP-bound (its completion must
+        // reach the monitor to yield the byte count), so it cannot carry a
+        // private IOCP-suppressing event the way the drain path's self-issued
+        // read can; it reuses the handle's own signal instead.
+        _ = CancelIoEx(handle, &overlapped)
+        // After this returns (success or abort), the kernel is done reading
+        // `span` and writing `overlapped`. `transferred` is required by the
+        // signature but intentionally unused.
+        _ = GetOverlappedResult(handle, &overlapped, &transferred, true)
     }
 
     /// Reads bytes already buffered in the pipe after the owning process has
@@ -659,12 +726,22 @@ final class AsyncIO: @unchecked Sendable {
 
             do {
                 guard let next = try await signalStream.next() else {
-                    // The signal stream finished while data remained to
-                    // write — typically because `cancelAsyncIO` ran after
-                    // the child exited. Return whatever bytes the call
-                    // already pushed so the caller observes a partial
-                    // write rather than misreading silence as a successful
-                    // zero-byte write.
+                    // `next()` resolved to `nil` because the owning task was
+                    // cancelled on subprocess termination, not because the
+                    // write failed. A `WriteFile` issued above may still be
+                    // pending, with the kernel reading from `span`'s storage
+                    // and poised to write into `overlapped`; both release once
+                    // this call returns and the borrow on `span` ends.
+                    //
+                    // Reconcile it first so neither is freed while the kernel
+                    // is still using it, then return the bytes confirmed
+                    // through the completion port (a partial or zero count;
+                    // recovered bytes are intentionally not folded in; see
+                    // `reconcileWriteOverlappedAfterCancellation()`).
+                    self.reconcileWriteOverlappedAfterCancellation(
+                        handle: handle,
+                        overlapped: &overlapped
+                    )
                     return writtenLength
                 }
                 bytesWritten = next
