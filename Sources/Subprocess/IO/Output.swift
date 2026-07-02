@@ -26,15 +26,26 @@ public protocol OutputProtocol: Sendable, ~Copyable {
     /// The Swift value this output type produces after collecting subprocess output.
     associatedtype OutputType: Sendable
 
-    /// Converts the output from a span to the expected output type.
+    /// Converts the bytes collected from the subprocess's output stream into
+    /// ``OutputType``.
+    ///
+    /// - Parameter span: The collected output bytes, valid only for the
+    ///   duration of the call.
+    /// - Returns: The converted output value.
+    /// - Throws: An error if the conversion fails.
     func output(from span: RawSpan) throws -> OutputType
 
-    /// The maximum number of bytes to collect.
+    /// The maximum number of bytes to collect from the subprocess's output
+    /// stream.
+    ///
+    /// If the subprocess produces more than this many bytes, `Subprocess`
+    /// throws ``SubprocessError`` with the code
+    /// ``SubprocessError/Code/outputLimitExceeded``.
     var maxSize: Int { get }
 }
 
 extension OutputProtocol {
-    /// The maximum number of bytes to collect.
+    /// The default maximum number of bytes to collect: 128 KB.
     public var maxSize: Int { 128 * 1024 }
 }
 
@@ -43,7 +54,6 @@ extension OutputProtocol {
 /// On Unix-like systems, ``DiscardedOutput`` redirects standard output
 /// to `/dev/null`. On Windows, it redirects to `NUL`.
 public struct DiscardedOutput: OutputProtocol, ErrorOutputProtocol {
-    /// The type for the output.
     public typealias OutputType = Void
 
     internal func createPipe() throws(SubprocessError) -> CreatedPipe {
@@ -68,7 +78,6 @@ public struct DiscardedOutput: OutputProtocol, ErrorOutputProtocol {
 /// You can choose to have the subprocess automatically close
 /// the file descriptor after it launches.
 public struct FileDescriptorOutput: OutputProtocol, ErrorOutputProtocol {
-    /// The type for this output.
     public typealias OutputType = Void
 
     private let closeAfterSpawningProcess: Bool
@@ -100,12 +109,9 @@ public struct FileDescriptorOutput: OutputProtocol, ErrorOutputProtocol {
 
 /// An output type that collects the subprocess's output as decoded text using the given encoding.
 public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol, ErrorOutputProtocol {
-    /// The type for this output.
     public typealias OutputType = String?
-    /// The maximum number of bytes to collect.
     public let maxSize: Int
 
-    /// Creates a string from a raw span.
     public func output(from span: RawSpan) throws -> String? {
         span.withUnsafeBytes { ptr in
             let array = Array(ptr)
@@ -120,9 +126,7 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol, ErrorOut
 
 /// An output type that collects the subprocess's output as a byte array.
 public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
-    /// The output type for this output option.
     public typealias OutputType = [UInt8]
-    /// The maximum number of bytes to collect.
     public let maxSize: Int
 
     internal func captureOutput(
@@ -166,7 +170,6 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
         return result
     }
 
-    /// Creates a byte array from a contiguous region of raw memory.
     public func output(from span: RawSpan) throws -> [UInt8] {
         span.withUnsafeBytes { Array($0) }
     }
@@ -184,7 +187,6 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
 /// output by iterating ``Execution/standardOutput`` or
 /// ``Execution/standardError``.
 public struct SequenceOutput: OutputProtocol, ErrorOutputProtocol {
-    /// The output type for this output option.
     public typealias OutputType = Void
 
     internal init() {}
@@ -303,7 +305,6 @@ public protocol ErrorOutputProtocol: OutputProtocol {}
 /// streams together, making it possible to process all subprocess output as a unified
 /// stream rather than handling standard output and standard error separately.
 public struct CombinedErrorOutput: ErrorOutputProtocol {
-    /// The output type for this output option.
     public typealias OutputType = Void
 
     internal init() {}
@@ -420,7 +421,10 @@ extension OutputProtocol where OutputType == Void {
         for processIdentifier: ProcessIdentifier
     ) async throws {}
 
-    /// Converts the output from a raw span to the expected output type.
+    /// Produces no output value, because ``OutputType`` is `Void`.
+    ///
+    /// - Parameter span: Ignored; a `Void` output type has no value to
+    ///   produce.
     public func output(from span: RawSpan) throws {
         // When OutputType is Void, there is no output to process,
         // So this is effectively a no-op.
