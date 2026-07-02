@@ -104,15 +104,15 @@ extension SubprocessUnixTests {
             output: .string(limit: .max),
             error: .string(limit: .max),
         )
-        #expect(idResult.terminationStatus.isSuccess, Comment(rawValue: idResult.standardError ?? ""))
-        let ids = try #require(
-            idResult.standardOutput
-        ).split(separator: " ")
+        #expect(idResult.terminationStatus.isSuccess, Comment(rawValue: idResult.standardError))
+        let ids =
+            try idResult
+            .standardOutput.split(separator: " ")
             .map { try #require(gid_t($0.trimmingCharacters(in: .whitespacesAndNewlines))) }
         // id -G includes the effective GID (0 for root) along with
         // supplementary groups, so filter to just the expected range
         let actualGroups = Set(ids.filter { expectedGroups.contains($0) })
-        #expect(actualGroups == expectedGroups, Comment(rawValue: idResult.standardError ?? ""))
+        #expect(actualGroups == expectedGroups, Comment(rawValue: idResult.standardError))
     }
 
     @Test(
@@ -138,9 +138,7 @@ extension SubprocessUnixTests {
             output: .string(limit: .max)
         )
         #expect(psResult.terminationStatus.isSuccess)
-        let resultValue = try #require(
-            psResult.standardOutput
-        )
+        let resultValue = psResult.standardOutput
         let match = try #require(try #/\s*PID\s*PGID\s*(?<pid>[\-]?[0-9]+)\s*(?<pgid>[\-]?[0-9]+)\s*/#.wholeMatch(in: resultValue), "ps output was in an unexpected format:\n\n\(resultValue)")
         // PGID should == PID
         #expect(match.output.pid == match.output.pgid)
@@ -725,9 +723,9 @@ extension SubprocessUnixTests {
             error: .string(limit: .max)
         )
         #expect(result.terminationStatus.isSuccess)
-        #expect(result.standardError?.trimmingNewLineAndQuotes().isEmpty == true)
+        #expect(result.standardError.trimmingNewLineAndQuotes().isEmpty == true)
         var checklist = Set(openedFileDescriptors)
-        let closeResult = try #require(result.standardOutput)
+        let closeResult = result.standardOutput
             .trimmingNewLineAndQuotes()
             .split(separator: "\n")
         #expect(checklist.count == closeResult.count)
@@ -778,7 +776,7 @@ extension SubprocessUnixTests {
             }
             #expect(readCount == 0)
             #expect(
-                result.standardOutput?.trimmingNewLineAndQuotes() == "wrote into \(testWriteEnd.rawValue), echo exit code 1"
+                result.standardOutput.trimmingNewLineAndQuotes() == "wrote into \(testWriteEnd.rawValue), echo exit code 1"
             )
         }
     }
@@ -880,7 +878,7 @@ extension SubprocessUnixTests {
             output: .string(limit: 32)
         )
         #expect(idResult.terminationStatus.isSuccess)
-        let id = try #require(idResult.standardOutput)
+        let id = idResult.standardOutput
         #expect(
             id.trimmingCharacters(in: .whitespacesAndNewlines) == "\(expected)"
         )
@@ -896,7 +894,7 @@ internal func assertNewSessionCreated<Output: OutputProtocol>(
 ) throws {
     try assertNewSessionCreated(
         terminationStatus: result.terminationStatus,
-        output: #require(result.standardOutput)
+        output: result.standardOutput
     )
 }
 
@@ -922,7 +920,7 @@ internal func assertNewSessionCreated<Output: OutputProtocol>(
     fromProcStat result: ExecutionResult<Void, StringOutput<UTF8>, Output>
 ) throws {
     #expect(result.terminationStatus.isSuccess)
-    let statLine = try #require(result.standardOutput)
+    let statLine = result.standardOutput
     // `comm` can contain spaces and parentheses, so bracket it by the first
     // '(' and the last ')' rather than splitting the whole line on whitespace.
     let openParen = try #require(
@@ -1111,7 +1109,7 @@ extension SubprocessUnixTests {
         try pipe.readEnd.close()
 
         #expect(result.terminationStatus.isSuccess)
-        #expect(result.standardOutput?.trimmingNewLineAndQuotes() == "hello from parent stdin")
+        #expect(result.standardOutput.trimmingNewLineAndQuotes() == "hello from parent stdin")
     }
 }
 
@@ -1158,7 +1156,7 @@ extension SubprocessUnixTests {
         try primary.close()
 
         #expect(result.terminationStatus.isSuccess)
-        #expect(result.standardOutput?.trimmingNewLineAndQuotes() == payload)
+        #expect(result.standardOutput.trimmingNewLineAndQuotes() == payload)
     }
 }
 

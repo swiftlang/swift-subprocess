@@ -109,10 +109,10 @@ public struct FileDescriptorOutput: OutputProtocol, ErrorOutputProtocol {
 
 /// An output type that collects the subprocess's output as decoded text using the given encoding.
 public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol, ErrorOutputProtocol {
-    public typealias OutputType = String?
+    public typealias OutputType = String
     public let maxSize: Int
 
-    public func output(from span: RawSpan) throws -> String? {
+    public func output(from span: RawSpan) throws -> String {
         span.withUnsafeBytes { ptr in
             let array = Array(ptr)
             return String(decodingBytes: array, as: Encoding.self)

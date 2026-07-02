@@ -140,8 +140,8 @@ let result = try await run(
     return lineCount
 }
 
-print(result.closureResult)         // The line count returned from the closure.
-print(result.standardError ?? "")   // The captured standard error.
+print(result.closureResult) // The line count returned from the closure.
+print(result.standardError) // The captured standard error.
 ```
 
 Stream both standard output and standard error, writing to standard input from the same closure:

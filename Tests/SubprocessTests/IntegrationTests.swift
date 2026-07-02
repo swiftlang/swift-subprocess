@@ -71,8 +71,7 @@ extension SubprocessIntegrationTests {
         )
         #expect(result.terminationStatus.isSuccess)
         // https://github.com/swiftlang/swift/issues/77235
-        let output = result.standardOutput?
-            .trimmingNewLineAndQuotes()
+        let output = result.standardOutput.trimmingNewLineAndQuotes()
         // Windows echo includes quotes
         #expect(output == message)
     }
@@ -116,9 +115,7 @@ extension SubprocessIntegrationTests {
         )
         #expect(result.terminationStatus.isSuccess)
         // https://github.com/swiftlang/swift/issues/77235
-        let maybePath = result.standardOutput?
-            .trimmingNewLineAndQuotes()
-        let path = try #require(maybePath)
+        let path = result.standardOutput.trimmingNewLineAndQuotes()
         #expect(directory(path, isSameAs: expected))
     }
 
@@ -187,7 +184,7 @@ extension SubprocessIntegrationTests {
                 output: .string(limit: 8)
             )
             #expect(first.terminationStatus.isSuccess)
-            #expect(first.standardOutput?.trimmingNewLineAndQuotes() == "FIRST")
+            #expect(first.standardOutput.trimmingNewLineAndQuotes() == "FIRST")
 
             let second = try await Subprocess.run(
                 .name(executableName),
@@ -197,7 +194,7 @@ extension SubprocessIntegrationTests {
                 output: .string(limit: 8)
             )
             #expect(second.terminationStatus.isSuccess)
-            #expect(second.standardOutput?.trimmingNewLineAndQuotes() == "SECOND")
+            #expect(second.standardOutput.trimmingNewLineAndQuotes() == "SECOND")
         }
     }
     #endif
@@ -226,8 +223,7 @@ extension SubprocessIntegrationTests {
         )
         #expect(result.terminationStatus.isSuccess)
         // https://github.com/swiftlang/swift/issues/77235
-        let output = result.standardOutput?
-            .trimmingNewLineAndQuotes()
+        let output = result.standardOutput.trimmingNewLineAndQuotes()
         #expect(
             output == message
         )
@@ -259,8 +255,7 @@ extension SubprocessIntegrationTests {
         )
         #expect(result.terminationStatus.isSuccess)
         // https://github.com/swiftlang/swift/issues/77235
-        let output = result.standardOutput?
-            .trimmingNewLineAndQuotes()
+        let output = result.standardOutput.trimmingNewLineAndQuotes()
         #expect(
             output == "apple"
         )
@@ -281,7 +276,7 @@ extension SubprocessIntegrationTests {
         )
         #expect(result.terminationStatus.isSuccess)
         // https://github.com/swiftlang/swift/issues/77235
-        let output = result.standardOutput?
+        let output = result.standardOutput
             .trimmingCharacters(in: .whitespacesAndNewlines)
         #expect(
             output == "Data Content"
@@ -313,7 +308,7 @@ extension SubprocessIntegrationTests {
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
-        let pathValue = try #require(result.standardOutput)
+        let pathValue = result.standardOutput
         #if os(Windows)
         let expectedPathValue = ProcessInfo.processInfo.environment["Path"] ?? ProcessInfo.processInfo.environment["PATH"] ?? ProcessInfo.processInfo.environment["path"]
         let expected = try #require(expectedPathValue)
@@ -363,8 +358,7 @@ extension SubprocessIntegrationTests {
         )
         #expect(result.terminationStatus.isSuccess)
         // https://github.com/swiftlang/swift/issues/77235
-        let output = result.standardOutput?
-            .trimmingNewLineAndQuotes()
+        let output = result.standardOutput.trimmingNewLineAndQuotes()
         #expect(
             output == path
         )
@@ -411,8 +405,7 @@ extension SubprocessIntegrationTests {
         )
         #expect(result.terminationStatus.isSuccess)
         // https://github.com/swiftlang/swift/issues/77235
-        let output = result.standardOutput?
-            .trimmingNewLineAndQuotes()
+        let output = result.standardOutput.trimmingNewLineAndQuotes()
         #expect(output == "value")
 
         // Now make sure we can remove `SubprocessTest`
@@ -439,7 +432,7 @@ extension SubprocessIntegrationTests {
         )
         // The new echo/printenv should not find `SubprocessTest`
         #if os(Windows)
-        #expect(result2.standardOutput?.trimmingNewLineAndQuotes() == "%SubprocessTest%")
+        #expect(result2.standardOutput.trimmingNewLineAndQuotes() == "%SubprocessTest%")
         #else
         #expect(result2.terminationStatus == .exited(1))
         #endif
@@ -477,9 +470,7 @@ extension SubprocessIntegrationTests {
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
-        let output = try #require(
-            result.standardOutput
-        ).trimmingNewLineAndQuotes()
+        let output = result.standardOutput.trimmingNewLineAndQuotes()
         #if os(Windows)
         // Make sure the newly launched process does
         // NOT have `SystemRoot` in environment
@@ -527,8 +518,7 @@ extension SubprocessIntegrationTests {
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
-        let output = result.standardOutput?
-            .trimmingNewLineAndQuotes()
+        let output = result.standardOutput.trimmingNewLineAndQuotes()
         #expect(
             output == customPath
         )
@@ -567,7 +557,7 @@ extension SubprocessIntegrationTests {
             error: .discarded
         )
         #if os(Windows)
-        #expect(result.standardOutput?.trimmingNewLineAndQuotes() == "%REMOVEME%")
+        #expect(result.standardOutput.trimmingNewLineAndQuotes() == "%REMOVEME%")
         #else
         #expect(result.terminationStatus == .exited(1))
         #endif
@@ -592,8 +582,7 @@ extension SubprocessIntegrationTests {
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
-        let output = result.standardOutput?
-            .trimmingNewLineAndQuotes()
+        let output = result.standardOutput.trimmingNewLineAndQuotes()
         #expect(
             output == customValue
         )
@@ -640,7 +629,7 @@ extension SubprocessIntegrationTests {
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
-        #expect(result.standardOutput?.trimmingNewLineAndQuotes() == "testEnvironmentPathWithNonDirectoryPaths")
+        #expect(result.standardOutput.trimmingNewLineAndQuotes() == "testEnvironmentPathWithNonDirectoryPaths")
     }
     #endif
 }
@@ -673,9 +662,7 @@ extension SubprocessIntegrationTests {
         // There shouldn't be any other environment variables besides
         // `PATH` that we set
         // https://github.com/swiftlang/swift/issues/77235
-        let output = result.standardOutput?
-            .trimmingNewLineAndQuotes()
-        let path = try #require(output)
+        let path = result.standardOutput.trimmingNewLineAndQuotes()
         #expect(directory(path, isSameAs: workingDirectory))
     }
 
@@ -706,8 +693,7 @@ extension SubprocessIntegrationTests {
         #expect(result.terminationStatus.isSuccess)
         // There shouldn't be any other environment variables besides
         // `PATH` that we set
-        let resultPath = try #require(result.standardOutput)
-            .trimmingNewLineAndQuotes()
+        let resultPath = result.standardOutput.trimmingNewLineAndQuotes()
         #if canImport(Darwin)
         // On Darwin, /var is linked to /private/var; /tmp is linked to /private/tmp
         var expected = workingDirectory
@@ -805,7 +791,7 @@ extension SubprocessIntegrationTests {
         #expect(catResult.terminationStatus.isSuccess)
         // Output should match the input content
         #expect(
-            catResult.standardOutput?.trimmingNewLineAndQuotes() == content
+            catResult.standardOutput.trimmingNewLineAndQuotes() == content
         )
     }
 
@@ -831,7 +817,7 @@ extension SubprocessIntegrationTests {
         #expect(catResult.terminationStatus.isSuccess)
         // Output should match the input content
         #expect(
-            catResult.standardOutput?.trimmingNewLineAndQuotes() == content.trimmingNewLineAndQuotes()
+            catResult.standardOutput.trimmingNewLineAndQuotes() == content.trimmingNewLineAndQuotes()
         )
     }
 
@@ -1061,10 +1047,10 @@ extension SubprocessIntegrationTests {
             error: .string(limit: .max)
         )
         #expect(result.terminationStatus.isSuccess)
-        #expect(result.standardOutput?.trimmingNewLineAndQuotes().isEmpty == true)
+        #expect(result.standardOutput.trimmingNewLineAndQuotes().isEmpty == true)
         #if !os(Windows)
         // cmd.exe emits an error
-        #expect(result.standardError?.trimmingNewLineAndQuotes().isEmpty == true)
+        #expect(result.standardError.trimmingNewLineAndQuotes().isEmpty == true)
         #endif
     }
 }
@@ -1102,7 +1088,7 @@ extension SubprocessIntegrationTests {
             try await writer.finish()
         }
         #expect(result.terminationStatus.isSuccess)
-        #expect((result.standardOutput ?? "").contains("Hello, world!"))
+        #expect(result.standardOutput.contains("Hello, world!"))
     }
 }
 
@@ -1155,9 +1141,7 @@ extension SubprocessIntegrationTests {
             output: .string(limit: 2048 * 1024, encoding: UTF8.self),
             error: .discarded
         )
-        let output = try #require(
-            catResult.standardOutput?.trimmingNewLineAndQuotes()
-        )
+        let output = catResult.standardOutput.trimmingNewLineAndQuotes()
         #expect(
             output
                 == String(
@@ -1426,9 +1410,7 @@ extension SubprocessIntegrationTests {
             output: .discarded,
             error: .string(limit: 2048 * 1024, encoding: UTF8.self)
         )
-        let output = try #require(
-            catResult.standardError?.trimmingNewLineAndQuotes()
-        )
+        let output = catResult.standardError.trimmingNewLineAndQuotes()
         #expect(
             output
                 == String(
@@ -1779,8 +1761,8 @@ extension SubprocessIntegrationTests {
                 error: .string(limit: 4)
             )
             #expect(result.terminationStatus.isSuccess)
-            #expect(result.standardOutput?.trimmingNewLineAndQuotes() == "x")
-            #expect(result.standardError?.trimmingNewLineAndQuotes() == "y")
+            #expect(result.standardOutput.trimmingNewLineAndQuotes() == "x")
+            #expect(result.standardError.trimmingNewLineAndQuotes() == "y")
         }
     }
 
@@ -1805,8 +1787,8 @@ extension SubprocessIntegrationTests {
                 error: .string(limit: 4)
             )
             #expect(result.terminationStatus.isSuccess)
-            #expect(result.standardOutput?.trimmingNewLineAndQuotes() == "x")
-            #expect(result.standardError?.trimmingNewLineAndQuotes() == "y")
+            #expect(result.standardOutput.trimmingNewLineAndQuotes() == "x")
+            #expect(result.standardError.trimmingNewLineAndQuotes() == "y")
         }
     }
 
@@ -1882,7 +1864,7 @@ extension SubprocessIntegrationTests {
             error: .string(limit: .max)
         )
         #expect(result.terminationStatus.isSuccess)
-        #expect(result.standardError?.utf8.count == lineCount * lineWidth)
+        #expect(result.standardError.utf8.count == lineCount * lineWidth)
     }
     #endif
 
@@ -1905,8 +1887,8 @@ extension SubprocessIntegrationTests {
             error: .string(limit: .max)
         )
         #expect(result.terminationStatus.isSuccess)
-        #expect(result.standardOutput?.trimmingNewLineAndQuotes() == "")
-        #expect(result.standardError?.trimmingNewLineAndQuotes() == "")
+        #expect(result.standardOutput.trimmingNewLineAndQuotes() == "")
+        #expect(result.standardError.trimmingNewLineAndQuotes() == "")
     }
 
     @Test func testCustomStreamingBufferSize() async throws {
@@ -1976,7 +1958,7 @@ extension SubprocessIntegrationTests {
             error: .combinedWithOutput
         )
         #expect(result.terminationStatus.isSuccess)
-        let output = try #require(result.standardOutput)
+        let output = result.standardOutput
         #expect(output.contains("Hello Stdout"))
         #expect(output.contains("Hello Stderr"))
     }
@@ -2244,7 +2226,7 @@ extension SubprocessIntegrationTests {
         }
         #expect(result.terminationStatus.isSuccess)
         #expect(result.closureResult == "closure-value")
-        let output = try #require(result.standardOutput)
+        let output = result.standardOutput
         #expect(output.contains("hello"))
     }
 
@@ -2329,7 +2311,7 @@ extension SubprocessIntegrationTests {
         }
         #expect(result.terminationStatus.isSuccess)
         #expect(result.closureResult.contains("Hello Stdout"))
-        let stderr = try #require(result.standardError)
+        let stderr = result.standardError
         #expect(stderr.contains("Hello Stderr"))
     }
 
@@ -2359,7 +2341,7 @@ extension SubprocessIntegrationTests {
         }
         #expect(result.terminationStatus.isSuccess)
         #expect(result.closureResult.contains("Hello Stderr"))
-        let stdout = try #require(result.standardOutput)
+        let stdout = result.standardOutput
         #expect(stdout.contains("Hello Stdout"))
     }
 
@@ -2388,7 +2370,7 @@ extension SubprocessIntegrationTests {
             // Intentionally don't call finish(); run() should do it.
         }
         #expect(result.terminationStatus.isSuccess)
-        let output = try #require(result.standardOutput)
+        let output = result.standardOutput
         #expect(output.contains("hello"))
     }
 }
@@ -2506,7 +2488,7 @@ extension SubprocessIntegrationTests {
         sleepPidToKill = result.closureResult
         #expect(sleepPidToKill != 0)
         #expect(result.terminationStatus == .exited(0))
-        #expect((result.standardOutput ?? "").contains("GO"))
+        #expect(result.standardOutput.contains("GO"))
     }
 
     @Test func testWeDoNotHangIfStandardErrorRemainsOpenButProcessExits() async throws {
@@ -2549,7 +2531,7 @@ extension SubprocessIntegrationTests {
         sleepPidToKill = result.closureResult
         #expect(sleepPidToKill != 0)
         #expect(result.terminationStatus == .exited(0))
-        #expect((result.standardError ?? "").contains("GO"))
+        #expect(result.standardError.contains("GO"))
     }
 }
 #else
@@ -2666,7 +2648,7 @@ extension SubprocessIntegrationTests {
         grandchildPidToKill = result.closureResult
         #expect(grandchildPidToKill != 0)
         #expect(result.terminationStatus == .exited(0))
-        #expect((result.standardOutput ?? "").contains("GO"))
+        #expect(result.standardOutput.contains("GO"))
     }
 
     @Test func testWeDoNotHangIfStandardErrorRemainsOpenButProcessExits() async throws {
@@ -2707,7 +2689,7 @@ extension SubprocessIntegrationTests {
         grandchildPidToKill = result.closureResult
         #expect(grandchildPidToKill != 0)
         #expect(result.terminationStatus == .exited(0))
-        #expect((result.standardError ?? "").contains("GO"))
+        #expect(result.standardError.contains("GO"))
     }
 }
 #endif // !os(Windows)
@@ -3297,7 +3279,7 @@ extension SubprocessIntegrationTests {
                 )
 
                 #expect(result.terminationStatus.isSuccess)
-                #expect(result.standardOutput?.trimmingNewLineAndQuotes() == "APPLE")
+                #expect(result.standardOutput.trimmingNewLineAndQuotes() == "APPLE")
             }
 
             try await group.waitForAll()
@@ -3733,8 +3715,7 @@ extension SubprocessIntegrationTests {
             return execution.processIdentifier.value
         }
         #expect(result.terminationStatus.isSuccess)
-        let reportedPid = try #require(result.standardOutput)
-            .trimmingNewLineAndQuotes()
+        let reportedPid = result.standardOutput.trimmingNewLineAndQuotes()
         #expect("\(result.closureResult)" == reportedPid)
     }
 
@@ -3774,7 +3755,7 @@ extension SubprocessIntegrationTests {
             error: .discarded
         )
         #expect(result.terminationStatus.isSuccess)
-        #expect(result.standardOutput?.trimmingNewLineAndQuotes() == content)
+        #expect(result.standardOutput.trimmingNewLineAndQuotes() == content)
         // The parent retained ownership, so closing here must succeed. If
         // Subprocess had wrongly closed it, this might throw `.badFileDescriptor`.
         try inputFD.close()
@@ -3873,7 +3854,7 @@ extension SubprocessIntegrationTests {
                     output: .string(limit: .max)
                 )
                 precondition(result.terminationStatus.isSuccess)
-                precondition(result.standardOutput?.contains("hello-\(i)") == true)
+                precondition(result.standardOutput.contains("hello-\(i)") == true)
             }
 
             guard let after = openResourceCount() else {
