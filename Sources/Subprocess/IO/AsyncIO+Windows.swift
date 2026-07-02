@@ -313,6 +313,14 @@ final class AsyncIO: @unchecked Sendable {
             }
             bytesRead = next
         } catch {
+            // The signal stream threw, which happens only when the IOCP
+            // monitor hits a fatal `GetQueuedCompletionStatus` error and
+            // finishes every continuation. A `ReadFile` issued above may still
+            // be pending against `resultBuffer`; settle it before the buffer
+            // goes out of scope. Recovered bytes are discarded: this path
+            // rethrows the monitor's failure and returns no output, so nothing
+            // would consume them.
+            self.settlePendingOverlapped(handle: handle, overlapped: &overlapped)
             if let subprocessError = error as? SubprocessError {
                 throw subprocessError
             }
@@ -330,10 +338,11 @@ final class AsyncIO: @unchecked Sendable {
     /// Drives an overlapped operation to a terminal state and reports the
     /// bytes it transferred.
     ///
-    /// This is called on cancellation, when `group.cancelAll()` on child
-    /// termination stops the signal stream from delivering this operation's
-    /// completion. The `ReadFile`/`WriteFile` being reconciled is then in one
-    /// of three states:
+    /// This is called when the signal stream stops delivering this operation's
+    /// completion, either because `group.cancelAll()` on child termination
+    /// cancelled the awaiting task, or because the IOCP monitor finished every
+    /// continuation while reporting a fatal error. The `ReadFile`/`WriteFile`
+    /// being reconciled is then in one of three states:
     ///
     /// - Already completed: `GetOverlappedResult` reports the outcome
     ///   immediately, and the returned count reflects what it transferred.
@@ -354,6 +363,17 @@ final class AsyncIO: @unchecked Sendable {
     /// most one operation is ever in flight per handle, and
     /// `ReadFile`/`WriteFile` reset the handle to nonsignaled at issue, so no
     /// earlier operation's signal can satisfy this wait early.
+    ///
+    /// The handle's own signal driving the wait keeps this correct when the
+    /// trigger is monitor death rather than cancellation. A fatal
+    /// `GetQueuedCompletionStatus` failure breaks the monitor loop and drives
+    /// the `reportError` that finishes this operation's continuation, so the
+    /// monitor is gone by the time this runs. The kernel still sets the file
+    /// handle's signal on completion independently of any IOCP dequeue, so the
+    /// wait resolves without it; the completion port stays open (only
+    /// `shutdown()` closes it), so when the operation is still pending the
+    /// packet the abort enqueues is never dequeued, producing a one-packet
+    /// leak on an already-failed subsystem.
     ///
     /// - Important: `overlapped` must reference the same storage passed to the
     ///   originating `ReadFile`/`WriteFile`, and the buffer from which that
@@ -661,6 +681,12 @@ final class AsyncIO: @unchecked Sendable {
                 }
                 bytesWritten = next
             } catch {
+                // The signal stream threw, which happens only when the IOCP
+                // monitor hits a fatal `GetQueuedCompletionStatus` error and
+                // finishes every continuation. A `WriteFile` issued above may
+                // still be pending against `span`'s storage and `overlapped`;
+                // settle it before the borrow is released.
+                self.settlePendingOverlapped(handle: handle, overlapped: &overlapped)
                 if let subprocessError = error as? SubprocessError {
                     throw subprocessError
                 }
