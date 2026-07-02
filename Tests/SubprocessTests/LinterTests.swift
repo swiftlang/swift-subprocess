@@ -84,9 +84,10 @@ struct SubprocessLintingTest {
             lintResult.terminationStatus.isSuccess,
             "❌ `swift-format lint --recursive \(sourcePath)` failed"
         )
-        if let error = lintResult.standardError?.trimmingCharacters(
+        let error = lintResult.standardError.trimmingCharacters(
             in: .whitespacesAndNewlines
-        ), !error.isEmpty {
+        )
+        if !error.isEmpty {
             print("\(error)\n")
         } else {
             print("✅ Linting passed")

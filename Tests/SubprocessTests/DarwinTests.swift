@@ -65,9 +65,8 @@ struct SubprocessDarwinTests {
             output: .string(limit: .max)
         )
         #expect(pwdResult.terminationStatus.isSuccess)
-        let currentDir = try #require(
-            pwdResult.standardOutput
-        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        let currentDir = pwdResult.standardOutput
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         // On Darwin, /var is linked to /private/var; /tmp is linked /private/tmp
         var expected = FilePath(intendedWorkingDir)
         if expected.starts(with: "/var") || expected.starts(with: "/tmp") {

@@ -56,11 +56,10 @@ extension SubprocessWindowsTests {
                 output: .string(limit: .max)
             )
 
-            try withKnownIssue {
+            withKnownIssue {
                 #expect(whoamiResult.terminationStatus.isSuccess)
-                let result = try #require(
-                    whoamiResult.standardOutput
-                ).trimmingCharacters(in: .whitespacesAndNewlines)
+                let result = whoamiResult.standardOutput
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
                 // whoami returns `computerName\userName`.
                 let userInfo = result.split(separator: "\\")
                 guard userInfo.count == 2 else {
@@ -103,9 +102,8 @@ extension SubprocessWindowsTests {
             output: .string(limit: .max)
         )
         #expect(sameConsoleResult.terminationStatus.isSuccess)
-        let sameConsoleValue = try #require(
-            sameConsoleResult.standardOutput
-        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        let sameConsoleValue = sameConsoleResult.standardOutput
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         // Make sure the child console is same as parent
         #expect(
             "\(intptr_t(bitPattern: parentConsole))" == sameConsoleValue
@@ -123,9 +121,8 @@ extension SubprocessWindowsTests {
             output: .string(limit: .max)
         )
         #expect(differentConsoleResult.terminationStatus.isSuccess)
-        let differentConsoleValue = try #require(
-            differentConsoleResult.standardOutput
-        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        let differentConsoleValue = differentConsoleResult.standardOutput
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         // Make sure the child console is different from parent
         #expect(
             "\(intptr_t(bitPattern: parentConsole))" != differentConsoleValue
@@ -145,9 +142,8 @@ extension SubprocessWindowsTests {
             output: .string(limit: .max)
         )
         #expect(detachConsoleResult.terminationStatus.isSuccess)
-        let detachConsoleValue = try #require(
-            detachConsoleResult.standardOutput
-        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        let detachConsoleValue = detachConsoleResult.standardOutput
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         // Detached process should NOT have a console
         #expect(detachConsoleValue.isEmpty)
     }
@@ -169,9 +165,8 @@ extension SubprocessWindowsTests {
             output: .string(limit: .max)
         )
         #expect(newConsoleResult.terminationStatus.isSuccess)
-        let newConsoleValue = try #require(
-            newConsoleResult.standardOutput
-        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        let newConsoleValue = newConsoleResult.standardOutput
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         // Make sure the child console is different from parent
         #expect(
             "\(intptr_t(bitPattern: parentConsole))" != newConsoleValue
@@ -199,9 +194,8 @@ extension SubprocessWindowsTests {
             output: .string(limit: 32)
         )
         #expect(changeTitleResult.terminationStatus.isSuccess)
-        let newTitle = try #require(
-            changeTitleResult.standardOutput
-        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        let newTitle = changeTitleResult.standardOutput
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         // Make sure the child console is different from parent\
         #expect(newTitle == title)
     }
@@ -251,9 +245,8 @@ extension SubprocessWindowsTests {
                 output: .string(limit: .max)
             )
             #expect(checkResult.terminationStatus.isSuccess)
-            var isSuspended = try #require(
-                checkResult.standardOutput
-            ).trimmingCharacters(in: .whitespacesAndNewlines)
+            var isSuspended = checkResult.standardOutput
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             #expect(isSuspended == "true")
 
             // Now resume the process
@@ -268,9 +261,8 @@ extension SubprocessWindowsTests {
                 output: .string(limit: .max)
             )
             #expect(checkResult.terminationStatus.isSuccess)
-            isSuspended = try #require(
-                checkResult.standardOutput
-            ).trimmingCharacters(in: .whitespacesAndNewlines)
+            isSuspended = checkResult.standardOutput
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             #expect(isSuspended == "false")
 
             // Now finally kill the process since it's intentionally hung
@@ -556,7 +548,7 @@ extension SubprocessWindowsTests {
             // ...and its only output is the sentinel (proving the argument was
             // not interpreted as a redirection that swallowed the output).
             #expect(
-                result.standardOutput?.trimmingCharacters(in: .whitespacesAndNewlines) == "RAN",
+                result.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines) == "RAN",
                 "Unexpected output for payload \(payload.name)"
             )
             // No injected command ran.
