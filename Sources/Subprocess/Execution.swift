@@ -29,7 +29,7 @@ import Musl
 
 /// A running subprocess.
 ///
-/// Use this type to send signals to the child process, write to its standard
+/// Use this type to send signals to the subprocess, write to its standard
 /// input, and stream its standard output and standard error.
 ///
 /// The three generic parameters determine which streaming properties are

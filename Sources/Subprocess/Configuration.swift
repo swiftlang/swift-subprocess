@@ -28,7 +28,7 @@ import Musl
 #endif
 
 /// A collection of configuration parameters to use when
-/// spawning a subprocess.
+/// running a subprocess.
 public struct Configuration: Sendable {
     /// The executable to run.
     public var executable: Executable
@@ -39,7 +39,7 @@ public struct Configuration: Sendable {
     /// The working directory to use when running the executable.
     ///
     /// If this property is `nil`, the subprocess inherits the working
-    /// directory from the parent process.
+    /// directory from the calling process.
     public var workingDirectory: FilePath?
     /// The platform-specific options to use when
     /// running the subprocess.
@@ -223,7 +223,7 @@ extension Configuration: CustomStringConvertible, CustomDebugStringConvertible {
 
 // MARK: - Cleanup
 extension Configuration {
-    /// Close each input individually, and throw the first error if there's multiple errors thrown
+    /// Close each input individually, and throw the first error if there are multiple errors thrown
     @Sendable
     internal func safelyCloseMultiple(
         inputRead: consuming IODescriptor?,
@@ -328,11 +328,13 @@ public struct Executable: Sendable, Hashable {
     }
 
     /// Locates the executable by name.
+    ///
     /// The subprocess uses the `PATH` value to determine the full path.
     public static func name(_ executableName: String) -> Self {
         return .init(_config: .executable(executableName))
     }
     /// Locates the executable by its full file path.
+    ///
     /// The subprocess uses this path directly.
     public static func path(_ filePath: FilePath) -> Self {
         return .init(_config: .path(filePath))
@@ -389,8 +391,8 @@ public struct Arguments: Sendable, ExpressibleByArrayLiteral, Hashable {
         self.executablePathOverride = nil
     }
 
-    /// Creates an ``Arguments`` value using the given values, but
-    /// override the first argument value with `executablePathOverride`.
+    /// Creates an argument list, overriding the first element with the given executable path value.
+    ///
     /// If `executablePathOverride` is `nil`,
     /// ``Arguments`` automatically uses the executable path
     /// as the first argument.
@@ -406,8 +408,8 @@ public struct Arguments: Sendable, ExpressibleByArrayLiteral, Hashable {
         }
     }
     #if !os(Windows) // Windows does not support non-unicode arguments
-    /// Creates an ``Arguments`` value using the given values, but
-    /// override the first argument value with `executablePathOverride`.
+    /// Creates an argument list, overriding the first element with the given executable path value.
+    ///
     /// If `executablePathOverride` is `nil`,
     /// ``Arguments`` automatically uses the executable path
     /// as the first argument.
@@ -466,10 +468,10 @@ public struct Environment: Sendable, Hashable {
     public static var inherit: Self {
         return .init(config: .inherit([:]))
     }
-    /// Returns an updated environment that applies `newValue` to the current configuration.
+    /// Returns an updated environment with the given overrides applied.
     ///
     /// Keys with `nil` values in `newValue` remove the corresponding entry
-    /// from the environment before passing it to the child process.
+    /// from the environment before passing it to the subprocess.
     public func updating(_ newValue: [Key: String?]) -> Self {
         switch config {
         case .inherit(var overrides):
@@ -512,7 +514,7 @@ public struct Environment: Sendable, Hashable {
 }
 
 extension Environment: CustomStringConvertible, CustomDebugStringConvertible {
-    /// A key used to access values in an ``Environment``.
+    /// A key used to access values in the subprocess environment.
     ///
     /// This type respects the compiled platform's case sensitivity requirements.
     public struct Key {
@@ -721,10 +723,11 @@ extension TerminationStatus: CustomStringConvertible, CustomDebugStringConvertib
 // MARK: - Internal
 
 extension Configuration {
-    /// After Spawn finishes, child side file descriptors
-    /// (input read, output write, error write) will be closed
-    /// by `spawn()`. It returns the parent side file descriptors
-    /// via `SpawnResult` to perform actual reads
+    /// The result of launching a subprocess, containing caller-side file descriptors.
+    ///
+    /// After `spawn()` finishes, it closes subprocess-side file descriptors
+    /// (input read, output write, error write). The caller-side file descriptors
+    /// are returned in this value to perform actual reads.
     internal struct SpawnResult: ~Copyable {
         let processIdentifier: ProcessIdentifier
         var _inputWriteEnd: IODescriptor?
@@ -760,8 +763,9 @@ extension Configuration {
     /// The maximum number of `fork`/`exec` attempts, including the first one,
     /// before a transient, retryable spawn failure is surfaced to the caller.
     private static let maxSpawnAttempts = 6
-    /// The base spawn-retry backoff in nanoseconds. The delay doubles each
-    /// attempt up to ``spawnRetryBackoffCapNanoseconds``, with jitter applied.
+    /// The base spawn-retry backoff in nanoseconds.
+    ///
+    /// The delay doubles each attempt up to ``spawnRetryBackoffCapNanoseconds``, with jitter applied.
     private static let spawnRetryBackoffBaseNanoseconds: UInt64 = 1_000_000
     /// The maximum spawn-retry backoff in nanoseconds.
     private static let spawnRetryBackoffCapNanoseconds: UInt64 = 100_000_000
@@ -780,9 +784,9 @@ extension Configuration {
         return half + UInt64.random(in: 0...half)
     }
 
-    /// Runs `attempt`, retrying while `shouldRetryTransientFailure` returns
-    /// `true`, up to ``maxSpawnAttempts``, with bounded jittered backoff
-    /// between attempts.
+    /// Repeatedly invokes a closure with bounded jittered backoff until it succeeds or reaches the retry limit.
+    ///
+    /// Calls `attempt` repeatedly while `shouldRetryTransientFailure` returns `true`, up to ``maxSpawnAttempts`` times.
     ///
     /// `EAGAIN` from `clone3`/`fork`/`posix_spawn` means the kernel could not
     /// create the task because a per-uid or system task-count limit was
@@ -896,7 +900,7 @@ internal func _safelyClose(_ target: _CloseTarget) throws(SubprocessError) {
     #if os(Windows)
     case .handle(let handle):
         /// Windows does not provide a “deregistration” API (the reverse of
-        /// `CreateIoCompletionPort`) for handles and it reuses HANDLE
+        /// `CreateIoCompletionPort`) for handles, and it reuses HANDLE
         /// values once they are closed. Since we rely on the handle value
         /// as the completion key for `CreateIoCompletionPort`, we should
         /// remove the registration when the handle is closed to allow
@@ -957,13 +961,13 @@ internal func _safelyClose(_ target: _CloseTarget) throws(SubprocessError) {
     }
 }
 
-/// An IO descriptor wraps platform-specific file descriptor, which establishes a
+/// An IO descriptor wraps a platform-specific file descriptor, which establishes a
 /// connection to the standard input/output (IO) system during the process of
-/// spawning a child process.
+/// launching a subprocess.
 ///
 /// Unlike a file descriptor, the `IODescriptor` does not support
-/// data read/write operations; its primary function is to facilitate the spawning of
-/// child processes by providing a platform-specific file descriptor.
+/// data read/write operations; its primary function is to facilitate the launching of
+/// subprocesses by providing a platform-specific file descriptor.
 internal struct IODescriptor: ~Copyable {
     #if canImport(WinSDK)
     typealias Descriptor = HANDLE
@@ -1064,13 +1068,15 @@ internal enum PipeNameCounter {
 
 internal struct CreatedPipe: ~Copyable, Sendable {
     internal enum Purpose: CustomStringConvertible {
-        /// This pipe is used for standard input. This option maps to
-        /// `PIPE_ACCESS_OUTBOUND` on Windows where child only reads,
-        /// parent only writes.
+        /// This pipe is used for standard input.
+        ///
+        /// This option maps to `PIPE_ACCESS_OUTBOUND` on Windows where the subprocess only reads,
+        /// the caller only writes.
         case input
         /// This pipe is used for standard output and standard error.
+        ///
         /// This option maps to `PIPE_ACCESS_INBOUND` on Windows where
-        /// child only writes, parent only reads.
+        /// the subprocess only writes, the caller only reads.
         case output
 
         var description: String {
@@ -1117,7 +1123,7 @@ internal struct CreatedPipe: ~Copyable, Sendable {
         /// > not supported by anonymous pipes.
         /// See https://learn.microsoft.com/en-us/windows/win32/ipc/anonymous-pipe-operations
         while true {
-            /// Windows named pipes are system wide. To avoid creating two pipes with the same
+            /// Windows named pipes are system-wide. To avoid creating two pipes with the same
             /// name, create the pipe with `FILE_FLAG_FIRST_PIPE_INSTANCE` such that it will
             /// return error `ERROR_ACCESS_DENIED` if we try to create another pipe with the same name.
             let pipeName = "\\\\.\\pipe\\LOCAL\\subprocess-\(GetCurrentProcessId())-\(purpose)-\(PipeNameCounter.nextValue())"
@@ -1261,8 +1267,8 @@ extension Optional where Wrapped == String {
     }
 }
 
-/// Runs the body close, then runs the on-cleanup closure if the body closure throws an error
-/// or if the parent task is cancelled.
+/// Runs the body closure, then runs the on-cleanup closure if the body closure throws an error
+/// or if the calling task is cancelled.
 ///
 /// In the latter case, `onCleanup` may be run concurrently with `body`.
 /// The `body` closure is guaranteed to run exactly once.
@@ -1401,9 +1407,11 @@ extension HANDLE {
 }
 #endif
 
+/// Bridges untyped throws to typed subprocess errors.
+///
 /// Many standard library functions such as `withCheckedThrowingContinuation`
-/// does not support typed throw yet. This method casts `any Error` thrown by
-/// those methods back to `SubprocessError`
+/// do not support typed throws yet. This method casts `any Error` thrown by
+/// those methods back to `SubprocessError`.
 internal func _castError<Success: Sendable>(
     _ body: () async throws -> Success,
 ) async throws(SubprocessError) -> Success {

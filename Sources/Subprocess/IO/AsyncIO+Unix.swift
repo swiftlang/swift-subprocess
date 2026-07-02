@@ -353,14 +353,18 @@ internal struct Registration {
 
     /// The result of a single attempt to register a file descriptor.
     enum RegisterResult {
-        /// The first time this descriptor was seen. The caller must still
+        /// The first time this descriptor was seen.
+        ///
+        /// The caller must still
         /// attach it to the epoll / kqueue (`epoll_ctl(ADD)` / `kevent(EV_ADD)`).
         case registered
         /// The descriptor was already attached by a previous read or write;
         /// the existing attachment is reused and only the continuation is
         /// replaced, so the caller skips the registration syscall.
         case updated
-        /// The owning process is already cancelled. The caller finishes the
+        /// The owning process is already cancelled.
+        ///
+        /// The caller finishes the
         /// supplied continuation immediately and skips the setup.
         case alreadyCancelled
     }
@@ -391,10 +395,10 @@ internal struct Registration {
     ///     becomes ready or the I/O is cancelled.
     ///   - processIdentifier: The process that owns the descriptor.
     /// - Returns: A ``RegisterResult`` describing what the caller must do next.
-    ///   When the result is ``RegisterResult/registered`` the caller attaches
-    ///   the descriptor to the multiplexer; for ``RegisterResult/updated`` the
+    ///   When the result is ``RegisterResult/registered``, the caller attaches
+    ///   the descriptor to the multiplexer; for ``RegisterResult/updated``, the
     ///   attachment already exists and is reused. For
-    ///   ``RegisterResult/alreadyCancelled`` the caller finishes the supplied
+    ///   ``RegisterResult/alreadyCancelled``, the caller finishes the supplied
     ///   continuation immediately and performs no further setup.
     mutating func register(
         fileDescriptor: PlatformFileDescriptor,
@@ -443,7 +447,7 @@ internal struct Registration {
     /// registrations to abort.
     ///
     /// Once a process is marked cancelled, subsequent calls to `register`
-    /// for that process return `false` until `remove(processIdentifier:)`
+    /// for that process return `.alreadyCancelled` until `remove(processIdentifier:)`
     /// drops the marker.
     ///
     /// - Parameter processIdentifier: The process whose I/O to cancel.
@@ -502,11 +506,14 @@ internal enum RegistrationOutcome {
     /// The descriptor was added successfully.
     case registered
     /// The owning process has already been cancelled, so the registration
-    /// was rejected. The caller finishes the continuation without further
+    /// was rejected.
+    ///
+    /// The caller finishes the continuation without further
     /// setup.
     case alreadyCancelled
-    /// The platform syscall (such as `epoll_ctl` or `kevent`) reported an
-    /// error. The caller finishes the continuation by throwing this error.
+    /// The platform syscall (such as `epoll_ctl` or `kevent`) reported an error.
+    ///
+    /// The caller finishes the continuation by throwing this error.
     case failed(SubprocessError)
 }
 

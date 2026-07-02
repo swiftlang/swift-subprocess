@@ -18,7 +18,7 @@ public import SystemPackage
 // MARK: - Collected Result
 
 /// Runs an executable asynchronously and returns the collected output
-/// of the child process.
+/// of the subprocess.
 ///
 /// - Parameters:
 ///   - executable: The executable to run.
@@ -60,7 +60,7 @@ public func run<
 }
 
 /// Runs an executable asynchronously and returns the collected output
-/// of the child process.
+/// of the subprocess.
 ///
 /// - Parameters:
 ///   - executable: The executable to run.
@@ -125,7 +125,7 @@ public func run<
 ///     an ``Execution`` value that's valid only for the duration of the call.
 ///     Don't let the execution value escape the closure.
 /// - Returns: An ``ExecutionResult`` that contains the closure's return value and
-///   the termination status of the child process.
+///   the termination status of the subprocess.
 public func run<
     Result: ~Copyable,
     Input: InputProtocol,
@@ -162,8 +162,7 @@ public func run<
 
 // MARK: - Configuration Based
 
-/// Runs a configuration asynchronously and returns an ``ExecutionResult`` that
-/// contains the output of the child process.
+/// Runs a subprocess with the given configuration and returns the collected output and exit status.
 ///
 /// - Parameters:
 ///   - configuration: The configuration to run.
@@ -193,8 +192,7 @@ public func run<
     }
 }
 
-/// Runs a ``Configuration`` asynchronously and returns
-/// an ``ExecutionResult`` that contains the output of the child process.
+/// Runs a subprocess with the given configuration and returns the collected output and exit status.
 ///
 /// - Parameters:
 ///   - configuration: The configuration to run.
@@ -217,8 +215,7 @@ public func run<
     }
 }
 
-/// Runs a ``Configuration`` asynchronously and lets a closure manage the running
-/// subprocess.
+/// Runs a subprocess with the given configuration and lets a closure interact with it while it runs.
 ///
 /// Use this overload when you need to interact with the subprocess while it runs,
 /// such as streaming its standard output, writing to its standard input, or sending
@@ -236,7 +233,7 @@ public func run<
 ///     an ``Execution`` value that's valid only for the duration of the call.
 ///     Don't let the execution value escape the closure.
 /// - Returns: An ``ExecutionResult`` that contains the closure's return value and
-///   the termination status of the child process.
+///   the termination status of the subprocess.
 public func run<
     Result: ~Copyable,
     Input: InputProtocol,

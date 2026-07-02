@@ -51,9 +51,11 @@ public struct Signal: Hashable, Sendable {
     /// the process.
     public static var interrupt: Self { .init(rawValue: SIGINT) }
     /// The `.terminate` signal is sent to a process to request its
-    /// termination. Unlike the `.kill` signal, it can be caught
+    /// termination.
+    ///
+    /// Unlike the `.kill` signal, it can be caught
     /// and interpreted or ignored by the process. This allows
-    /// the process to perform nice termination releasing resources
+    /// the process to perform graceful termination releasing resources
     /// and saving state if appropriate. `.interrupt` is nearly
     /// identical to `.terminate`.
     public static var terminate: Self { .init(rawValue: SIGTERM) }
@@ -65,13 +67,17 @@ public struct Signal: Hashable, Sendable {
     /// `.suspend` signal.
     public static var resume: Self { .init(rawValue: SIGCONT) }
     /// The `.kill` signal is sent to a process to cause it to
-    /// terminate immediately (kill). In contrast to `.terminate`
+    /// terminate immediately.
+    ///
+    /// In contrast to `.terminate`
     /// and `.interrupt`, this signal cannot be caught or ignored,
     /// and the receiving process cannot perform any
     /// clean-up upon receiving this signal.
     public static var kill: Self { .init(rawValue: SIGKILL) }
     /// The `.terminalClosed` signal is sent to a process when
-    /// its controlling terminal is closed. In modern systems,
+    /// its controlling terminal is closed.
+    ///
+    /// In modern systems,
     /// this signal usually means that the controlling pseudo
     /// or virtual terminal has been closed.
     public static var terminalClosed: Self { .init(rawValue: SIGHUP) }
@@ -94,10 +100,10 @@ public struct Signal: Hashable, Sendable {
 }
 
 extension Execution {
-    /// Sends the given signal to the child process.
+    /// Sends the given signal to the subprocess.
     /// - Parameters:
     ///   - signal: The signal to send.
-    ///   - shouldSendToProcessGroup: Whether this signal should be sent to
+    ///   - shouldSendToProcessGroup: A Boolean value that indicates whether this signal should be sent to
     ///     the entire process group.
     /// - Throws: ``SubprocessError`` with error code ``SubprocessError/Code/processControlFailed``.
     ///     See ``SubprocessError/underlyingError`` for more details.
@@ -700,8 +706,9 @@ extension Configuration {
         }
     }
 
-    /// Invokes `_subprocess_fork_exec()` on the shared background worker thread,
-    /// retrying a transient fork-side `EAGAIN` with bounded, jittered backoff.
+    /// Spawns a subprocess on the background worker thread, retrying transient failures with bounded jittered backoff.
+    ///
+    /// Calls `_subprocess_fork_exec()` on the shared background worker thread.
     ///
     /// `EAGAIN` from `clone3()`/`fork()` means the kernel could not create the
     /// task because a per-uid or system task-count limit was momentarily
@@ -803,27 +810,24 @@ extension ProcessIdentifier: CustomStringConvertible, CustomDebugStringConvertib
 public struct PlatformOptions: Sendable {
     /// The user ID for the subprocess.
     public var userID: uid_t? = nil
-    /// The real and effective group ID and the saved
-    /// set-group-ID of the subprocess, equivalent to calling
-    /// `setgid()` on the child process.
+    /// The real, effective, and saved set-group-ID for the subprocess.
     ///
-    /// The group ID controls permissions, particularly
-    /// for file access.
+    /// Setting this value is equivalent to calling `setgid()` on the subprocess.
+    /// The group ID controls permissions, particularly for file access.
     public var groupID: gid_t? = nil
     /// The list of supplementary group IDs for the subprocess.
     public var supplementaryGroups: [gid_t]? = nil
-    /// The process group for the subprocess, equivalent to
-    /// calling `setpgid()` on the child process.
+    /// The process group for the subprocess.
     ///
-    /// The process group ID groups related processes for
-    /// controlling signals.
+    /// Equivalent to calling `setpgid()` on the subprocess.
+    /// The process group ID groups related processes for controlling signals.
     public var processGroupID: pid_t? = nil
     /// A Boolean value that indicates whether to create a session
     /// and detach from the terminal.
     public var createSession: Bool = false
-    /// An ordered list of steps to tear down the child
-    /// process if the parent task is canceled before
-    /// the child process terminates.
+    /// An ordered list of steps to tear down the subprocess
+    /// if the calling task is canceled before
+    /// the subprocess terminates.
     ///
     /// The sequence always ends by sending a `.kill` signal.
     public var teardownSequence: [TeardownStep] = []
@@ -875,21 +879,27 @@ internal func reapProcess(
 }
 
 extension ProcessIdentifier {
-    /// Reaps the zombie for the exited process. This function may block.
+    /// Reaps the zombie for the exited process.
+    ///
+    /// This function may block.
     @available(*, noasync)
     internal func blockingReap() throws(Errno) -> TerminationStatus {
         try _blockingReap(pid: value)
     }
 
-    /// Reaps the zombie for the exited process, or returns `nil` if the process is still running. This function will not block.
+    /// Reaps the zombie for the exited process, or returns `nil` if the process is still running.
+    ///
+    /// This function does not block.
     internal func reap() throws(Errno) -> TerminationStatus? {
         try _reap(pid: value)
     }
 
     /// Checks whether the process has already exited without consuming the
-    /// zombie. Returns `true` if a child has exited (or stopped/continued in a
-    /// way `waitid` reports), `false` if the child is still running. The
-    /// zombie remains available for a subsequent call to ``blockingReap()``.
+    /// zombie.
+    ///
+    /// Returns `true` if a child has exited (or stopped/continued in a
+    /// way `waitid` reports), `false` if the child is still running.
+    /// The zombie remains available for a subsequent call to `blockingReap()`.
     internal func peekIfExited() throws(Errno) -> Bool {
         try _peekIfExited(pid: value)
     }

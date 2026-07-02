@@ -23,6 +23,7 @@ public import SystemPackage
 
 /// A type that serves as the output target for a subprocess.
 public protocol OutputProtocol: Sendable, ~Copyable {
+    /// The Swift value this output type produces after collecting subprocess output.
     associatedtype OutputType: Sendable
 
     /// Converts the output from a span to the expected output type.
@@ -37,7 +38,7 @@ extension OutputProtocol {
     public var maxSize: Int { 128 * 1024 }
 }
 
-/// An output type that discards output from the child process.
+/// An output type that discards output from the subprocess.
 ///
 /// On Unix-like systems, ``DiscardedOutput`` redirects standard output
 /// to `/dev/null`. On Windows, it redirects to `NUL`.
@@ -65,7 +66,7 @@ public struct DiscardedOutput: OutputProtocol, ErrorOutputProtocol {
 /// An output type that writes to a specified file descriptor.
 ///
 /// You can choose to have the subprocess automatically close
-/// the file descriptor after it spawns.
+/// the file descriptor after it launches.
 public struct FileDescriptorOutput: OutputProtocol, ErrorOutputProtocol {
     /// The type for this output.
     public typealias OutputType = Void
@@ -97,7 +98,7 @@ public struct FileDescriptorOutput: OutputProtocol, ErrorOutputProtocol {
     }
 }
 
-/// An output type that collects the subprocess's output as a `String` with the given encoding.
+/// An output type that collects the subprocess's output as decoded text using the given encoding.
 public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol, ErrorOutputProtocol {
     /// The type for this output.
     public typealias OutputType = String?
@@ -117,7 +118,7 @@ public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol, ErrorOut
     }
 }
 
-/// An output type that collects the subprocess's output as a `[UInt8]` array.
+/// An output type that collects the subprocess's output as a byte array.
 public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
     /// The output type for this output option.
     public typealias OutputType = [UInt8]
@@ -165,7 +166,7 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
         return result
     }
 
-    /// Creates an array from a `RawSpan`.
+    /// Creates a byte array from a contiguous region of raw memory.
     public func output(from span: RawSpan) throws -> [UInt8] {
         span.withUnsafeBytes { Array($0) }
     }
@@ -198,7 +199,7 @@ extension OutputProtocol where Self == FileDescriptorOutput {
     /// Creates a subprocess output that writes to a file descriptor.
     ///
     /// Set `closeAfterSpawningProcess` to `true` to close the file
-    /// descriptor after the subprocess spawns.
+    /// descriptor after the subprocess launches.
     public static func fileDescriptor(
         _ fd: FileDescriptor,
         closeAfterSpawningProcess: Bool
@@ -208,7 +209,7 @@ extension OutputProtocol where Self == FileDescriptorOutput {
 
     /// Creates a subprocess output that writes to the current process's standard output.
     ///
-    /// The file descriptor isn't closed afterwards.
+    /// The file descriptor isn't closed afterward.
     public static var currentStandardOutput: Self {
         return Self.fileDescriptor(
             .standardOutput,
@@ -224,7 +225,7 @@ extension OutputProtocol where Self == FileDescriptorOutput {
 
     /// Creates a subprocess output that writes to the current process's standard error.
     ///
-    /// The file descriptor isn't closed afterwards.
+    /// The file descriptor isn't closed afterward.
     public static var currentStandardError: Self {
         return Self.fileDescriptor(
             .standardError,
@@ -242,7 +243,7 @@ extension OutputProtocol where Self == FileDescriptorOutput {
 extension OutputProtocol where Self == StringOutput<UTF8> {
     /// Creates a subprocess output that collects output as a UTF-8 string.
     ///
-    /// The subprocess throws an error if the child process
+    /// The subprocess throws an error if the process
     /// produces more bytes than `limit`.
     public static func string(limit: Int) -> Self {
         return .init(limit: limit, encoding: UTF8.self)
@@ -253,7 +254,7 @@ extension OutputProtocol {
     /// Creates a subprocess output that collects output as
     /// a string using the given encoding, up to `limit` bytes.
     ///
-    /// The subprocess throws an error if the child process
+    /// The subprocess throws an error if the process
     /// produces more bytes than `limit`.
     public static func string<Encoding: Unicode.Encoding>(
         limit: Int,
@@ -267,7 +268,7 @@ extension OutputProtocol where Self == BytesOutput {
     /// Creates a subprocess output that collects output as bytes,
     /// up to `limit` bytes.
     ///
-    /// The subprocess throws an error if the child process
+    /// The subprocess throws an error if the process
     /// produces more bytes than `limit`.
     public static func bytes(limit: Int) -> Self {
         return .init(limit: limit)
@@ -275,8 +276,7 @@ extension OutputProtocol where Self == BytesOutput {
 }
 
 extension OutputProtocol where Self == SequenceOutput {
-    /// Creates a subprocess output that the body closure reads from
-    /// ``Execution/standardOutput`` or ``Execution/standardError``.
+    /// Creates a subprocess output that a body closure reads as an asynchronous sequence of buffers.
     ///
     /// Use this output with a `run` overload that takes a body closure.
     public static var sequence: Self {
@@ -296,7 +296,7 @@ public protocol ErrorOutputProtocol: OutputProtocol {}
 /// output with the standard output stream.
 ///
 /// When `CombinedErrorOutput` is used as the error output for a subprocess, both
-/// standard output and standard error from the child process are merged into a
+/// standard output and standard error from the subprocess are merged into a
 /// single output stream. This is equivalent to using shell redirection like `2>&1`.
 ///
 /// This output type is useful when you want to capture or redirect both output
@@ -322,12 +322,12 @@ extension ErrorOutputProtocol where Self == CombinedErrorOutput {
     /// Creates an error output that combines standard error with standard output.
     ///
     /// When using `combinedWithOutput`, both standard output and standard error from
-    /// the child process are merged into a single output stream. This is equivalent
+    /// the subprocess are merged into a single output stream. This is equivalent
     /// to using shell redirection like `2>&1`.
     ///
     /// This is useful when you want to capture or redirect both output streams
     /// together, making it possible to process all subprocess output as a unified
-    /// stream rather than handling standard output and standard error separately
+    /// stream rather than handling standard output and standard error separately.
     ///
     /// - Returns: A `CombinedErrorOutput` instance that merges standard error
     ///   with standard output.

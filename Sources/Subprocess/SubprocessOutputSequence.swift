@@ -51,7 +51,7 @@ public struct SubprocessOutputSequence: AsyncSequence, @unchecked Sendable {
     internal typealias DiskIO = FileDescriptor
     #endif
 
-    /// An iterator for ``SubprocessOutputSequence``.
+    /// An iterator that yields raw output buffers from the subprocess.
     public struct Iterator: AsyncIteratorProtocol {
         /// The element type for the iterator.
         public typealias Element = Buffer
@@ -241,9 +241,9 @@ extension SubprocessOutputSequence {
         private let bufferingPolicy: BufferingPolicy
         private let separator: Separator
 
-        /// An iterator for ``StringSequence``.
+        /// An iterator that yields individual lines of subprocess output.
         public struct AsyncIterator: nonisolated AsyncIteratorProtocol {
-            /// The element type for this Iterator.
+            /// The element type for this iterator.
             public typealias Element = String
 
             private var source: SubprocessOutputSequence.AsyncIterator
@@ -519,8 +519,7 @@ extension SubprocessOutputSequence.StringSequence {
         case maxLineLength(Int)
     }
 
-    /// A delimiter that determines where a ``StringSequence``
-    /// splits its input.
+    /// A delimiter that determines where the output line sequence splits its input.
     public struct Separator: Sendable, Hashable {
         internal enum Storage: Sendable, Hashable {
             case lineBreaks
@@ -534,6 +533,7 @@ extension SubprocessOutputSequence.StringSequence {
         }
 
         /// Splits on Unicode line break characters.
+        ///
         /// The following Unicode characters are recognized as line
         /// breaks:
         /// ```

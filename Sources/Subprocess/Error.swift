@@ -45,7 +45,7 @@ public struct SubprocessError: Swift.Error, Sendable, Hashable {
     /// The underlying error that caused this error.
     public let underlyingError: UnderlyingError?
 
-    /// Context associated with this error for better error message
+    /// Context associated with this error for better error messages.
     private let context: [Code: Context]
 }
 
@@ -79,30 +79,31 @@ extension SubprocessError {
 }
 
 extension SubprocessError.Code {
-    /// The subprocess failed to spawn.
+    /// The process failed to launch.
     public static var spawnFailed: Self { .init(.spawnFailed) }
-    /// The target executable isn't found.
+    /// The executable couldn't be found or run.
     public static var executableNotFound: Self { .init(.executableNotFound) }
-    /// The working directory isn't valid, or the subprocess failed to change the working directory.
+    /// The working directory couldn't be set because it's invalid or inaccessible.
     public static var failedToChangeWorkingDirectory: Self { .init(.failedToChangeWorkingDirectory) }
-    /// The subprocess failed to monitor the child process's exit status.
+    /// Subprocess couldn't monitor the process's exit status.
     public static var failedToMonitorProcess: Self { .init(.failedToMonitorProcess) }
 
-    /// The subprocess failed to read data from the child process.
+    /// Subprocess couldn't read the process's output.
     public static var failedToReadFromSubprocess: Self { .init(.failedToReadFromSubprocess) }
-    /// The subprocess failed to write data to the child process.
+    /// Subprocess couldn't write to the process's standard input.
     public static var failedToWriteToSubprocess: Self { .init(.failedToWriteToSubprocess) }
-    /// The child process output exceeded the configured limit.
+    /// The process produced more output than the configured limit allows.
     public static var outputLimitExceeded: Self { .init(.outputLimitExceeded) }
     /// A platform-specific asynchronous I/O operation failed.
     public static var asyncIOFailed: Self { .init(.asyncIOFailed) }
 
-    /// The subprocess failed to control the child process, such as sending a signal or terminating.
+    /// Subprocess couldn't control the process, for example by sending a signal or terminating it.
     public static var processControlFailed: Self { .init(.processControlFailed) }
 }
 
 // MARK: - Underlying types
 extension SubprocessError {
+    /// The platform-specific error type for low-level subprocess failures.
     #if os(Windows)
     public typealias UnderlyingError = WindowsError
     #else
@@ -129,7 +130,7 @@ extension SubprocessError: CustomStringConvertible, CustomDebugStringConvertible
     public var description: String {
         switch self.code.storage {
         case .spawnFailed:
-            var message = ["Failed to spawn the new process."]
+            var message = ["Failed to launch the new process."]
 
             if let context = self.context[self.code],
                 case .string(let reason) = context
@@ -160,38 +161,38 @@ extension SubprocessError: CustomStringConvertible, CustomDebugStringConvertible
             }
         case .failedToMonitorProcess:
             if let underlying = self.underlyingError {
-                return "Failed to monitor the child process exit status with underlying error: \(underlying)"
+                return "Failed to monitor the process's exit status with underlying error: \(underlying)"
             } else {
-                return "Failed to monitor the child process exit status."
+                return "Failed to monitor the process's exit status."
             }
 
         case .failedToReadFromSubprocess:
             if let underlying = self.underlyingError {
-                return "Failed to read bytes from the child process with underlying error: \(underlying)"
+                return "Failed to read bytes from the process with underlying error: \(underlying)"
             } else {
-                return "Failed to read bytes from the child process."
+                return "Failed to read bytes from the process."
             }
         case .failedToWriteToSubprocess:
             if let context = self.context[self.code],
                 case .string(let reason) = context
             {
                 if let underlying = self.underlyingError {
-                    return "Failed to write bytes to the child process: \(reason) Underlying error: \(underlying)"
+                    return "Failed to write bytes to the process: \(reason) Underlying error: \(underlying)"
                 }
-                return "Failed to write bytes to the child process: \(reason)"
+                return "Failed to write bytes to the process: \(reason)"
             }
             if let underlying = self.underlyingError {
-                return "Failed to write bytes to the child process with underlying error: \(underlying)"
+                return "Failed to write bytes to the process with underlying error: \(underlying)"
             } else {
-                return "Failed to write bytes to the child process."
+                return "Failed to write bytes to the process."
             }
         case .outputLimitExceeded:
             if let context = self.context[self.code],
                 case .int(let limit) = context
             {
-                return "Child process output exceeded the limit of \(limit) bytes."
+                return "The process's output exceeded the limit of \(limit) bytes."
             } else {
-                return "Child process output exceeded the limit."
+                return "The process's output exceeded the limit."
             }
         case .asyncIOFailed:
             let context = self.context[self.code]
@@ -212,16 +213,16 @@ extension SubprocessError: CustomStringConvertible, CustomDebugStringConvertible
             {
                 switch operation {
                 case .sendSignal(let signal):
-                    return "Failed to send signal \(signal) to child process"
+                    return "Failed to send signal \(signal) to the process."
                 case .terminate:
-                    return "Failed to terminate child process."
+                    return "Failed to terminate the process."
                 case .suspend:
-                    return "Failed to suspend child process."
+                    return "Failed to suspend the process."
                 case .resume:
-                    return "Failed to resume child process."
+                    return "Failed to resume the process."
                 }
             } else {
-                return "Failed to control child process state"
+                return "Failed to control the process state."
             }
         }
     }
@@ -375,10 +376,11 @@ extension SubprocessError {
         )
     }
 
-    /// The standard input writer was used after it finished. The writer is only
-    /// valid inside the `run(_:)` body closure; `run()` closes standard input
-    /// automatically when the body returns, so it must not be stored or used
-    /// afterward.
+    /// The standard input writer was used after it finished.
+    ///
+    /// The writer is only valid inside the `run(_:)` body closure; `run()` closes
+    /// standard input automatically when the body returns, so it must not be stored
+    /// or used afterward.
     internal static var standardInputWriterFinished: Self {
         return .failedToWriteToProcess(
             withUnderlyingError: nil,

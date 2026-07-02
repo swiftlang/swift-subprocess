@@ -63,7 +63,7 @@ extension SubprocessOutputSequence.Buffer {
         }
     }
 
-    // Access the storage backing this Buffer
+    /// A read-only span over the buffer's underlying bytes.
     public var bytes: RawSpan {
         return self.data._bytes
     }

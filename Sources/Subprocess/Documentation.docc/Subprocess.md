@@ -1,11 +1,11 @@
 # ``Subprocess``
 
-Subprocess is a cross-platform Swift package for spawning child processes, 
+Subprocess is a cross-platform Swift package for launching subprocesses, 
 built from the ground up with Swift concurrency.
 
 ## Overview
 
-Subprocess centers on a family of `run` functions. Each spawns an executable, 
+Subprocess centers on a set of `run` functions. Each launches an executable, 
 waits for it to terminate, and returns an ``ExecutionResult`` carrying the 
 process identifier, the ``TerminationStatus``, and whatever output you asked it 
 to collect. The simplest form runs a command and collects its standard output:
@@ -45,7 +45,7 @@ sequence of buffers you can iterate directly or read line by line. The
 are valid only for the duration of the body closure; don't let them escape it.
 
 If the task running a subprocess is canceled, Subprocess can run a configurable 
-teardown sequence (for example, a graceful shutdown followed by a forced kill) 
+teardown sequence (for example, a graceful shutdown followed by a forced termination) 
 before the call returns. You describe that sequence with ``TeardownStep`` values, 
 and you can trigger one yourself from the body closure.
 
@@ -64,30 +64,17 @@ dependency.
 - ``run(_:arguments:environment:workingDirectory:platformOptions:input:output:error:)-(_,_,_,_,_,Input,_,_)``
 - ``run(_:arguments:environment:workingDirectory:platformOptions:input:output:error:)-(_,_,_,_,_,Span<InputElement>,_,_)``
 - ``run(_:arguments:environment:workingDirectory:platformOptions:input:output:error:body:)``
-- ``run(_:input:output:error:)-(_,Input,_,_)``
-- ``run(_:input:output:error:)-(_,Span<InputElement>,_,_)``
-- ``run(_:input:output:error:body:)``
-
-### Configuring a Subprocess
-
-- ``Configuration``
 - ``Executable``
 - ``Arguments``
 - ``Environment``
 - ``PlatformOptions``
 
-### Providing Input
+### Configuring and running a Subprocess
 
-- ``InputProtocol``
-- ``NoInput``
-- ``StringInput``
-- ``ArrayInput``
-- ``FileDescriptorInput``
-- ``CustomWriteInput``
-- ``StandardInputWriter``
-- ``DataInput``
-- ``DataSequenceInput``
-- ``DataAsyncSequenceInput``
+- ``run(_:input:output:error:)-(_,Input,_,_)``
+- ``run(_:input:output:error:)-(_,Span<InputElement>,_,_)``
+- ``run(_:input:output:error:body:)``
+- ``Configuration``
 
 ### Collecting Output
 
@@ -107,6 +94,19 @@ dependency.
 
 - ``ErrorOutputProtocol``
 - ``CombinedErrorOutput``
+
+### Providing Input
+
+- ``InputProtocol``
+- ``NoInput``
+- ``StringInput``
+- ``ArrayInput``
+- ``FileDescriptorInput``
+- ``CustomWriteInput``
+- ``StandardInputWriter``
+- ``DataInput``
+- ``DataSequenceInput``
+- ``DataAsyncSequenceInput``
 
 ### Interacting with a Running Subprocess
 
