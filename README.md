@@ -354,7 +354,7 @@ See the `PlatformOptions` documentation for a complete list of configurable para
 | **Ubuntu 24.04**                   | Automated             |
 | **Red Hat Universal Base Image 9** | Automated             |
 | **Debian 12**                      | Automated             |
-| **Amazon Linux 2**                 | Automated             |
+| **Amazon Linux 2023**              | Automated             |
 | **Windows 11**                     | Automated             |
 | **Android**                        | Automated             |
 | **FreeBSD**                        | Automated             |
