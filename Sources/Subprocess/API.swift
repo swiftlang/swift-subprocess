@@ -162,7 +162,7 @@ public func run<
 
 // MARK: - Configuration Based
 
-/// Runs a subprocess with the given configuration and returns the collected output and exit status.
+/// Runs a subprocess with the configuration you provide and returns the collected output and exit status.
 ///
 /// - Parameters:
 ///   - configuration: The configuration to run.
@@ -192,7 +192,7 @@ public func run<
     }
 }
 
-/// Runs a subprocess with the given configuration and returns the collected output and exit status.
+/// Runs a subprocess with the configuration you provide and returns the collected output and exit status.
 ///
 /// - Parameters:
 ///   - configuration: The configuration to run.
@@ -215,7 +215,7 @@ public func run<
     }
 }
 
-/// Runs a subprocess with the given configuration and lets a closure interact with it while it runs.
+/// Runs a subprocess with the configuration you provide and lets a closure interact with it while it runs.
 ///
 /// Use this overload when you need to interact with the subprocess while it runs,
 /// such as streaming its standard output, writing to its standard input, or sending

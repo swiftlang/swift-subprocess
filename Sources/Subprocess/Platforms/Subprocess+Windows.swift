@@ -609,7 +609,7 @@ internal func reapProcess(
 // MARK: - Subprocess Control
 
 extension Execution {
-    /// Terminates the current subprocess with the given exit code.
+    /// Terminates the current subprocess with the exit code you provide.
     /// - Parameters:
     ///   - exitCode: The exit code to use for the subprocess.
     ///   - toProcessGroup: When `true`, terminates the subprocess and everything
