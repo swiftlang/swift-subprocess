@@ -29,8 +29,6 @@ import SystemPackage
 public struct DataInput: InputProtocol {
     private let data: Data
 
-    /// Asynchronously writes the input to the subprocess using the
-    /// write file descriptor.
     public func write(with writer: StandardInputWriter) async throws(SubprocessError) {
         _ = try await writer.write(self.data)
     }
@@ -46,8 +44,6 @@ public struct DataSequenceInput<
 >: InputProtocol where InputSequence.Element == Data {
     private let sequence: InputSequence
 
-    /// Asynchronously writes the input to the subprocess using the
-    /// write file descriptor.
     public func write(with writer: StandardInputWriter) async throws(SubprocessError) {
         var buffer = Data()
         for chunk in self.sequence {
@@ -71,8 +67,6 @@ public struct DataAsyncSequenceInput<
         _ = try await writer.write(chunk)
     }
 
-    /// Asynchronously writes the input to the subprocess using the
-    /// write file descriptor.
     @concurrent
     public func write(with writer: StandardInputWriter) async throws(SubprocessError) {
         do {

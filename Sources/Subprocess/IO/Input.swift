@@ -38,7 +38,11 @@ import FoundationEssentials
 /// Conform to this protocol and implement ``write(with:)``
 /// to provide a custom input source.
 public protocol InputProtocol: Sendable, ~Copyable {
-    /// Writes the input to the subprocess asynchronously.
+    /// Writes this input source's bytes to the subprocess's standard input.
+    ///
+    /// - Parameter writer: The writer connected to the subprocess's standard
+    ///   input; use it to send the bytes this input source represents.
+    /// - Throws: An error if writing to the subprocess fails.
     func write(with writer: StandardInputWriter) async throws
 }
 
@@ -60,7 +64,12 @@ public struct NoInput: InputProtocol {
         )
     }
 
-    /// Writes the input to the subprocess asynchronously.
+    /// Writes no input to the subprocess.
+    ///
+    /// This method is a no-op. ``NoInput`` redirects the subprocess's standard
+    /// input to the null device, so there is nothing to write here.
+    ///
+    /// - Parameter writer: Ignored; ``NoInput`` has no data to write.
     public func write(with writer: StandardInputWriter) async throws {
         // Intentional no-op
         // NoInput redirects stdin to /dev/null, so there is no
@@ -93,7 +102,14 @@ public struct FileDescriptorInput: InputProtocol {
         )
     }
 
-    /// Writes the input to the subprocess asynchronously.
+    /// Writes no input to the subprocess.
+    ///
+    /// This method is a no-op. ``FileDescriptorInput`` has the subprocess read
+    /// directly from the provided file descriptor, so there is nothing to
+    /// write here.
+    ///
+    /// - Parameter writer: Ignored; ``FileDescriptorInput`` has no data to
+    ///   write.
     public func write(with writer: StandardInputWriter) async throws {
         // Intentional no-op
         // FileDescriptorInput reads from a pre-existing file
@@ -119,7 +135,6 @@ public struct StringInput<
 >: InputProtocol {
     private let string: InputString
 
-    /// Writes the input to the subprocess asynchronously.
     public func write(with writer: StandardInputWriter) async throws {
         guard let array = self.string.byteArray(using: Encoding.self) else {
             return
@@ -136,7 +151,6 @@ public struct StringInput<
 public struct ArrayInput: InputProtocol {
     private let array: [UInt8]
 
-    /// Writes the input to the subprocess asynchronously.
     public func write(with writer: StandardInputWriter) async throws {
         _ = try await writer.write(self.array)
     }
@@ -154,11 +168,14 @@ public struct ArrayInput: InputProtocol {
 /// input through ``Execution/standardInputWriter`` and calls
 /// ``StandardInputWriter/finish()`` to signal end-of-file.
 public struct CustomWriteInput: InputProtocol {
-    /// Writes the input to the subprocess asynchronously.
+    /// Writes no input to the subprocess.
     ///
-    /// This method is a no-op. ``CustomWriteInput`` exposes the
-    /// ``StandardInputWriter`` directly to the body closure, which writes
-    /// to the subprocess.
+    /// This method is a no-op. ``CustomWriteInput`` exposes
+    /// ``StandardInputWriter`` to the body closure, which performs the writes
+    /// instead.
+    ///
+    /// - Parameter writer: Ignored; ``CustomWriteInput`` performs no write
+    ///   here.
     public func write(with writer: StandardInputWriter) async throws {
         // Intentional no-op.
     }

@@ -21,12 +21,9 @@ public import FoundationEssentials
 
 /// An output type that collects the subprocess's output as binary data.
 public struct DataOutput: OutputProtocol, ErrorOutputProtocol {
-    /// The output type for this output option.
     public typealias OutputType = Data
-    /// The maximum number of bytes to collect.
     public let maxSize: Int
 
-    /// Creates data from a raw span.
     public func output(from span: RawSpan) throws(SubprocessError) -> Data {
         return Data(span)
     }
