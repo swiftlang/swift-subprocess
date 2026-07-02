@@ -478,7 +478,8 @@ extension Configuration {
                     processIdentifier: .init(value: pid),
                     inputWriteEnd: inputWriteFileDescriptor,
                     outputReadEnd: outputReadFileDescriptor,
-                    errorReadEnd: errorReadFileDescriptor
+                    errorReadEnd: errorReadFileDescriptor,
+                    resolvedExecutable: FilePath(possibleExecutablePath)
                 )
             }
 
