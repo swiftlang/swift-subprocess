@@ -1,14 +1,15 @@
 # ``Subprocess``
 
-Subprocess is a cross-platform Swift package for launching subprocesses, 
-built from the ground up with Swift concurrency.
+A cross-platform Swift package for launching subprocesses, built from the 
+ground up with Swift concurrency.
 
 ## Overview
 
 Subprocess centers on a set of `run` functions. Each launches an executable, 
-waits for it to terminate, and returns an ``ExecutionResult`` carrying the 
-process identifier, the ``TerminationStatus``, and whatever output you asked it 
-to collect. The simplest form runs a command and collects its standard output:
+waits for it to terminate, and returns an ``ExecutionResult``. The result 
+carries the process identifier, the ``TerminationStatus``, and whatever output 
+you asked it to collect. The simplest form runs a command and collects its 
+standard output:
 
 ```swift
 import Subprocess
@@ -27,10 +28,9 @@ take a trailing closure: the closure receives an ``Execution`` value you use to
 write to standard input, stream standard output and standard error, and signal 
 or tear down the process.
 
-There are three independent parameters for input, output, and errors, so a 
-single call can mix collecting and streaming. Input, output, and errors conform 
-to ``InputProtocol``, ``OutputProtocol``, or ``ErrorOutputProtocol``, 
-respectively.
+Input, output, and errors are three independent parameters, so a single call 
+can mix collecting and streaming. Each conforms to ``InputProtocol``, 
+``OutputProtocol``, or ``ErrorOutputProtocol``, respectively.
 
 You can read input from a string, an array, a file descriptor, or, in the 
 closure-based API, from the body itself through ``StandardInputWriter``. You 
@@ -59,7 +59,7 @@ dependency.
 
 ## Topics
 
-### Running a Subprocess
+### Running a subprocess
 
 - ``run(_:arguments:environment:workingDirectory:platformOptions:input:output:error:)-(_,_,_,_,_,Input,_,_)``
 - ``run(_:arguments:environment:workingDirectory:platformOptions:input:output:error:)-(_,_,_,_,_,Span<InputElement>,_,_)``
@@ -69,14 +69,14 @@ dependency.
 - ``Environment``
 - ``PlatformOptions``
 
-### Configuring and running a Subprocess
+### Configuring and running a subprocess
 
 - ``run(_:input:output:error:)-(_,Input,_,_)``
 - ``run(_:input:output:error:)-(_,Span<InputElement>,_,_)``
 - ``run(_:input:output:error:body:)``
 - ``Configuration``
 
-### Collecting Output
+### Collecting output
 
 - ``OutputProtocol``
 - ``DiscardedOutput``
@@ -85,17 +85,17 @@ dependency.
 - ``FileDescriptorOutput``
 - ``DataOutput``
 
-### Streaming Output
+### Streaming output
 
 - ``SequenceOutput``
 - ``SubprocessOutputSequence``
 
-### Redirecting Standard Error
+### Redirecting standard error
 
 - ``ErrorOutputProtocol``
 - ``CombinedErrorOutput``
 
-### Providing Input
+### Providing input
 
 - ``InputProtocol``
 - ``NoInput``
@@ -103,26 +103,26 @@ dependency.
 - ``ArrayInput``
 - ``FileDescriptorInput``
 - ``CustomWriteInput``
-- ``StandardInputWriter``
 - ``DataInput``
 - ``DataSequenceInput``
 - ``DataAsyncSequenceInput``
 
-### Interacting with a Running Subprocess
+### Interacting with a running subprocess
 
 - ``Execution``
+- ``StandardInputWriter``
 
-### Inspecting Results
+### Inspecting results
 
 - ``ExecutionResult``
 - ``TerminationStatus``
 - ``ProcessIdentifier``
 
-### Terminating a Subprocess
+### Terminating a subprocess
 
 - ``TeardownStep``
 - ``Signal``
 
-### Handling Errors
+### Handling errors
 
 - ``SubprocessError``

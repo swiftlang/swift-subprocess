@@ -100,7 +100,7 @@ public struct Signal: Hashable, Sendable {
 }
 
 extension Execution {
-    /// Sends the given signal to the subprocess.
+    /// Sends the signal you provide to the subprocess.
     /// - Parameters:
     ///   - signal: The signal to send.
     ///   - shouldSendToProcessGroup: A Boolean value that indicates whether this signal should be sent to

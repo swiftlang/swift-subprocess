@@ -142,7 +142,7 @@ public struct SubprocessOutputSequence: AsyncSequence, @unchecked Sendable {
         )
     }
 
-    /// Splits the buffer into strings with the given encoding
+    /// Splits the buffer into strings with the encoding you provide
     /// and separator.
     ///
     /// The separator characters are not included in the returned strings,

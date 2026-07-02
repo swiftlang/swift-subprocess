@@ -107,7 +107,7 @@ public struct FileDescriptorOutput: OutputProtocol, ErrorOutputProtocol {
     }
 }
 
-/// An output type that collects the subprocess's output as decoded text using the given encoding.
+/// An output type that collects the subprocess's output as decoded text using the encoding you provide.
 public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol, ErrorOutputProtocol {
     public typealias OutputType = String?
     public let maxSize: Int
@@ -254,7 +254,7 @@ extension OutputProtocol where Self == StringOutput<UTF8> {
 
 extension OutputProtocol {
     /// Creates a subprocess output that collects output as
-    /// a string using the given encoding, up to `limit` bytes.
+    /// a string using the encoding you provide, up to `limit` bytes.
     ///
     /// The subprocess throws an error if the process
     /// produces more bytes than `limit`.

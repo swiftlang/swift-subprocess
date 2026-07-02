@@ -587,7 +587,7 @@ public struct ProcessIdentifier: Sendable, Hashable {
     /// The platform-specific process identifier value.
     public let value: pid_t
 
-    /// Creates a process identifier with the given value.
+    /// Creates a process identifier with the value you provide.
     public init(value: pid_t) {
         self.value = value
     }

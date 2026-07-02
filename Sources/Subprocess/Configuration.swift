@@ -329,7 +329,9 @@ public struct Executable: Sendable, Hashable {
 
     /// Locates the executable by name.
     ///
-    /// The subprocess uses the `PATH` value to determine the full path.
+    /// Subprocess searches for the executable by name in the directories listed
+    /// in the `PATH` environment variable, in order, and runs the first match it
+    /// finds. To run an executable at a known location instead, use ``path(_:)``.
     public static func name(_ executableName: String) -> Self {
         return .init(_config: .executable(executableName))
     }
@@ -339,7 +341,7 @@ public struct Executable: Sendable, Hashable {
     public static func path(_ filePath: FilePath) -> Self {
         return .init(_config: .path(filePath))
     }
-    /// Resolves the full executable path using the given environment.
+    /// Resolves the full executable path using the environment you provide.
     public func resolveExecutablePath(in environment: Environment) async throws(SubprocessError) -> FilePath {
         try await runOnBackgroundThread { () throws(SubprocessError) -> FilePath in
             let path = try self.resolveExecutablePath(withPathValue: environment.pathValue())
@@ -380,18 +382,18 @@ public struct Arguments: Sendable, ExpressibleByArrayLiteral, Hashable {
     internal let storage: [StringOrRawBytes]
     internal let executablePathOverride: StringOrRawBytes?
 
-    /// Creates an arguments value from the given literal values.
+    /// Creates an arguments value from the literal values you provide.
     public init(arrayLiteral elements: String...) {
         self.storage = elements.map { .string($0) }
         self.executablePathOverride = nil
     }
-    /// Creates an arguments value from the given array.
+    /// Creates an arguments value from the array you provide.
     public init(_ array: [String]) {
         self.storage = array.map { .string($0) }
         self.executablePathOverride = nil
     }
 
-    /// Creates an argument list, overriding the first element with the given executable path value.
+    /// Creates an argument list, overriding the first element with the executable path value you provide.
     ///
     /// If `executablePathOverride` is `nil`,
     /// ``Arguments`` automatically uses the executable path
@@ -408,7 +410,7 @@ public struct Arguments: Sendable, ExpressibleByArrayLiteral, Hashable {
         }
     }
     #if !os(Windows) // Windows does not support non-unicode arguments
-    /// Creates an argument list, overriding the first element with the given executable path value.
+    /// Creates an argument list, overriding the first element with the executable path value you provide.
     ///
     /// If `executablePathOverride` is `nil`,
     /// ``Arguments`` automatically uses the executable path
@@ -468,7 +470,7 @@ public struct Environment: Sendable, Hashable {
     public static var inherit: Self {
         return .init(config: .inherit([:]))
     }
-    /// Returns an updated environment with the given overrides applied.
+    /// Returns an updated environment with the overrides you provide applied.
     ///
     /// Keys with `nil` values in `newValue` remove the corresponding entry
     /// from the environment before passing it to the subprocess.
