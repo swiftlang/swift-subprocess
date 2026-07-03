@@ -25,7 +25,7 @@
 - ``userDefinedOne``
 - ``userDefinedTwo``
 
-### Creating a signal
+### Working with raw values
 
 - ``init(rawValue:)``
 - ``rawValue``
