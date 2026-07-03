@@ -5,8 +5,8 @@
 ### Creating a key
 
 - ``init(stringLiteral:)``
+
+### Working with raw values
+
 - ``init(rawValue:)``
-
-### Reading the key
-
 - ``rawValue``
