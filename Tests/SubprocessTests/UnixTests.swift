@@ -86,6 +86,34 @@ extension SubprocessUnixTests {
             "This test requires root privileges"
         )
     )
+    func testSubprocessPlatformOptionsUserAndGroupID() async throws {
+        // setuid() before setgid() clears CAP_SETGID on Linux (and the
+        // saved-set-id privilege on Darwin/BSD), so the following setgid()
+        // fails with EPERM and the spawn fails outright.
+        let expectedUserID = uid_t(Int.random(in: 1000...2000))
+        let expectedGroupID = gid_t(Int.random(in: 2001...3000))
+        var platformOptions = PlatformOptions()
+        platformOptions.userID = expectedUserID
+        platformOptions.groupID = expectedGroupID
+        try await self.assertID(
+            withArgument: "-u",
+            platformOptions: platformOptions,
+            isEqualTo: expectedUserID
+        )
+        try await self.assertID(
+            withArgument: "-g",
+            platformOptions: platformOptions,
+            isEqualTo: expectedGroupID
+        )
+    }
+
+    // Run this test with sudo
+    @Test(
+        .enabled(
+            if: getgid() == 0,
+            "This test requires root privileges"
+        )
+    )
     func testSubprocessPlatformOptionsSupplementaryGroups() async throws {
         var expectedGroups: Set<gid_t> = Set()
         for _ in 0..<Int.random(in: 5...10) {

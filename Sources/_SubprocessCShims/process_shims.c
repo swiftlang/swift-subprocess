@@ -207,14 +207,17 @@ static int _subprocess_spawn_prefork(
             }
         }
 
-        if (uid != NULL) {
-            if (setuid(*uid) != 0) {
+        // Drop the group before the user. setuid() to a non-root uid clears
+        // the capabilities/privileges, so a following setgid() would fail
+        // with EPERM. https://github.com/swiftlang/swift-subprocess/issues/342
+        if (gid != NULL) {
+            if (setgid(*gid) != 0) {
                 write_error_and_exit;
             }
         }
 
-        if (gid != NULL) {
-            if (setgid(*gid) != 0) {
+        if (uid != NULL) {
+            if (setuid(*uid) != 0) {
                 write_error_and_exit;
             }
         }
@@ -679,14 +682,17 @@ int _subprocess_fork_exec(
             }
         }
 
-        if (uid != NULL) {
-            if (setuid(*uid) != 0) {
+        // Drop the group before the user. setuid() to a non-root uid clears
+        // the capabilities/privileges, so a following setgid() would fail
+        // with EPERM. https://github.com/swiftlang/swift-subprocess/issues/342
+        if (gid != NULL) {
+            if (setgid(*gid) != 0) {
                 write_error_and_exit;
             }
         }
 
-        if (gid != NULL) {
-            if (setgid(*gid) != 0) {
+        if (uid != NULL) {
+            if (setuid(*uid) != 0) {
                 write_error_and_exit;
             }
         }
