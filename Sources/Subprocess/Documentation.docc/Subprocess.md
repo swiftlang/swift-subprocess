@@ -22,45 +22,31 @@ print(result.standardOutput)    // e.g. Optional("LICENSE\nPackage.swift\n...")
 ```
 
 You can run an executable directly, supplying its ``Arguments``, ``Environment``, 
-and working directory inline, or build a reusable ``Configuration`` and run that. 
-When you need to interact with the process while it runs, use the overloads that 
-take a trailing closure: the closure receives an ``Execution`` value you use to 
-write to standard input, stream standard output and standard error, and signal 
-or tear down the process.
+and working directory inline, or build a reusable ``Configuration`` to run repeatedly.
 
-Input, output, and errors are three independent parameters, so a single call 
-can mix collecting and streaming. Each conforms to ``InputProtocol``, 
-``OutputProtocol``, or ``ErrorOutputProtocol``, respectively.
+To get more detail on how to `run` to invoke a command, wait for it to finish, then provide everything it produced, read <doc:GettingStarted>.
+If you're invoking a long running command, a command produces more output than fits into memory, or you want to process what that command produces while it's still running, read <doc:StreamingAndInput>.
 
-You can read input from a string, an array, a file descriptor, or, in the 
-closure-based API, from the body itself through ``StandardInputWriter``. You 
-can collect output as a `String`, a `[UInt8]` array, or `Data`, send it to a 
-file descriptor, or stream it. Passing ``CombinedErrorOutput`` for the error 
-parameter merges standard error into standard output, the equivalent of the 
-shell's `2>&1`.
+Subprocess also handles the concerns that surround a running process:
 
-Streamed output arrives as a ``SubprocessOutputSequence``, an asynchronous 
-sequence of buffers you can iterate directly or read line by line. The 
-``Execution``, ``SubprocessOutputSequence``, and ``StandardInputWriter`` values 
-are valid only for the duration of the body closure; don't let them escape it.
-
-If the task running a subprocess is canceled, Subprocess can run a configurable 
-teardown sequence (for example, a graceful shutdown followed by a forced termination) 
-before the call returns. You describe that sequence with ``TeardownStep`` values, 
-and you can trigger one yourself from the body closure.
-
-Platform-specific settings live on ``PlatformOptions``: user and group 
-identifiers and session behavior on Unix, quality of service on Darwin, and 
-console and window behavior on Windows. The `SubprocessFoundation` trait is 
-enabled by default and adds the `Data`-based input and output types, which 
-import Foundation (the system Foundation on Darwin and swift-foundation's 
-`FoundationEssentials` elsewhere). Disable the trait to build without that 
-dependency.
+- **Graceful teardown.** When the task running a subprocess is canceled, 
+  Subprocess can run a configurable teardown sequence — for example, a graceful 
+  shutdown followed by a forced termination — before the call returns. You 
+  describe it with ``TeardownStep`` values.
+- **Platform options.** Platform-specific settings live on ``PlatformOptions``: 
+  user, group, and session behavior on Unix, quality of service on Darwin, and 
+  console and window behavior on Windows.
+- **Foundation integration.** The `SubprocessFoundation` trait, enabled by 
+  default, adds `Data`-based input and output. It imports Foundation — the 
+  system Foundation on Darwin, and swift-foundation's `FoundationEssentials` 
+  elsewhere. Disable the trait to build without that dependency.
 
 ## Topics
 
 ### Running a subprocess
 
+- <doc:GettingStarted>
+- <doc:StreamingAndInput>
 - ``run(_:arguments:environment:workingDirectory:platformOptions:input:output:error:)-(_,_,_,_,_,Input,_,_)``
 - ``run(_:arguments:environment:workingDirectory:platformOptions:input:output:error:)-(_,_,_,_,_,Span<InputElement>,_,_)``
 - ``run(_:arguments:environment:workingDirectory:platformOptions:input:output:error:body:)``

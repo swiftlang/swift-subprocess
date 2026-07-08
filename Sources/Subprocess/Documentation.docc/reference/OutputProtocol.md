@@ -16,6 +16,8 @@
 
 - ``currentStandardOutput``
 - ``currentStandardError``
+- ``standardOutput``
+- ``standardError``
 
 ### Implementing a custom output type
 

@@ -107,7 +107,9 @@ public struct FileDescriptorOutput: OutputProtocol, ErrorOutputProtocol {
     }
 }
 
-/// An output type that collects the subprocess's output as decoded text using the encoding you provide.
+/// An output type that collects the subprocess's output as a string.
+///
+/// Specify the encoding to use when decoding the output; the default is UTF-8.
 public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol, ErrorOutputProtocol {
     public typealias OutputType = String
     public let maxSize: Int
@@ -179,8 +181,8 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
     }
 }
 
-/// An output type that streams the subprocess's output through the body
-/// closure as an asynchronous sequence of buffers.
+/// An output type that streams the subprocess's output as an asynchronous
+/// sequence of buffers.
 ///
 /// Use ``OutputProtocol/sequence`` to create a value of this type when you
 /// call a `run` function that takes a body closure. The closure reads the
