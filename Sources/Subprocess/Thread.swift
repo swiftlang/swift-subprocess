@@ -91,11 +91,13 @@ private struct BackgroundWorkItem {
 // exposed so we can use it with `pthread_cond_wait`.
 private final class WorkQueue: Sendable {
     private nonisolated(unsafe) var queue: [BackgroundWorkItem]
+    private nonisolated(unsafe) var isShuttingDown: Bool
     internal nonisolated(unsafe) let mutex: UnsafeMutablePointer<MutexType>
     internal nonisolated(unsafe) let waitCondition: UnsafeMutablePointer<ConditionType>
 
     init() {
         self.queue = []
+        self.isShuttingDown = false
         self.mutex = UnsafeMutablePointer<MutexType>.allocate(capacity: 1)
         self.waitCondition = UnsafeMutablePointer<ConditionType>.allocate(capacity: 1)
         #if canImport(WinSDK)
@@ -128,7 +130,11 @@ private final class WorkQueue: Sendable {
             pthread_mutex_unlock(mutex)
         }
         #endif
-        if condition(&queue) {
+        // Use a `while` loop (not `if`) so that spurious wakeups and signal
+        // interruptions of `pthread_cond_wait` do not fall through the wait.
+        // `condition` is responsible for also returning `false` when shutting
+        // down, so the worker can wake and exit rather than sleeping forever.
+        while condition(&queue) {
             #if canImport(WinSDK)
             SleepConditionVariableCS(self.waitCondition, mutex, INFINITE)
             #else
@@ -141,8 +147,9 @@ private final class WorkQueue: Sendable {
     // Only called in worker thread. Sleeps the thread if there's no more item
     func dequeue() -> BackgroundWorkItem? {
         return self.withUnsafeUnderlyingLock { queue in
-            // Sleep the worker thread if there's no more work
-            queue.isEmpty
+            // Sleep the worker thread while there's no work and we're not
+            // shutting down. Returning `false` here ends the wait.
+            queue.isEmpty && !self.isShuttingDown
         } body: { mutex, queue in
             guard !queue.isEmpty else {
                 return nil
@@ -166,6 +173,7 @@ private final class WorkQueue: Sendable {
     func shutdown() {
         self.withLock { queue in
             queue.removeAll()
+            self.isShuttingDown = true
             #if canImport(WinSDK)
             WakeConditionVariable(self.waitCondition)
             #else
