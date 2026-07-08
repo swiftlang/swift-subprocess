@@ -14,8 +14,6 @@
 
 ### Accessing standard streams
 
-- ``standardOutput``
-- ``standardError``
 - ``currentStandardOutput``
 - ``currentStandardError``
 

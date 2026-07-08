@@ -219,12 +219,6 @@ extension OutputProtocol where Self == FileDescriptorOutput {
         )
     }
 
-    // TODO: remove for 1.0
-    @available(*, deprecated, renamed: "currentStandardOutput")
-    public static var standardOutput: Self {
-        return currentStandardOutput
-    }
-
     /// Creates a subprocess output that writes to the current process's standard error.
     ///
     /// The file descriptor isn't closed afterward.
@@ -233,12 +227,6 @@ extension OutputProtocol where Self == FileDescriptorOutput {
             .standardError,
             closeAfterSpawningProcess: false
         )
-    }
-
-    // TODO: remove for 1.0
-    @available(*, deprecated, renamed: "currentStandardError")
-    public static var standardError: Self {
-        return currentStandardError
     }
 }
 
