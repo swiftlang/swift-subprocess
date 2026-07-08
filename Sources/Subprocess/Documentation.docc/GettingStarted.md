@@ -39,8 +39,7 @@ The preceding example uses ``run(_:arguments:environment:workingDirectory:platfo
   The example uses `.string(limit:)` to collect standard output as an optional string (`String?`) no longer than 4096 bytes.
 - The `limit` parameter is a byte count, not a character count, and Subprocess applies it before decoding.
   If you don't specify a limit, the default limit is 128 KB.
-  If the subprocess produces more than the limit, `run` throws ``SubprocessError`` rather than truncating silently,
-  so you don't mistake a partial result for a complete one.
+  Treat the limit as a ceiling, not a truncation: output that fits today can grow past it tomorrow, and when it does, `run` throws ``SubprocessError`` rather than silently handing you a partial result you might mistake for the whole.
 - The `input` parameter defaults to `.none` and the `error` parameter defaults to `.discarded`.
 
 ### Name the command and its arguments
