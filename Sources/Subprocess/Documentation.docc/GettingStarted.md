@@ -9,9 +9,11 @@ Running a subprocess takes the input you provide, and you control how its output
 Depending on the command, a subprocess might produce output, error output, both, or neither.
 Subprocess lets you handle each of these cases independently.
 
-You can either collect or stream the output.
-Collecting waits for the subprocess to finish and hands you the result.
-Streaming lets you read output while the subprocess is still running.
+The function that launches a subprocess, `run`, comes in two forms.
+The collecting form waits for the subprocess to finish and provides the result.
+The streaming form lets you read output while the subprocess runs.
+You choose between them by whether you pass a trailing closure.
+This article covers the collecting form; for streaming, see <doc:StreamingAndInput>.
 
 Subprocess encloses the lifetime of the process you run within the `run` call.
 When `run` returns, the process is complete and cleaned up.

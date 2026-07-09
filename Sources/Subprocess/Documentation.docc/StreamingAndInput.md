@@ -5,8 +5,13 @@ the one rule that keeps pipes from deadlocking.
 
 ## Overview
 
-<doc:GettingStarted> shows how `run` waits for the subprocess to exit, then hands you all of its output at once.
-Sometimes you need to process a stream of subprocess output instead, for example:
+The function that launches a subprocess, `run`, comes in two forms.
+The collecting form waits for the subprocess to exit and hands you all its output at once.
+The streaming form takes a trailing closure so you can process output while the subprocess runs.
+You choose between them by whether you pass that closure.
+This article covers the streaming form; for collecting, see <doc:GettingStarted>.
+
+Reach for streaming when, for example:
 
 - Reading each line of a long-running subprocess as it becomes available.
 - Handling output that's too large to hold in memory.
@@ -230,7 +235,7 @@ until its body does — and every pipe has a task draining it.
 ## Use files and inherited standard I/O
 
 Not every stream has to flow through your process.
-You can point a subprocess's input or output at a file descriptor directly with
+You can point the input or output of a subprocess at a file descriptor directly with
 ``FileDescriptorInput/fileDescriptor(_:closeAfterSpawningProcess:)`` and
 ``FileDescriptorOutput/fileDescriptor(_:closeAfterSpawningProcess:)``,
 which is efficient for large amounts of data.
