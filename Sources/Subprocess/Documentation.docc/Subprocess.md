@@ -18,7 +18,7 @@ let result = try await run(.name("ls"), output: .string(limit: 4096))
 
 print(result.processIdentifier) // e.g. 1234
 print(result.terminationStatus) // e.g. exited(0)
-print(result.standardOutput)    // e.g. Optional("LICENSE\nPackage.swift\n...")
+print(result.standardOutput)    // e.g. "LICENSE\nPackage.swift\n..."
 ```
 
 You can run an executable directly, supplying its ``Arguments``, ``Environment``, 

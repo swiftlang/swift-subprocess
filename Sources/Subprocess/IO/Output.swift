@@ -235,7 +235,7 @@ extension OutputProtocol where Self == FileDescriptorOutput {
 extension OutputProtocol where Self == StringOutput<UTF8> {
     /// Creates a subprocess output that collects output as a UTF-8 string.
     ///
-    /// The subprocess throws an error if the process
+    /// `run` throws a ``SubprocessError`` if the process
     /// produces more bytes than `limit`.
     public static func string(limit: Int) -> Self {
         return .init(limit: limit, encoding: UTF8.self)
@@ -246,7 +246,7 @@ extension OutputProtocol {
     /// Creates a subprocess output that collects output as
     /// a string using the encoding you provide, up to `limit` bytes.
     ///
-    /// The subprocess throws an error if the process
+    /// `run` throws a ``SubprocessError`` if the process
     /// produces more bytes than `limit`.
     public static func string<Encoding: Unicode.Encoding>(
         limit: Int,
@@ -260,7 +260,7 @@ extension OutputProtocol where Self == BytesOutput {
     /// Creates a subprocess output that collects output as bytes,
     /// up to `limit` bytes.
     ///
-    /// The subprocess throws an error if the process
+    /// `run` throws a ``SubprocessError`` if the process
     /// produces more bytes than `limit`.
     public static func bytes(limit: Int) -> Self {
         return .init(limit: limit)

@@ -30,6 +30,10 @@ public import SystemPackage
 ///   - output: The method to use for redirecting standard output.
 ///   - error: The method to use for redirecting standard error.
 /// - Returns: An ``ExecutionResult`` that contains the result of the run.
+/// - Throws: A ``SubprocessError`` if the subprocess can't be launched, for
+///   example when the executable isn't found, or if the collected output
+///   exceeds the limit you set. A non-zero exit code is a normal result, not
+///   a thrown error; inspect ``ExecutionResult/terminationStatus`` instead.
 public func run<
     Input: InputProtocol,
     Output: OutputProtocol,
@@ -72,6 +76,10 @@ public func run<
 ///   - output: The method to use for redirecting standard output.
 ///   - error: The method to use for redirecting standard error.
 /// - Returns: An ``ExecutionResult`` that contains the result of the run.
+/// - Throws: A ``SubprocessError`` if the subprocess can't be launched, for
+///   example when the executable isn't found, or if the collected output
+///   exceeds the limit you set. A non-zero exit code is a normal result, not
+///   a thrown error; inspect ``ExecutionResult/terminationStatus`` instead.
 public func run<
     InputElement: BitwiseCopyable,
     Output: OutputProtocol,
@@ -126,6 +134,10 @@ public func run<
 ///     Don't let the execution value escape the closure.
 /// - Returns: An ``ExecutionResult`` that contains the closure's return value and
 ///   the termination status of the subprocess.
+/// - Throws: A ``SubprocessError`` if the subprocess can't be launched, for
+///   example when the executable isn't found, or rethrows any error your
+///   `body` closure throws. A non-zero exit code is a normal result, not a
+///   thrown error; inspect ``ExecutionResult/terminationStatus`` instead.
 public func run<
     Result: ~Copyable,
     Input: InputProtocol,
@@ -170,6 +182,10 @@ public func run<
 ///   - output: The method to use for redirecting standard output.
 ///   - error: The method to use for redirecting standard error.
 /// - Returns: An ``ExecutionResult`` that contains the result of the run.
+/// - Throws: A ``SubprocessError`` if the subprocess can't be launched, for
+///   example when the executable isn't found, or if the collected output
+///   exceeds the limit you set. A non-zero exit code is a normal result, not
+///   a thrown error; inspect ``ExecutionResult/terminationStatus`` instead.
 public func run<
     InputElement: BitwiseCopyable,
     Output: OutputProtocol,
@@ -200,6 +216,10 @@ public func run<
 ///   - output: The method to use for redirecting standard output.
 ///   - error: The method to use for redirecting standard error.
 /// - Returns: An ``ExecutionResult`` that contains the result of the run.
+/// - Throws: A ``SubprocessError`` if the subprocess can't be launched, for
+///   example when the executable isn't found, or if the collected output
+///   exceeds the limit you set. A non-zero exit code is a normal result, not
+///   a thrown error; inspect ``ExecutionResult/terminationStatus`` instead.
 public func run<
     Input: InputProtocol,
     Output: OutputProtocol,
@@ -234,6 +254,10 @@ public func run<
 ///     Don't let the execution value escape the closure.
 /// - Returns: An ``ExecutionResult`` that contains the closure's return value and
 ///   the termination status of the subprocess.
+/// - Throws: A ``SubprocessError`` if the subprocess can't be launched, for
+///   example when the executable isn't found, or rethrows any error your
+///   `body` closure throws. A non-zero exit code is a normal result, not a
+///   thrown error; inspect ``ExecutionResult/terminationStatus`` instead.
 public func run<
     Result: ~Copyable,
     Input: InputProtocol,

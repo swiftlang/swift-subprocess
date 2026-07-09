@@ -189,7 +189,8 @@ do {
 }
 ```
 
-> Note: A non-zero exit never surfaces as a Swift error, and neither does output on standard error. To run a `catch` block when a command “fails,” check ``TerminationStatus/isSuccess`` yourself and throw from your own code.
+> Note: A non-zero exit never surfaces as a Swift error, and neither does output on standard error. 
+> To run a `catch` block when a command “fails,” check ``TerminationStatus/isSuccess`` yourself and throw from your own code.
 
 ### Understand the process lifetime
 
