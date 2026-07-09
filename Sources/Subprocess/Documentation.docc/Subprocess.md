@@ -43,10 +43,12 @@ Subprocess also handles the concerns that surround a running process:
 
 ## Topics
 
-### Running a subprocess
+### Essentials
 
 - <doc:GettingStarted>
 - <doc:StreamingAndInput>
+
+### Running a subprocess
 - ``run(_:arguments:environment:workingDirectory:platformOptions:input:output:error:)-(_,_,_,_,_,Input,_,_)``
 - ``run(_:arguments:environment:workingDirectory:platformOptions:input:output:error:)-(_,_,_,_,_,Span<InputElement>,_,_)``
 - ``run(_:arguments:environment:workingDirectory:platformOptions:input:output:error:body:)``
