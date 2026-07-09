@@ -25,7 +25,7 @@ You can run an executable directly, supplying its ``Arguments``, ``Environment``
 and working directory inline, or build a reusable ``Configuration`` to run repeatedly.
 
 To get more detail on how to `run` to invoke a command, wait for it to finish, then provide everything it produced, read <doc:GettingStarted>.
-If you're invoking a long running command, a command produces more output than fits into memory, or you want to process what that command produces while it's still running, read <doc:StreamingAndInput>.
+If you're invoking a long-running command, a command that produces more output than fits into memory, or you want to process what that command produces while it's still running, read <doc:StreamingAndInput>.
 
 Subprocess also handles the concerns that surround a running process:
 
