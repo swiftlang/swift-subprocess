@@ -12,7 +12,7 @@ Subprocess lets you handle each of these cases independently.
 The function that launches a subprocess, `run`, comes in two forms.
 The collecting form waits for the subprocess to finish and provides the result.
 The streaming form lets you read output while the subprocess runs.
-You choose between them by whether you pass a trailing closure.
+You choose between them depending on whether you pass a trailing closure.
 This article covers the collecting form; for streaming, see <doc:StreamingAndInput>.
 
 Subprocess encloses the lifetime of the process you run within the `run` call.
@@ -104,16 +104,51 @@ For more detail on how to use streaming output, see <doc:StreamingAndInput>.
 
 ### Read what you get back
 
-A collecting `run` returns an ``ExecutionResult``, which includes:
+A collecting `run` returns an ``ExecutionResult`` that carries everything the finished process produced:
 
-- `standardOutput` and `standardError`, typed by the choices you made — a
-  `String` for `.string(limit:)`, a `[UInt8]` for `.bytes(limit:)`, and so on.
-- ``TerminationStatus`` — how the process ended.
-- ``ProcessIdentifier`` — the process's identifier.
+| Property | Type | What it holds |
+| --- | --- | --- |
+| `standardOutput` | matches your `output:` choice | the collected standard output |
+| `standardError` | matches your `error:` choice | the collected standard error |
+| `terminationStatus` | ``TerminationStatus`` | how the process ended |
+| `processIdentifier` | ``ProcessIdentifier`` | the identifier of the process that ran |
 
-A command that ran and failed is a normal result, not an error.
-`run` doesn't throw when a command exits with a non-zero code.
-Use the termination status to understand how the process completed:
+The types of `standardOutput` and `standardError` follow the collection method you chose for each stream:
+
+| Collection method | Result type |
+| --- | --- |
+| `.string(limit:)` | `String` |
+| `.bytes(limit:)` | `[UInt8]` |
+| ``OutputProtocol/discarded`` | `Void` (nothing collected) |
+
+Both `.string(limit:)` and `.bytes(limit:)` take a required `limit` — a byte count with no default, applied before decoding.
+Use `.bytes(limit:)` when the output isn't text, such as an image or an archive.
+
+In the common case, a command runs, succeeds, and hands you its output, which you read from the result:
+
+```swift
+let result = try await run(
+    .name("git"),
+    arguments: ["rev-parse", "HEAD"],
+    output: .string(limit: 4096)
+)
+print(result.standardOutput)   // the commit hash
+```
+
+Because `.string(limit:)` produces a `String` rather than an optional, you use `result.standardOutput` directly, with no unwrapping.
+
+### Detect failure
+
+Around a subprocess, the word “error” pulls in three directions.
+Keeping them apart is the difference between handling a real problem and misreading a healthy result as a broken one.
+Throughout the Subprocess documentation:
+
+- A **Swift error** is a value thrown out of `run` that you handle with `do`/`catch`. Subprocess reserves this for problems it can't express as a result: a broken setup or environment, or a body closure of your own that throws.
+- A **command failure** is a subprocess that ran to completion but exited with a non-zero code. This is a normal ``ExecutionResult``, not a Swift error.
+- **Standard error output** is bytes the command wrote to its standard error stream. Many programs write progress or diagnostics there while succeeding, so it's ordinary output you collect through the `error:` parameter — not a signal that anything went wrong.
+
+`run` doesn't throw a Swift error when a command exits with a non-zero code.
+A command that ran and failed is a normal result; inspect its ``TerminationStatus`` to see how it ended:
 
 ```swift
 switch result.terminationStatus {
@@ -126,13 +161,35 @@ case .signaled(let signal):
 }
 ```
 
-For a simple pass-or-fail check, ``TerminationStatus/isSuccess`` collapses that
-to a Boolean. The `signaled` case exists only on platforms that report
-signals; on Windows, every command ends as `exited`.
+For a simple pass-or-fail check, ``TerminationStatus/isSuccess`` collapses that to a Boolean.
+The `signaled` case exists only on platforms that report signals; on Windows, every command ends as `exited`.
 
-`run` does throw when provided a command that can't start,
-for example, when ``Executable/name(_:)`` finds nothing in `PATH`.
-As mentioned earlier, `run` also throws ``SubprocessError`` if the output exceeds a limit.
+`run` throws a Swift error in only two situations:
+
+- It throws a ``SubprocessError`` for a problem with the setup or environment — for example, when ``Executable/name(_:)`` finds nothing in `PATH`, or when the collected output exceeds the `limit` you specified.
+- It rethrows any error your own body closure throws, in the streaming form described in <doc:StreamingAndInput>.
+
+Because a command failure isn't a Swift error, you handle the two concerns in different places — `do`/`catch` for a process that couldn't run, and ``TerminationStatus/isSuccess`` for one that ran and failed:
+
+```swift
+do {
+    let result = try await run(
+        .name("git"),
+        arguments: ["status"],
+        output: .string(limit: 64 * 1024)
+    )
+    if result.terminationStatus.isSuccess {
+        print(result.standardOutput)
+    } else {
+        print("git reported failure")
+    }
+} catch {
+    // A Swift error: git wasn't found, or the output exceeded the limit.
+    print("couldn't run git: \(error)")
+}
+```
+
+> Note: A non-zero exit never surfaces as a Swift error, and neither does output on standard error. To run a `catch` block when a command “fails,” check ``TerminationStatus/isSuccess`` yourself and throw from your own code.
 
 ### Understand the process lifetime
 

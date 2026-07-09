@@ -8,7 +8,7 @@ the one rule that keeps pipes from deadlocking.
 The function that launches a subprocess, `run`, comes in two forms.
 The collecting form waits for the subprocess to exit and hands you all its output at once.
 The streaming form takes a trailing closure so you can process output while the subprocess runs.
-You choose between them by whether you pass that closure.
+You choose between them depending on whether you pass that closure.
 This article covers the streaming form; for collecting, see <doc:GettingStarted>.
 
 Reach for streaming when, for example:
