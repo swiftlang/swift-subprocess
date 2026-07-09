@@ -5,8 +5,9 @@ and process lifetime fit together.
 
 ## Overview
 
-Running a subprocess takes the input you provide and produces both output and error.
-The API of Subprocess lets you control each one separately.
+Running a subprocess takes the input you provide, and you control how its output and error are collected or streamed.
+Depending on the command, a subprocess might produce output, error output, both, or neither.
+Subprocess lets you handle each of these cases independently.
 
 You can either collect or stream the output.
 Collecting waits for the subprocess to finish and hands you the result.
@@ -28,17 +29,15 @@ let result = try await run(
     arguments: ["-la"],
     output: .string(limit: 4096)
 )
-if let stdout = result.standardOutput {
-    print(stdout)
-}
+print(result.standardOutput)
 ```
 
 The preceding example uses ``run(_:arguments:environment:workingDirectory:platformOptions:input:output:error:)-(_,_,_,_,_,Input,_,_)``:
 
 - The `output` parameter is required.
-  The example uses `.string(limit:)` to collect standard output as an optional string (`String?`) no longer than 4096 bytes.
+  The example uses `.string(limit:)` to collect standard output as a string (`String`) no longer than 4096 bytes.
 - The `limit` parameter is a byte count, not a character count, and Subprocess applies it before decoding.
-  If you don't specify a limit, the default limit is 128 KB.
+  There's no default limit — you always specify one, because a reasonable ceiling depends entirely on the command you run, anywhere from a few bytes to many megabytes.
   Treat the limit as a ceiling, not a truncation: output that fits today can grow past it tomorrow, and when it does, `run` throws ``SubprocessError`` rather than silently handing you a partial result you might mistake for the whole.
 - The `input` parameter defaults to `.none` and the `error` parameter defaults to `.discarded`.
 
@@ -58,7 +57,7 @@ Each element is one argument, passed to the command exactly as written:
 let result = try await run(
     .name("git"),
     arguments: ["commit", "-m", "a message with spaces"],
-    output: .string(limit: 4096)
+    output: .string(limit: 16 * 1024)
 )
 ```
 
@@ -81,7 +80,7 @@ let result = try await run(
 )
 ```
 
-To keep the two streams together instead — the equivalent of using `2>&1` in a shell — pass ``ErrorOutputProtocol/combinedWithOutput`` as the error.
+To keep the output and error together instead — the equivalent of using `2>&1` in a shell — pass ``ErrorOutputProtocol/combinedWithOutput`` as the error.
 This merges standard error into standard output.
 Only the `error:` line changes:
 
@@ -106,7 +105,7 @@ For more detail on how to use streaming output, see <doc:StreamingAndInput>.
 A collecting `run` returns an ``ExecutionResult``, which includes:
 
 - `standardOutput` and `standardError`, typed by the choices you made — a
-  `String?` for `.string(limit:)`, a `[UInt8]` for `.bytes(limit:)`, and so on.
+  `String` for `.string(limit:)`, a `[UInt8]` for `.bytes(limit:)`, and so on.
 - ``TerminationStatus`` — how the process ended.
 - ``ProcessIdentifier`` — the process's identifier.
 

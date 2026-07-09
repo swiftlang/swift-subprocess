@@ -1,15 +1,16 @@
 # Streaming output and providing input
 
-Stream a subprocess's output as it arrives and feed it input, while following
+Stream the output of a subprocess as it arrives and feed it input, while following
 the one rule that keeps pipes from deadlocking.
 
 ## Overview
 
 <doc:GettingStarted> shows how `run` waits for the subprocess to exit, then hands you all of its output at once.
-When you need to step beyond that, you can process a stream of results instead.
-This is useful when the subprocess is long-running and you want each line as it appears,
-when its output is too large to hold in memory,
-or when you need to feed the subprocess input while it runs.
+Sometimes you need to process a stream of subprocess output instead, for example:
+
+- Reading each line of a long-running subprocess as it becomes available.
+- Handling output that's too large to hold in memory.
+- Providing input to the subprocess while it runs.
 
 The streaming API gives you live streams, which come with one rule:
 
@@ -116,7 +117,7 @@ let result = try await run(
     input: .string("one\ntwo\n"),
     output: .string(limit: 4096)
 )
-print(result.standardOutput ?? "")   // the line count
+print(result.standardOutput)   // the line count
 ```
 
 To write input as the process runs, pass
@@ -136,7 +137,7 @@ let result = try await run(
     _ = try await writer.write("one\ntwo\nthree\n")
     try await writer.finish()
 }
-print(result.standardOutput ?? "")
+print(result.standardOutput)
 ```
 
 When you use this form to write input, call ``StandardInputWriter/finish()`` after your last write.
