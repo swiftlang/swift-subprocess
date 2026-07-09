@@ -55,6 +55,42 @@ jobs:
         done
         # empty line to ignore the --swift-sdk given by swiftlang/github-workflows/.github/workflows/scripts/install-and-build-with-sdk.sh \
 
+  test_macos_root:
+    name: Test macOS (root)
+    runs-on: [self-hosted, macos, tahoe, ARM64]
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.4.app
+      ROOT_SUITE: SubprocessUnixRootTests
+    steps:
+      - name: Remove leftover root build
+        run: sudo -n rm -rf "${GITHUB_WORKSPACE}/.build-root" || true
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Verify passwordless sudo
+        run: |
+          uid="$(sudo -n id -u)" || { echo "::error::passwordless sudo unavailable"; exit 1; }
+          [ "$uid" -eq 0 ] || { echo "::error::sudo did not elevate to root (uid=$uid)"; exit 1; }
+
+      - name: Build root test suite
+        run: sudo -n env DEVELOPER_DIR="$DEVELOPER_DIR" xcrun swift build --build-tests --scratch-path "${GITHUB_WORKSPACE}/.build-root"
+
+      - name: Discover root test suite
+        run: |
+          sudo -n env DEVELOPER_DIR="$DEVELOPER_DIR" xcrun swift test list --scratch-path "${GITHUB_WORKSPACE}/.build-root" > "$RUNNER_TEMP/root-list.txt"
+          count="$(grep -c "${ROOT_SUITE}/" "$RUNNER_TEMP/root-list.txt" || true)"
+          echo "discovered ${count} ${ROOT_SUITE} test(s)"
+          [ "${count:-0}" -ge 1 ] || { echo "::error::${ROOT_SUITE} not found"; cat "$RUNNER_TEMP/root-list.txt"; exit 1; }
+
+      - name: Run root test suite
+        run: sudo -n env DEVELOPER_DIR="$DEVELOPER_DIR" xcrun swift test --scratch-path "${GITHUB_WORKSPACE}/.build-root" --filter "$ROOT_SUITE"
+
+      - name: Clean up root test suite
+        if: always()
+        run: sudo -n rm -rf "${GITHUB_WORKSPACE}/.build-root" || true
+
   test_linux_kernel:
     name: Test Linux Kernel / ${{ matrix.dist-kern }}
     runs-on: ubuntu-latest
