@@ -17,7 +17,7 @@ Reach for streaming when, for example:
 - Handling output that's too large to hold in memory.
 - Providing input to the subprocess while it runs.
 
-The streaming API gives you live streams, which come with one rule:
+The streaming API gives you live streams, which come with one rule: **don't block pipes.**
 
 > Warning: A subprocess can't finish while a pipe it depends on is stuck.
 >
@@ -65,7 +65,7 @@ Because of that, the `execution` value, its streams, and the input writer are va
 ## Drain every stream, concurrently
 
 Standard output and standard error are separate pipes.
-A process writes to both, and each pipe holds only so much before a write to it blocks — on Linux, for example, about 64 KB.
+A process writes to both, and each pipe holds only so much data before a write to it blocks — on Linux, for example, about 64 KB.
 If you read one pipe to completion while never reading the other, the process eventually blocks
 writing to the pipe you ignored — so it never exits, and `run` never returns.
 This isn't a rare edge case: a command whose output fits the buffer today can cross it as that output grows, and then it hangs with no change to your code.

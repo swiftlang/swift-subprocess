@@ -9,9 +9,10 @@ Running a subprocess takes the input you provide, and you control how its output
 Depending on the command, a subprocess might produce output, error output, both, or neither.
 Subprocess lets you handle each of these cases independently.
 
-The function that launches a subprocess, `run`, comes in two forms.
-The collecting form waits for the subprocess to finish and provides the result.
-The streaming form lets you read output while the subprocess runs.
+The function that launches a subprocess, `run`, comes in two forms:
+* The *collecting* form waits for the subprocess to finish and provides the result.
+* The *streaming* form lets you read output while the subprocess runs.
+
 You choose between them depending on whether you pass a trailing closure.
 This article covers the collecting form; for streaming, see <doc:StreamingAndInput>.
 
@@ -20,8 +21,9 @@ When `run` returns, the process is complete and cleaned up.
 
 ### Run a command and read its output
 
-Import the package, identify what to run and possibly its arguments,
-specify how to collect its output, and await the result:
+To run a subprocess, import the `Subprocess` framework and call a flavor of the `run` function, identifying what to run, any arguments to use, and how to handle its output.
+You `await` this call, which means that the subprocess execution is finished when the code resumes.
+The following snippet shows an example of executing the `ls -la` command as a subprocess:
 
 ```swift
 import Subprocess
@@ -36,6 +38,8 @@ print(result.standardOutput)
 
 The preceding example uses ``run(_:arguments:environment:workingDirectory:platformOptions:input:output:error:)-(_,_,_,_,_,Input,_,_)``:
 
+Take note of the following behaviors in this example:
+
 - The `output` parameter is required.
   The example uses `.string(limit:)` to collect standard output as a string (`String`) no longer than 4096 bytes.
 - The `limit` parameter is a byte count, not a character count, and Subprocess applies it before decoding.
@@ -45,7 +49,7 @@ The preceding example uses ``run(_:arguments:environment:workingDirectory:platfo
 
 ### Name the command and its arguments
 
-The first parameter is an ``Executable`` that you can specify in one of two ways:
+The first parameter to `run` is an ``Executable`` that you can specify in one of two ways:
 
 - ``Executable/name(_:)`` — `.name("ls")` looks the command up using the `PATH`
   environment variable, the way a shell finds it.
@@ -108,10 +112,10 @@ A collecting `run` returns an ``ExecutionResult`` that carries everything the fi
 
 | Property | Type | What it holds |
 | --- | --- | --- |
-| `standardOutput` | matches your `output:` choice | the collected standard output |
-| `standardError` | matches your `error:` choice | the collected standard error |
-| `terminationStatus` | ``TerminationStatus`` | how the process ended |
-| `processIdentifier` | ``ProcessIdentifier`` | the identifier of the process that ran |
+| `standardOutput` | Matches your `output:` choice | The collected standard output |
+| `standardError` | Matches your `error:` choice | The collected standard error |
+| `terminationStatus` | ``TerminationStatus`` | How the process ended |
+| `processIdentifier` | ``ProcessIdentifier`` | The identifier of the process that ran |
 
 The types of `standardOutput` and `standardError` follow the collection method you chose for each stream:
 
