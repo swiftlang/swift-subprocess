@@ -29,14 +29,14 @@ If you're invoking a long-running command, a command that produces more output t
 
 Subprocess also handles the concerns that surround a running process:
 
-- **Graceful teardown.** When the task running a subprocess is canceled, 
+- term Graceful teardown: When the task running a subprocess is canceled, 
   Subprocess can run a configurable teardown sequence — for example, a graceful 
   shutdown followed by a forced termination — before the call returns. You 
   describe it with ``TeardownStep`` values.
-- **Platform options.** Platform-specific settings live on ``PlatformOptions``: 
+- term Platform options: Platform-specific settings live on ``PlatformOptions``: 
   user, group, and session behavior on Unix, quality of service on Darwin, and 
   console and window behavior on Windows.
-- **Foundation integration.** The `SubprocessFoundation` trait, enabled by 
+- term Foundation integration: The `SubprocessFoundation` trait, enabled by 
   default, adds `Data`-based input and output. It imports Foundation — the 
   system Foundation on Darwin, and swift-foundation's `FoundationEssentials` 
   elsewhere. Disable the trait to build without that dependency.

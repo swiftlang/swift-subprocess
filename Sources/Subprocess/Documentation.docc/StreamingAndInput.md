@@ -23,7 +23,7 @@ The streaming API gives you live streams, which come with one rule: **don't bloc
 >
 > Drain every output stream you open — concurrently, when you open more than one — and close standard input once you're done writing to it.
 
-## Stream output as it arrives
+### Stream output as it arrives
 
 To stream, pass ``SequenceOutput/sequence`` as the output with ``run(_:arguments:environment:workingDirectory:platformOptions:input:output:error:body:)``.
 
@@ -54,7 +54,7 @@ with the line separator removed.
 It recognizes the common separators, so you get text without splitting bytes yourself.
 This call opens a single output stream and drains it in the loop, while the input pipe is `.none` and the error pipe is ``OutputProtocol/discarded``, so it follows the rule to drain every output pipe.
 
-## Understand the closure scope
+### Understand the closure scope
 
 The trailing closure on `run` is how the library guarantees that the subprocess lives only
 as long as the `run` call.
@@ -62,7 +62,7 @@ The closure runs concurrently with the live subprocess: while your code reads ou
 The function `run` returns only after the body returns and the process exits.
 Because of that, the `execution` value, its streams, and the input writer are valid only inside the body.
 
-## Drain every stream, concurrently
+### Drain every stream, concurrently
 
 Standard output and standard error are separate pipes.
 A process writes to both, and each pipe holds only so much data before a write to it blocks — on Linux, for example, about 64 KB.
@@ -102,7 +102,7 @@ If you've used Python's `subprocess` and `communicate()` after a program
 hung on `wait()` with `PIPE`, this is the same kind of issue and the same shape of fix:
 consume every pipe concurrently instead of in sequence.
 
-## Provide input
+### Provide input
 
 Input has three tiers of choices; reach for the simplest one that does the job:
 
@@ -157,7 +157,7 @@ such as when you await the process's full output inside the body.
 Don't hold on to the writer past the body.
 Once the closure returns, `run` finishes it, and a later write throws a ``SubprocessError``.
 
-## Write and read at the same time
+### Write and read at the same time
 
 Some programs interleave both input and output, such as the encoding tool `base64`.
 They read some input, emit some output, and repeat.
@@ -232,7 +232,7 @@ Passing each buffer's ``SubprocessOutputSequence/Buffer/bytes`` — a `RawSpan` 
 Both subprocesses are alive at once — the outer `run` for `sort` doesn't return
 until its body does — and every pipe has a task draining it.
 
-## Use files and inherited standard I/O
+### Use files and inherited standard I/O
 
 Not every stream has to flow through your process.
 You can point the input or output of a subprocess at a file descriptor directly with
