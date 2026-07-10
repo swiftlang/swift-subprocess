@@ -39,6 +39,9 @@ import os
 #endif
 
 /// An asynchronous sequence of buffers that streams output from a subprocess.
+///
+/// - Important: This sequence is single-pass and can be iterated only once.
+///   See ``makeAsyncIterator()``.
 public struct SubprocessOutputSequence: AsyncSequence, @unchecked Sendable {
     /// The failure type for the asynchronous sequence.
     public typealias Failure = any Swift.Error
@@ -110,9 +113,12 @@ public struct SubprocessOutputSequence: AsyncSequence, @unchecked Sendable {
     }
 
     /// Creates an iterator for this asynchronous sequence.
+    ///
+    /// - Precondition: `SubprocessOutputSequence` is single-pass; creating a
+    ///   second iterator results in a fatal error.
     public func makeAsyncIterator() -> Iterator {
         guard self.state.initializedCount() == 1 else {
-            fatalError("SubprocessOutputSequence is single pass. It can only be iterated once.")
+            fatalError("SubprocessOutputSequence is single-pass. It can only be iterated once.")
         }
         return Iterator(diskIO: self.diskIO, processIdentifier: self.processIdentifier)
     }
