@@ -40,6 +40,8 @@ The preceding example uses ``run(_:arguments:environment:workingDirectory:platfo
 
 Take note of the following behaviors in this example:
 
+Take note of the following behaviors in this example:
+
 - The `output` parameter is required.
   The example uses `.string(limit:)` to collect standard output as a string (`String`) no longer than 4096 bytes.
 - The `limit` parameter is a byte count, not a character count, and Subprocess applies it before decoding.
