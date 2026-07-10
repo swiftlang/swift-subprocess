@@ -141,8 +141,6 @@ let result = try await run(
 print(result.standardOutput)   // the commit hash
 ```
 
-Because `.string(limit:)` produces a `String` rather than an optional, you use `result.standardOutput` directly, with no unwrapping.
-
 ### Detect failure
 
 Around a subprocess, the word “error” pulls in three directions.
