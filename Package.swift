@@ -9,14 +9,6 @@ var dep: [Package.Dependency] = [
         from: "1.5.0"
     )
 ]
-#if !os(Windows)
-dep.append(
-    .package(
-        url: "https://github.com/apple/swift-docc-plugin",
-        from: "1.4.5"
-    ),
-)
-#endif
 
 // Enable SubprocessFoundation by default
 let defaultTraits: Set<String> = ["SubprocessFoundation"]
