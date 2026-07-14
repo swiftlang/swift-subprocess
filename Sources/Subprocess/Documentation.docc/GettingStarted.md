@@ -148,7 +148,7 @@ Keeping them apart is the difference between handling a real problem and misread
 Throughout the Subprocess documentation:
 
 - A **Swift error** is a value thrown out of `run` that you handle with `do`/`catch`. Subprocess reserves this for problems it can't express as a result: a broken setup or environment, or a body closure of your own that throws.
-- A **command failure** is a subprocess that ran to completion but exited with a non-zero code. This is reported by the ``terminationStatus`` of the ``ExecutionResult``, not a Swift error.
+- A **command failure** is a subprocess that ran to completion but exited with a non-zero code. This is reported by the ``ExecutionResult/terminationStatus`` of the ``ExecutionResult``, not a Swift error.
 - **Standard error output** is bytes the command wrote to its standard error stream. Many programs write progress or diagnostics there while succeeding, so it's ordinary output you collect through the `error:` parameter — not a signal that anything went wrong.
 
 `run` doesn't throw a Swift error when a command exits with a non-zero code.
