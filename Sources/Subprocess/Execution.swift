@@ -94,7 +94,7 @@ extension Execution where Error == SequenceOutput {
 }
 
 extension Execution {
-    @available(*, unavailable, message: "this property requires that the input is .standardInput")
+    @available(*, unavailable, message: "this property requires that the input is .inputWriter")
     public var standardInputWriter: StandardInputWriter {
         fatalError()
     }
