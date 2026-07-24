@@ -8,7 +8,7 @@ the one rule that keeps pipes from deadlocking.
 The function that launches a subprocess, `run`, comes in two forms.
 The collecting form waits for the subprocess to exit and hands you all its output at once.
 The streaming form takes a trailing closure so you can process output while the subprocess runs.
-You choose between them depending on whether you pass that closure.
+You choose whether you stream or collect results by passing the appropriate options to the `output` and `error` parameters.
 This article covers the streaming form; for collecting, see <doc:GettingStarted>.
 
 Reach for streaming when, for example:
@@ -241,19 +241,14 @@ You can point the input or output of a subprocess at a file descriptor directly 
 which is efficient for large amounts of data.
 When you use a file descriptor, the bytes never pass through your code.
 
-You can also let the subprocess share your process's own terminal. For input,
-that's `.standardInput`; for output and error, it's `.currentStandardOutput` and
-`.currentStandardError`:
+You can also let the subprocess share your process's own terminal, for example:
 
 ```swift
 _ = try await run(
     .name("less"),
     arguments: ["Package.swift"],
-    input: .standardInput,
+    input: .currentStandardInput,
     output: .currentStandardOutput,
     error: .currentStandardError
 )
 ```
-
-Note the naming: input inherits with `.standardInput`, while output and error
-inherit with the `current`-prefixed names.

@@ -13,7 +13,7 @@ The function that launches a subprocess, `run`, comes in two forms:
 * The *collecting* form waits for the subprocess to finish and provides the result.
 * The *streaming* form lets you read output while the subprocess runs.
 
-You choose between them depending on whether you pass a trailing closure.
+You choose whether you stream or collect results by passing the appropriate options to the `output` and `error` parameters.
 This article covers the collecting form; for streaming, see <doc:StreamingAndInput>.
 
 Subprocess encloses the lifetime of the process you run within the `run` call.
@@ -37,8 +37,6 @@ print(result.standardOutput)
 ```
 
 The preceding example uses ``run(_:arguments:environment:workingDirectory:platformOptions:input:output:error:)-(_,_,_,_,_,Input,_,_)``:
-
-Take note of the following behaviors in this example:
 
 Take note of the following behaviors in this example:
 
