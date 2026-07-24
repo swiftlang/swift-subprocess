@@ -107,7 +107,9 @@ public struct FileDescriptorOutput: OutputProtocol, ErrorOutputProtocol {
     }
 }
 
-/// An output type that collects the subprocess's output as decoded text using the encoding you provide.
+/// An output type that collects the subprocess's output as a string.
+///
+/// Specify the encoding to use when decoding the output; the default is UTF-8.
 public struct StringOutput<Encoding: Unicode.Encoding>: OutputProtocol, ErrorOutputProtocol {
     public typealias OutputType = String
     public let maxSize: Int
@@ -179,8 +181,8 @@ public struct BytesOutput: OutputProtocol, ErrorOutputProtocol {
     }
 }
 
-/// An output type that streams the subprocess's output through the body
-/// closure as an asynchronous sequence of buffers.
+/// An output type that streams the subprocess's output as an asynchronous
+/// sequence of buffers.
 ///
 /// Use ``OutputProtocol/sequence`` to create a value of this type when you
 /// call a `run` function that takes a body closure. The closure reads the
@@ -233,7 +235,7 @@ extension OutputProtocol where Self == FileDescriptorOutput {
 extension OutputProtocol where Self == StringOutput<UTF8> {
     /// Creates a subprocess output that collects output as a UTF-8 string.
     ///
-    /// The subprocess throws an error if the process
+    /// `run` throws a ``SubprocessError`` if the process
     /// produces more bytes than `limit`.
     public static func string(limit: Int) -> Self {
         return .init(limit: limit, encoding: UTF8.self)
@@ -244,7 +246,7 @@ extension OutputProtocol {
     /// Creates a subprocess output that collects output as
     /// a string using the encoding you provide, up to `limit` bytes.
     ///
-    /// The subprocess throws an error if the process
+    /// `run` throws a ``SubprocessError`` if the process
     /// produces more bytes than `limit`.
     public static func string<Encoding: Unicode.Encoding>(
         limit: Int,
@@ -258,7 +260,7 @@ extension OutputProtocol where Self == BytesOutput {
     /// Creates a subprocess output that collects output as bytes,
     /// up to `limit` bytes.
     ///
-    /// The subprocess throws an error if the process
+    /// `run` throws a ``SubprocessError`` if the process
     /// produces more bytes than `limit`.
     public static func bytes(limit: Int) -> Self {
         return .init(limit: limit)

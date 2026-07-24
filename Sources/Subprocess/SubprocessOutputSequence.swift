@@ -521,7 +521,7 @@ extension SubprocessOutputSequence.StringSequence {
         case unbounded
         /// Imposes a maximum line length limit.
         ///
-        /// The subprocess throws an error if a line exceeds this limit.
+        /// Iterating the output throws a ``SubprocessError`` if a line exceeds this limit.
         case maxLineLength(Int)
     }
 

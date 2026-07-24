@@ -147,7 +147,7 @@ public struct StringInput<
     }
 }
 
-/// An input type that reads from a `[UInt8]` array.
+/// An input type that reads from an array of bytes.
 public struct ArrayInput: InputProtocol {
     private let array: [UInt8]
 
@@ -161,11 +161,11 @@ public struct ArrayInput: InputProtocol {
 }
 
 /// An input type that lets the body closure write to the subprocess's
-/// standard input through ``Execution/standardInputWriter``.
+/// standard input while the process runs.
 ///
-/// Use ``InputProtocol/inputWriter`` to create a value of this type when you
-/// call a `run` function that takes a body closure. The closure writes the
-/// input through ``Execution/standardInputWriter`` and calls
+/// Create a value of this type with ``InputProtocol/inputWriter``, then pass it
+/// to a `run` function that takes a body closure. Inside the closure, write your
+/// input through ``Execution/standardInputWriter`` and call
 /// ``StandardInputWriter/finish()`` to signal end-of-file.
 public struct CustomWriteInput: InputProtocol {
     /// Writes no input to the subprocess.
