@@ -1130,7 +1130,7 @@ extension SubprocessUnixTests {
         let result = try await Subprocess.run(
             .path("/bin/cat"),
             arguments: [],
-            input: .standardInput,
+            input: .currentStandardInput,
             output: .string(limit: 256),
             error: .discarded
         )

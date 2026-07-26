@@ -206,7 +206,7 @@ extension InputProtocol where Self == FileDescriptorInput {
     /// Creates a subprocess input that reads from the current process's standard input.
     ///
     /// The file descriptor isn't closed afterward.
-    public static var standardInput: Self {
+    public static var currentStandardInput: Self {
         return Self.fileDescriptor(
             .standardInput,
             closeAfterSpawningProcess: false

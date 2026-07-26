@@ -229,7 +229,7 @@ For the collected-result API, you must specify how to capture standard output.
 | --- | --- |
 | `.none` | No input (default) |
 | `.fileDescriptor(_:closeAfterSpawningProcess:)` | Read from a file descriptor |
-| `.standardInput` | Read from the parent process's standard input |
+| `.currentStandardInput` | Read from the parent process's standard input |
 | `.string(_:)` or `.string(_:using:)` | Read from a string with optional encoding |
 | `.array(_:)` | Read from a `[UInt8]` array |
 | `Span<BitwiseCopyable>` | Read from a span (passed directly as the `input` parameter) |
