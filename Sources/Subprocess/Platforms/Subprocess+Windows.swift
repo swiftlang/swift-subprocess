@@ -230,6 +230,18 @@ extension Configuration {
                     continue
                 }
 
+                // `CreateProcessW` reports ERROR_ACCESS_DENIED when the path
+                // names a directory, so a directory sharing the executable's
+                // name would otherwise fail the spawn outright instead of
+                // falling through to the remaining candidates. A directory is
+                // never runnable, so treat it as a miss. Genuine permission
+                // failures on a real file still throw below.
+                if windowsError == DWORD(ERROR_ACCESS_DENIED),
+                    Configuration.isDirectory(executablePath)
+                {
+                    continue
+                }
+
                 try self.safelyCloseMultiple(
                     inputRead: inputReadFileDescriptor,
                     inputWrite: inputWriteFileDescriptor,
@@ -695,45 +707,79 @@ extension Executable {
     internal func resolveExecutablePath(withPathValue pathValue: String?) throws(SubprocessError) -> String {
         switch self.storage {
         case .executable(let executableName):
-            return try executableName._withCString(
-                encodedAs: UTF16.self
-            ) { exeName throws(SubprocessError) -> String in
-                return try pathValue.withOptionalCString(
-                    encodedAs: UTF16.self
-                ) { path throws(SubprocessError) -> String in
-                    let pathLength = SearchPathW(
-                        path,
-                        exeName,
-                        nil,
-                        0,
-                        nil,
-                        nil
-                    )
-                    guard pathLength > 0 else {
-                        throw SubprocessError.executableNotFound(
-                            executableName,
-                            underlyingError: SubprocessError.WindowsError(win32Error: GetLastError())
-                        )
-                    }
-                    return withUnsafeTemporaryAllocation(
-                        of: WCHAR.self,
-                        capacity: Int(pathLength) + 1
-                    ) {
-                        _ = SearchPathW(
-                            path,
-                            exeName,
-                            nil,
-                            pathLength + 1,
-                            $0.baseAddress,
-                            nil
-                        )
-                        return String(decodingCString: $0.baseAddress!, as: UTF16.self)
-                    }
+            let (searchResult, searchError) = try Self.searchPath(
+                for: executableName,
+                withPathValue: pathValue
+            )
+            if let searchResult {
+                if Configuration.executableAccessible(searchResult) {
+                    return searchResult
+                }
+                // `SearchPathW` matches directories as well as files, and it
+                // stops at its first match with no way to resume, so a
+                // directory named like the executable hides every later
+                // candidate. A directory is never runnable; continue the
+                // search over the candidate paths, which replicate the same
+                // search order, and take the first one that is a real file.
+                let firstAccessibleExecutable = possibleExecutablePaths(withPathValue: pathValue)
+                    .first { Configuration.executableAccessible($0) }
+                if let firstAccessibleExecutable {
+                    return firstAccessibleExecutable
                 }
             }
+            throw SubprocessError.executableNotFound(
+                executableName,
+                underlyingError: SubprocessError.WindowsError(win32Error: searchError)
+            )
         case .path(let executablePath):
             // Use path directly
             return executablePath.string
+        }
+    }
+
+    /// Runs `SearchPathW` for `executableName`, returning the path it matched
+    /// and, when it matched nothing, the reason it reported.
+    ///
+    /// The `withCString` helpers this uses carry a typed `throws`, so this is
+    /// declared throwing even though `SearchPathW` itself reports failure in
+    /// its return value rather than by throwing.
+    private static func searchPath(
+        for executableName: String,
+        withPathValue pathValue: String?
+    ) throws(SubprocessError) -> (path: String?, error: DWORD) {
+        return try executableName._withCString(
+            encodedAs: UTF16.self
+        ) { exeName throws(SubprocessError) -> (String?, DWORD) in
+            return try pathValue.withOptionalCString(
+                encodedAs: UTF16.self
+            ) { path throws(SubprocessError) -> (String?, DWORD) in
+                let pathLength = SearchPathW(
+                    path,
+                    exeName,
+                    nil,
+                    0,
+                    nil,
+                    nil
+                )
+                guard pathLength > 0 else {
+                    return (nil, GetLastError())
+                }
+                let resolved = withUnsafeTemporaryAllocation(
+                    of: WCHAR.self,
+                    capacity: Int(pathLength) + 1
+                ) {
+                    _ = SearchPathW(
+                        path,
+                        exeName,
+                        nil,
+                        pathLength + 1,
+                        $0.baseAddress,
+                        nil
+                    )
+                    return String(decodingCString: $0.baseAddress!, as: UTF16.self)
+                }
+                return (resolved, DWORD(ERROR_FILE_NOT_FOUND))
+            }
         }
     }
 
@@ -1535,10 +1581,26 @@ extension Configuration {
         return quoted
     }
 
-    private static func pathAccessible(_ path: String) -> Bool {
+    /// Returns whether `path` names something this process can execute: it must
+    /// exist, and it must not be a directory.
+    ///
+    /// Existence alone is not enough. Both `SearchPathW` and the
+    /// `CreateProcessW` candidate loop otherwise accept a directory whose name
+    /// matches the executable, and a directory can never be run.
+    internal static func executableAccessible(_ path: String) -> Bool {
         return path.withCString(encodedAs: UTF16.self) {
             let attrs = GetFileAttributesW($0)
             return attrs != INVALID_FILE_ATTRIBUTES
+                && (attrs & DWORD(FILE_ATTRIBUTE_DIRECTORY)) == 0
+        }
+    }
+
+    /// Returns whether `path` exists and is a directory.
+    internal static func isDirectory(_ path: String) -> Bool {
+        return path.withCString(encodedAs: UTF16.self) {
+            let attrs = GetFileAttributesW($0)
+            return attrs != INVALID_FILE_ATTRIBUTES
+                && (attrs & DWORD(FILE_ATTRIBUTE_DIRECTORY)) != 0
         }
     }
 }
