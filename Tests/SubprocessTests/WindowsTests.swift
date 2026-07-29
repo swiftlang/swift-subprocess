@@ -693,6 +693,45 @@ extension SubprocessWindowsTests {
         }
     }
 
+    /// Reparse points must be classified by what they point at, not rejected
+    /// outright: `GetFileAttributesW` reports `REPARSE_POINT` alone for a file
+    /// symlink but `DIRECTORY|REPARSE_POINT` for a directory symlink or
+    /// junction. So a symlink to an executable still resolves, while one
+    /// pointing at a directory is skipped like any other directory.
+    @Test(.requiresSymbolicLinkPrivilege)
+    func testNameResolutionClassifiesSymlinksByTarget() async throws {
+        try await Self.withExecutableSearchFixture { shadowDirectory, binDirectory, name in
+            let target = binDirectory.appendingPathComponent("target-\(UUID().uuidString).exe")
+            try Self.copyCmdExe(to: target)
+            let targetDirectory = shadowDirectory.appendingPathComponent("target-directory")
+            try FileManager.default.createDirectory(
+                at: targetDirectory, withIntermediateDirectories: true
+            )
+            try FileManager.default.createSymbolicLink(
+                at: shadowDirectory.appendingPathComponent(name),
+                withDestinationURL: targetDirectory
+            )
+            try FileManager.default.createSymbolicLink(
+                at: binDirectory.appendingPathComponent(name),
+                withDestinationURL: target
+            )
+
+            let resolved = try await Executable.name(name).resolveExecutablePath(
+                in: .inherit.updating([
+                    "PATH": "\(shadowDirectory._fileSystemPath);\(binDirectory._fileSystemPath)"
+                ])
+            )
+            // The directory symlink was skipped; the symlink to the executable
+            // resolved without being followed to its target.
+            #expect(
+                Self.isSamePath(
+                    resolved.string,
+                    binDirectory.appendingPathComponent(name)._fileSystemPath
+                )
+            )
+        }
+    }
+
     /// Compares two Windows paths, which may mix `/` and `\` separators and
     /// differ in case.
     private static func isSamePath(_ lhs: String, _ rhs: String) -> Bool {
@@ -1036,6 +1075,40 @@ extension SubprocessWindowsTests {
             }
             state.finishOnce()
         }
+    }
+}
+
+extension Trait where Self == ConditionTrait {
+    /// Creating a symbolic link on Windows requires
+    /// `SeCreateSymbolicLinkPrivilege`, which an unelevated process only holds
+    /// when Developer Mode is enabled.
+    static var requiresSymbolicLinkPrivilege: Self {
+        enabled(
+            "This test requires the privilege to create symbolic links (enable Developer Mode)",
+            {
+                let directory = URL.temporaryDirectory
+                    .appendingPathComponent("symlink-probe-\(UUID().uuidString)")
+                guard
+                    let _ = try? FileManager.default.createDirectory(
+                        at: directory,
+                        withIntermediateDirectories: true
+                    )
+                else {
+                    return false
+                }
+                defer { try? FileManager.default.removeItem(at: directory) }
+                let link = directory.appendingPathComponent("link")
+                do {
+                    try FileManager.default.createSymbolicLink(
+                        at: link,
+                        withDestinationURL: directory
+                    )
+                    return true
+                } catch {
+                    return false
+                }
+            }
+        )
     }
 }
 

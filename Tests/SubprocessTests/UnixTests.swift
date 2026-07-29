@@ -475,6 +475,97 @@ extension SubprocessUnixTests {
         }
     }
 
+    /// Only a *regular* file can be executed. A FIFO with the execute bit set
+    /// satisfies `access(_, X_OK)` and is not a directory, yet `execve` rejects
+    /// it with `EACCES`, so it must not shadow the real executable either.
+    @Test func testNameResolutionSkipsNonRegularFile() async throws {
+        try await withExecutableSearchFixture { fixture in
+            let shadowDirectory = fixture.appendingPathComponent("shadow")
+            let binDirectory = fixture.appendingPathComponent("bin")
+            try FileManager.default.createDirectory(
+                at: shadowDirectory, withIntermediateDirectories: true
+            )
+            try FileManager.default.createDirectory(
+                at: binDirectory, withIntermediateDirectories: true
+            )
+            let name = "test-executable-\(UUID().uuidString)"
+            let fifo = shadowDirectory.appendingPathComponent(name)
+            try #require(fifo._fileSystemPath.withCString { mkfifo($0, 0o755) } == 0)
+            // `mkfifo` honors the umask, so set the execute bits explicitly.
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: fifo._fileSystemPath
+            )
+            let executable = binDirectory.appendingPathComponent(name)
+            try Self.writeExecutableScript(at: executable, echoing: "REAL")
+
+            let resolved = try await Executable.name(name).resolveExecutablePath(
+                in: .inherit.updating([
+                    "PATH": "\(shadowDirectory._fileSystemPath):\(binDirectory._fileSystemPath)"
+                ])
+            )
+            #expect(resolved.string == executable._fileSystemPath)
+        }
+    }
+
+    /// Symlinks are resolved, not rejected: the check follows the link with
+    /// `stat` rather than inspecting the link itself, so a symlink to an
+    /// executable on `PATH` still resolves and runs.
+    @Test func testNameResolutionFollowsSymlinkToExecutable() async throws {
+        try await withExecutableSearchFixture { fixture in
+            let binDirectory = fixture.appendingPathComponent("bin")
+            try FileManager.default.createDirectory(
+                at: binDirectory, withIntermediateDirectories: true
+            )
+            let target = fixture.appendingPathComponent("target-\(UUID().uuidString)")
+            try Self.writeExecutableScript(at: target, echoing: "LINKED")
+            let name = "test-executable-\(UUID().uuidString)"
+            let link = binDirectory.appendingPathComponent(name)
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+
+            let environment = Environment.inherit.updating([
+                "PATH": binDirectory._fileSystemPath
+            ])
+            let resolved = try await Executable.name(name).resolveExecutablePath(in: environment)
+            #expect(resolved.string == link._fileSystemPath)
+
+            let result = try await Subprocess.run(
+                .name(name),
+                environment: environment,
+                output: .string(limit: 16)
+            )
+            #expect(result.standardOutput.trimmingNewLineAndQuotes() == "LINKED")
+        }
+    }
+
+    /// A symlink that points at a *directory* is still a directory, and must be
+    /// skipped like any other.
+    @Test func testNameResolutionSkipsSymlinkToDirectory() async throws {
+        try await withExecutableSearchFixture { fixture in
+            let shadowDirectory = fixture.appendingPathComponent("shadow")
+            let binDirectory = fixture.appendingPathComponent("bin")
+            let target = fixture.appendingPathComponent("target-directory")
+            for directory in [shadowDirectory, binDirectory, target] {
+                try FileManager.default.createDirectory(
+                    at: directory, withIntermediateDirectories: true
+                )
+            }
+            let name = "test-executable-\(UUID().uuidString)"
+            try FileManager.default.createSymbolicLink(
+                at: shadowDirectory.appendingPathComponent(name),
+                withDestinationURL: target
+            )
+            let executable = binDirectory.appendingPathComponent(name)
+            try Self.writeExecutableScript(at: executable, echoing: "REAL")
+
+            let resolved = try await Executable.name(name).resolveExecutablePath(
+                in: .inherit.updating([
+                    "PATH": "\(shadowDirectory._fileSystemPath):\(binDirectory._fileSystemPath)"
+                ])
+            )
+            #expect(resolved.string == executable._fileSystemPath)
+        }
+    }
+
     // MARK: Fixture helpers
 
     /// Creates a unique temporary directory, passes it to `body`, and removes
