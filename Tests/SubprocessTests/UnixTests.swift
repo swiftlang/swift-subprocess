@@ -478,7 +478,8 @@ extension SubprocessUnixTests {
     /// Only a *regular* file can be executed. A FIFO with the execute bit set
     /// satisfies `access(_, X_OK)` and is not a directory, yet `execve` rejects
     /// it with `EACCES`, so it must not shadow the real executable either.
-    @Test func testNameResolutionSkipsNonRegularFile() async throws {
+    @Test(.requiresFIFOCreation)
+    func testNameResolutionSkipsNonRegularFile() async throws {
         try await withExecutableSearchFixture { fixture in
             let shadowDirectory = fixture.appendingPathComponent("shadow")
             let binDirectory = fixture.appendingPathComponent("bin")
@@ -490,7 +491,8 @@ extension SubprocessUnixTests {
             )
             let name = "test-executable-\(UUID().uuidString)"
             let fifo = shadowDirectory.appendingPathComponent(name)
-            try #require(fifo._fileSystemPath.withCString { mkfifo($0, 0o755) } == 0)
+            let result = fifo._fileSystemPath.withCString { mkfifo($0, 0o755) }
+            try #require(result == 0, "mkfifo failed: \(Errno(rawValue: errno))")
             // `mkfifo` honors the umask, so set the execute bits explicitly.
             try FileManager.default.setAttributes(
                 [.posixPermissions: 0o755], ofItemAtPath: fifo._fileSystemPath
@@ -1387,6 +1389,26 @@ extension SubprocessUnixTests {
 
         #expect(result.terminationStatus.isSuccess)
         #expect(result.standardOutput.trimmingNewLineAndQuotes() == payload)
+    }
+}
+
+extension Trait where Self == ConditionTrait {
+    /// Creating a FIFO is not permitted everywhere: on Android `mkfifo` fails
+    /// in the temporary directory, and a sandbox can deny it anywhere.
+    static var requiresFIFOCreation: Self {
+        enabled(
+            "This test requires creating a FIFO in the temporary directory",
+            {
+                let path = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("fifo-probe-\(UUID().uuidString)")
+                    ._fileSystemPath
+                guard path.withCString({ mkfifo($0, 0o600) }) == 0 else {
+                    return false
+                }
+                try? FileManager.default.removeItem(atPath: path)
+                return true
+            }
+        )
     }
 }
 
