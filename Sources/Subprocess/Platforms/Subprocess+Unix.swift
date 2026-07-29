@@ -371,11 +371,11 @@ extension Executable {
         switch self.storage {
         case .executable(let executableName):
             // If the executableName in is already a full path, return it directly
-            if Configuration.pathAccessible(executableName, mode: X_OK) {
+            if Configuration.executableAccessible(executableName) {
                 return executableName
             }
             let firstAccessibleExecutable = possibleExecutablePaths(withPathValue: pathValue)
-                .first { Configuration.pathAccessible($0, mode: X_OK) }
+                .first { Configuration.executableAccessible($0) }
             if let firstAccessibleExecutable {
                 return firstAccessibleExecutable
             }
@@ -467,6 +467,22 @@ extension Configuration {
         return path.withCString {
             return access($0, mode) == 0
         }
+    }
+
+    /// Returns whether `path` refers to a regular file this process may execute.
+    ///
+    /// `access(_:X_OK)` alone is not enough: on a directory the execute bit
+    /// means "searchable", so a directory would otherwise be reported as a
+    /// runnable executable.
+    internal static func executableAccessible(_ path: String) -> Bool {
+        guard Self.pathAccessible(path, mode: X_OK) else {
+            return false
+        }
+        var status = stat()
+        guard path.withCString({ stat($0, &status) == 0 }) else {
+            return false
+        }
+        return (status.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG)
     }
 }
 

@@ -387,6 +387,210 @@ extension SubprocessUnixTests {
                 "/usr/local/bin/test-bin",
             ])
     }
+
+    /// A `PATH` entry that contains a *directory* whose name matches the
+    /// executable must be skipped: the execute bit on a directory only means
+    /// "searchable", not "runnable".
+    @Test func testNameResolutionSkipsDirectoryInPathEntry() async throws {
+        try await withExecutableSearchFixture { fixture in
+            let shadowDirectory = fixture.appendingPathComponent("shadow")
+            let binDirectory = fixture.appendingPathComponent("bin")
+            try FileManager.default.createDirectory(
+                at: shadowDirectory, withIntermediateDirectories: true
+            )
+            try FileManager.default.createDirectory(
+                at: binDirectory, withIntermediateDirectories: true
+            )
+            let name = "test-executable-\(UUID().uuidString)"
+            // A directory that shares the executable's name, earlier on PATH
+            try FileManager.default.createDirectory(
+                at: shadowDirectory.appendingPathComponent(name),
+                withIntermediateDirectories: true
+            )
+            let executable = binDirectory.appendingPathComponent(name)
+            try Self.writeExecutableScript(at: executable, echoing: "REAL")
+
+            let environment = Environment.inherit.updating([
+                "PATH": "\(shadowDirectory._fileSystemPath):\(binDirectory._fileSystemPath)"
+            ])
+
+            // Eager resolution
+            let resolved = try await Executable.name(name).resolveExecutablePath(in: environment)
+            #expect(resolved.string == executable._fileSystemPath)
+
+            // Spawn-time resolution
+            let result = try await Subprocess.run(
+                .name(name),
+                environment: environment,
+                output: .string(limit: 16)
+            )
+            #expect(result.terminationStatus.isSuccess)
+            #expect(result.standardOutput.trimmingNewLineAndQuotes() == "REAL")
+        }
+    }
+
+    /// A name that is itself the path of a directory must not resolve to that
+    /// directory, even though the directory is "executable" to `access(X_OK)`.
+    @Test func testNameThatIsADirectoryPathIsNotResolved() async throws {
+        try await withExecutableSearchFixture { fixture in
+            let directory = fixture.appendingPathComponent("test-executable-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+            await #expect(throws: SubprocessError.self) {
+                _ = try await Executable.name(directory._fileSystemPath)
+                    .resolveExecutablePath(in: .inherit)
+            }
+        }
+    }
+
+    /// The regular-file requirement must not weaken the permission check: a
+    /// non-executable file that shares the name is still skipped.
+    @Test func testNameResolutionSkipsNonExecutableRegularFile() async throws {
+        try await withExecutableSearchFixture { fixture in
+            let shadowDirectory = fixture.appendingPathComponent("shadow")
+            let binDirectory = fixture.appendingPathComponent("bin")
+            try FileManager.default.createDirectory(
+                at: shadowDirectory, withIntermediateDirectories: true
+            )
+            try FileManager.default.createDirectory(
+                at: binDirectory, withIntermediateDirectories: true
+            )
+            let name = "test-executable-\(UUID().uuidString)"
+            // A regular file that shares the executable's name but is not
+            // executable, earlier on PATH
+            let shadow = shadowDirectory.appendingPathComponent(name)
+            try Data("not executable".utf8).write(to: shadow)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o644], ofItemAtPath: shadow._fileSystemPath
+            )
+            let executable = binDirectory.appendingPathComponent(name)
+            try Self.writeExecutableScript(at: executable, echoing: "REAL")
+
+            let resolved = try await Executable.name(name).resolveExecutablePath(
+                in: .inherit.updating([
+                    "PATH": "\(shadowDirectory._fileSystemPath):\(binDirectory._fileSystemPath)"
+                ])
+            )
+            #expect(resolved.string == executable._fileSystemPath)
+        }
+    }
+
+    /// Only a *regular* file can be executed. A FIFO with the execute bit set
+    /// satisfies `access(_, X_OK)` and is not a directory, yet `execve` rejects
+    /// it with `EACCES`, so it must not shadow the real executable either.
+    @Test(.requiresFIFOCreation)
+    func testNameResolutionSkipsNonRegularFile() async throws {
+        try await withExecutableSearchFixture { fixture in
+            let shadowDirectory = fixture.appendingPathComponent("shadow")
+            let binDirectory = fixture.appendingPathComponent("bin")
+            try FileManager.default.createDirectory(
+                at: shadowDirectory, withIntermediateDirectories: true
+            )
+            try FileManager.default.createDirectory(
+                at: binDirectory, withIntermediateDirectories: true
+            )
+            let name = "test-executable-\(UUID().uuidString)"
+            let fifo = shadowDirectory.appendingPathComponent(name)
+            let result = fifo._fileSystemPath.withCString { mkfifo($0, 0o755) }
+            try #require(result == 0, "mkfifo failed: \(Errno(rawValue: errno))")
+            // `mkfifo` honors the umask, so set the execute bits explicitly.
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: fifo._fileSystemPath
+            )
+            let executable = binDirectory.appendingPathComponent(name)
+            try Self.writeExecutableScript(at: executable, echoing: "REAL")
+
+            let resolved = try await Executable.name(name).resolveExecutablePath(
+                in: .inherit.updating([
+                    "PATH": "\(shadowDirectory._fileSystemPath):\(binDirectory._fileSystemPath)"
+                ])
+            )
+            #expect(resolved.string == executable._fileSystemPath)
+        }
+    }
+
+    /// Symlinks are resolved, not rejected: the check follows the link with
+    /// `stat` rather than inspecting the link itself, so a symlink to an
+    /// executable on `PATH` still resolves and runs.
+    @Test func testNameResolutionFollowsSymlinkToExecutable() async throws {
+        try await withExecutableSearchFixture { fixture in
+            let binDirectory = fixture.appendingPathComponent("bin")
+            try FileManager.default.createDirectory(
+                at: binDirectory, withIntermediateDirectories: true
+            )
+            let target = fixture.appendingPathComponent("target-\(UUID().uuidString)")
+            try Self.writeExecutableScript(at: target, echoing: "LINKED")
+            let name = "test-executable-\(UUID().uuidString)"
+            let link = binDirectory.appendingPathComponent(name)
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+
+            let environment = Environment.inherit.updating([
+                "PATH": binDirectory._fileSystemPath
+            ])
+            let resolved = try await Executable.name(name).resolveExecutablePath(in: environment)
+            #expect(resolved.string == link._fileSystemPath)
+
+            let result = try await Subprocess.run(
+                .name(name),
+                environment: environment,
+                output: .string(limit: 16)
+            )
+            #expect(result.standardOutput.trimmingNewLineAndQuotes() == "LINKED")
+        }
+    }
+
+    /// A symlink that points at a *directory* is still a directory, and must be
+    /// skipped like any other.
+    @Test func testNameResolutionSkipsSymlinkToDirectory() async throws {
+        try await withExecutableSearchFixture { fixture in
+            let shadowDirectory = fixture.appendingPathComponent("shadow")
+            let binDirectory = fixture.appendingPathComponent("bin")
+            let target = fixture.appendingPathComponent("target-directory")
+            for directory in [shadowDirectory, binDirectory, target] {
+                try FileManager.default.createDirectory(
+                    at: directory, withIntermediateDirectories: true
+                )
+            }
+            let name = "test-executable-\(UUID().uuidString)"
+            try FileManager.default.createSymbolicLink(
+                at: shadowDirectory.appendingPathComponent(name),
+                withDestinationURL: target
+            )
+            let executable = binDirectory.appendingPathComponent(name)
+            try Self.writeExecutableScript(at: executable, echoing: "REAL")
+
+            let resolved = try await Executable.name(name).resolveExecutablePath(
+                in: .inherit.updating([
+                    "PATH": "\(shadowDirectory._fileSystemPath):\(binDirectory._fileSystemPath)"
+                ])
+            )
+            #expect(resolved.string == executable._fileSystemPath)
+        }
+    }
+
+    // MARK: Fixture helpers
+
+    /// Creates a unique temporary directory, passes it to `body`, and removes
+    /// it afterwards.
+    private func withExecutableSearchFixture(
+        _ body: (URL) async throws -> Void
+    ) async throws {
+        let fixture = FileManager.default.temporaryDirectory
+            .appendingPathComponent("executable-search-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: fixture, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        try await body(fixture)
+    }
+
+    private static func writeExecutableScript(at url: URL, echoing marker: String) throws {
+        try """
+        #!/bin/sh
+        echo "\(marker)"
+        """.write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: url._fileSystemPath
+        )
+    }
 }
 
 // MARK: - Misc
@@ -1185,6 +1389,26 @@ extension SubprocessUnixTests {
 
         #expect(result.terminationStatus.isSuccess)
         #expect(result.standardOutput.trimmingNewLineAndQuotes() == payload)
+    }
+}
+
+extension Trait where Self == ConditionTrait {
+    /// Creating a FIFO is not permitted everywhere: on Android `mkfifo` fails
+    /// in the temporary directory, and a sandbox can deny it anywhere.
+    static var requiresFIFOCreation: Self {
+        enabled(
+            "This test requires creating a FIFO in the temporary directory",
+            {
+                let path = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("fifo-probe-\(UUID().uuidString)")
+                    ._fileSystemPath
+                guard path.withCString({ mkfifo($0, 0o600) }) == 0 else {
+                    return false
+                }
+                try? FileManager.default.removeItem(atPath: path)
+                return true
+            }
+        )
     }
 }
 

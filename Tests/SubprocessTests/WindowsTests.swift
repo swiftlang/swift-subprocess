@@ -627,6 +627,151 @@ extension SubprocessWindowsTests {
     }
 }
 
+// MARK: - Executable Resolution
+extension SubprocessWindowsTests {
+    /// A `PATH` entry that contains a *directory* whose name matches the
+    /// executable must be skipped. `GetFileAttributesW` succeeds for a
+    /// directory and `SearchPathW` happily matches one, so the real executable
+    /// later on `PATH` would otherwise be shadowed.
+    @Test func testNameResolutionSkipsDirectoryInPathEntry() async throws {
+        try await Self.withExecutableSearchFixture { shadowDirectory, binDirectory, name in
+            // A directory that shares the executable's name, earlier on PATH
+            try FileManager.default.createDirectory(
+                at: shadowDirectory.appendingPathComponent(name),
+                withIntermediateDirectories: true
+            )
+            let executable = binDirectory.appendingPathComponent(name)
+            try Self.copyCmdExe(to: executable)
+
+            let resolved = try await Executable.name(name).resolveExecutablePath(
+                in: .inherit.updating([
+                    "PATH": "\(shadowDirectory._fileSystemPath);\(binDirectory._fileSystemPath)"
+                ])
+            )
+            #expect(Self.isSamePath(resolved.string, executable._fileSystemPath))
+        }
+    }
+
+    /// A name that is itself the path of a directory must not resolve to that
+    /// directory.
+    @Test func testNameThatIsADirectoryPathIsNotResolved() async throws {
+        try await Self.withExecutableSearchFixture { shadowDirectory, _, name in
+            let directory = shadowDirectory.appendingPathComponent(name)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+            await #expect(throws: SubprocessError.self) {
+                _ = try await Executable.name(directory._fileSystemPath)
+                    .resolveExecutablePath(in: .inherit)
+            }
+        }
+    }
+
+    /// The spawn-time candidate loop is only used when argument 0 is
+    /// overridden. `CreateProcessW` fails with ERROR_ACCESS_DENIED on a
+    /// directory, which must not abort the spawn while real candidates remain.
+    @Test func testSpawnSkipsDirectoryCandidateWithArgumentZeroOverride() async throws {
+        try await Self.withExecutableSearchFixture { shadowDirectory, binDirectory, name in
+            try FileManager.default.createDirectory(
+                at: shadowDirectory.appendingPathComponent(name),
+                withIntermediateDirectories: true
+            )
+            try Self.copyCmdExe(to: binDirectory.appendingPathComponent(name))
+
+            let result = try await Subprocess.run(
+                .name(name),
+                arguments: .init(
+                    executablePathOverride: name,
+                    remainingValues: ["/c", "echo REAL"]
+                ),
+                environment: .inherit.updating([
+                    "PATH": "\(shadowDirectory._fileSystemPath);\(binDirectory._fileSystemPath)"
+                ]),
+                output: .string(limit: 32)
+            )
+            #expect(result.terminationStatus.isSuccess)
+            #expect(result.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines) == "REAL")
+        }
+    }
+
+    /// Reparse points must be classified by what they point at, not rejected
+    /// outright: `GetFileAttributesW` reports `REPARSE_POINT` alone for a file
+    /// symlink but `DIRECTORY|REPARSE_POINT` for a directory symlink or
+    /// junction. So a symlink to an executable still resolves, while one
+    /// pointing at a directory is skipped like any other directory.
+    @Test(.requiresSymbolicLinkPrivilege)
+    func testNameResolutionClassifiesSymlinksByTarget() async throws {
+        try await Self.withExecutableSearchFixture { shadowDirectory, binDirectory, name in
+            let target = binDirectory.appendingPathComponent("target-\(UUID().uuidString).exe")
+            try Self.copyCmdExe(to: target)
+            let targetDirectory = shadowDirectory.appendingPathComponent("target-directory")
+            try FileManager.default.createDirectory(
+                at: targetDirectory, withIntermediateDirectories: true
+            )
+            try FileManager.default.createSymbolicLink(
+                at: shadowDirectory.appendingPathComponent(name),
+                withDestinationURL: targetDirectory
+            )
+            try FileManager.default.createSymbolicLink(
+                at: binDirectory.appendingPathComponent(name),
+                withDestinationURL: target
+            )
+
+            let resolved = try await Executable.name(name).resolveExecutablePath(
+                in: .inherit.updating([
+                    "PATH": "\(shadowDirectory._fileSystemPath);\(binDirectory._fileSystemPath)"
+                ])
+            )
+            // The directory symlink was skipped; the symlink to the executable
+            // resolved without being followed to its target.
+            #expect(
+                Self.isSamePath(
+                    resolved.string,
+                    binDirectory.appendingPathComponent(name)._fileSystemPath
+                )
+            )
+        }
+    }
+
+    /// Compares two Windows paths, which may mix `/` and `\` separators and
+    /// differ in case.
+    private static func isSamePath(_ lhs: String, _ rhs: String) -> Bool {
+        func normalized(_ path: String) -> String {
+            path.replacingOccurrences(of: "/", with: "\\")
+        }
+        return normalized(lhs).caseInsensitiveCompare(normalized(rhs)) == .orderedSame
+    }
+
+    /// Creates a throwaway `shadow` and `bin` directory pair plus a unique
+    /// executable name, and removes them afterwards.
+    private static func withExecutableSearchFixture(
+        _ body: (URL, URL, String) async throws -> Void
+    ) async throws {
+        let fixture = URL.temporaryDirectory
+            .appendingPathComponent("executable-search-\(UUID().uuidString)")
+        let shadowDirectory = fixture.appendingPathComponent("shadow")
+        let binDirectory = fixture.appendingPathComponent("bin")
+        try FileManager.default.createDirectory(at: shadowDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: binDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        try await body(shadowDirectory, binDirectory, "test-executable-\(UUID().uuidString).exe")
+    }
+
+    /// Copies `cmd.exe` to `destination` to stand in for an arbitrary
+    /// executable that the tests can both resolve and run.
+    private static func copyCmdExe(to destination: URL) throws {
+        let systemDirectory = try fillNullTerminatedWideStringBuffer(
+            initialSize: DWORD(MAX_PATH),
+            maxSize: DWORD(Int16.max)
+        ) {
+            GetSystemDirectoryW($0.baseAddress, DWORD($0.count))
+        }
+        try FileManager.default.copyItem(
+            at: URL(filePath: systemDirectory).appendingPathComponent("cmd.exe"),
+            to: destination
+        )
+    }
+}
+
 // MARK: - User Utils
 extension SubprocessWindowsTests {
     private func withTemporaryUser(
@@ -930,6 +1075,40 @@ extension SubprocessWindowsTests {
             }
             state.finishOnce()
         }
+    }
+}
+
+extension Trait where Self == ConditionTrait {
+    /// Creating a symbolic link on Windows requires
+    /// `SeCreateSymbolicLinkPrivilege`, which an unelevated process only holds
+    /// when Developer Mode is enabled.
+    static var requiresSymbolicLinkPrivilege: Self {
+        enabled(
+            "This test requires the privilege to create symbolic links (enable Developer Mode)",
+            {
+                let directory = URL.temporaryDirectory
+                    .appendingPathComponent("symlink-probe-\(UUID().uuidString)")
+                guard
+                    let _ = try? FileManager.default.createDirectory(
+                        at: directory,
+                        withIntermediateDirectories: true
+                    )
+                else {
+                    return false
+                }
+                defer { try? FileManager.default.removeItem(at: directory) }
+                let link = directory.appendingPathComponent("link")
+                do {
+                    try FileManager.default.createSymbolicLink(
+                        at: link,
+                        withDestinationURL: directory
+                    )
+                    return true
+                } catch {
+                    return false
+                }
+            }
+        )
     }
 }
 
