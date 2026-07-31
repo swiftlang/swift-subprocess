@@ -155,12 +155,18 @@ extension Execution {
 
 // MARK: - Environment Resolution and Validation
 extension Environment {
+    /// The `PATH` value to resolve ``Executable/name(_:)`` against.
+    ///
+    /// The value the subprocess receives wins, so a name resolves in the
+    /// environment it will run in. When that environment carries no `PATH`,
+    /// this process's own value is used; `nil` means neither defines one.
     internal func pathValue() -> String? {
         switch self.config {
         case .inherit(let overrides):
-            // If PATH value exists in overrides, use it
-            if let value = overrides[.path] {
-                return value
+            // If PATH value exists in overrides, use it. An override maps to
+            // `nil` to unset the value, which falls through to this process.
+            if let overridden = overrides[.path], let overridden {
+                return overridden
             }
             // Fall back to current process
             return Self.currentEnvironmentValues()[.path]
@@ -168,7 +174,7 @@ extension Environment {
             if let value = fullEnvironment[.path] {
                 return value
             }
-            return nil
+            return Self.currentEnvironmentValues()[.path]
         case .rawBytes(let rawBytesArray):
             let needle: [UInt8] = Array("\(Key.path.rawValue)=".utf8)
             for row in rawBytesArray {
@@ -179,7 +185,7 @@ extension Environment {
                 let pathValue = row.dropFirst(needle.count)
                 return String(decoding: pathValue, as: UTF8.self)
             }
-            return nil
+            return Self.currentEnvironmentValues()[.path]
         }
     }
 
@@ -359,7 +365,26 @@ extension Arguments {
 
 // MARK: -  Executable Searching
 extension Executable {
-    internal static let defaultSearchPaths = [
+    /// The directories searched when neither the environment passed to the
+    /// subprocess nor the current process defines `PATH`. This is the system's own
+    /// standard path,`confstr(_CS_PATH)`, falling back to the `<paths.h>` macro fixed
+    /// at compile time.
+    ///
+    /// The list is filtered like a `PATH` value, so a relative or empty entry in
+    /// the system's answer is skipped too. If the system reports nothing usable,
+    /// the historical hard-coded list stands in as a last resort.
+    internal static let defaultSearchPaths: [String] = {
+        guard let systemPathValue = Self.systemStandardPathValue() else {
+            return Self.fallbackSearchPaths
+        }
+        let searchPaths = systemPathValue.split(separator: Self.pathValueSeparator)
+            .map(String.init)
+            .filter { FilePath($0).isAbsolute }
+        return searchPaths.isEmpty ? Self.fallbackSearchPaths : searchPaths
+    }()
+
+    /// The directories to search when the system reports no standard path.
+    private static let fallbackSearchPaths = [
         "/usr/bin",
         "/bin",
         "/usr/sbin",
@@ -367,14 +392,30 @@ extension Executable {
         "/usr/local/bin",
     ]
 
+    /// Asks the system for its standard `PATH` value, or returns `nil` when it
+    /// reports none.
+    private static func systemStandardPathValue() -> String? {
+        // Two-call `confstr` protocol: size the buffer, then fill it. A second
+        // call that needs more room than the first reported means the value
+        // changed underneath us, which cannot happen for a system constant, so
+        // a short answer is simply used as-is.
+        let size = _subprocess_default_search_path(nil, 0)
+        guard size > 1 else {
+            return nil
+        }
+        let pathValue = withUnsafeTemporaryAllocation(of: CChar.self, capacity: Int(size)) { buffer in
+            guard _subprocess_default_search_path(buffer.baseAddress, size) > 0 else {
+                return ""
+            }
+            return String(cString: buffer.baseAddress!)
+        }
+        return pathValue.isEmpty ? nil : pathValue
+    }
+
     internal func resolveExecutablePath(withPathValue pathValue: String?) throws(SubprocessError) -> String {
         switch self.storage {
         case .executable(let executableName):
-            // If the executableName in is already a full path, return it directly
-            if Configuration.executableAccessible(executableName) {
-                return executableName
-            }
-            let firstAccessibleExecutable = possibleExecutablePaths(withPathValue: pathValue)
+            let firstAccessibleExecutable = try possibleExecutablePaths(withPathValue: pathValue)
                 .first { Configuration.executableAccessible($0) }
             if let firstAccessibleExecutable {
                 return firstAccessibleExecutable
@@ -386,22 +427,20 @@ extension Executable {
         }
     }
 
+    /// The paths to try, in order, for this executable.
+    ///
+    /// A name is joined to each directory returned by
+    /// `Executable.searchPaths(withPathValue:)`; the name itself is never a
+    /// candidate, so `execvp`-style resolution against a current working
+    /// directory cannot happen. A path is its own only candidate.
     internal func possibleExecutablePaths(
         withPathValue pathValue: String?
-    ) -> _OrderedSet<String> {
+    ) throws(SubprocessError) -> _OrderedSet<String> {
         switch self.storage {
         case .executable(let executableName):
+            try Self.validate(name: executableName)
             var results: _OrderedSet<String> = .init()
-            // executableName could be a full path
-            results.insert(executableName)
-            // Get $PATH from environment
-            let searchPaths =
-                if let pathValue = pathValue {
-                    pathValue.split(separator: ":").map { String($0) } + Self.defaultSearchPaths
-                } else {
-                    Self.defaultSearchPaths
-                }
-            for path in searchPaths {
+            for path in Self.searchPaths(withPathValue: pathValue) {
                 results.insert(
                     FilePath(path).appending(executableName).string
                 )
@@ -553,17 +592,22 @@ extension Configuration {
         // Ensure the waiter thread is running.
         _setupMonitorSignalHandler()
 
-        // Instead of checking if every possible executable path
-        // is valid, spawn each directly and catch ENOENT
-        let possiblePaths = self.executable.possibleExecutablePaths(
-            withPathValue: self.environment.pathValue()
-        )
         var inputPipeBox: CreatedPipe? = consume inputPipe
         var outputPipeBox: CreatedPipe? = consume outputPipe
         var errorPipeBox: CreatedPipe? = consume errorPipe
 
         func spawnFunc(_ args: PreSpawnArgs) async throws -> SpawnResult {
             let (env, uidPtr, gidPtr, supplementaryGroups) = args
+
+            // Resolve before taking the pipes out of their boxes, so that a
+            // rejected executable name leaves them for the caller's `catch`
+            // below to close.
+            //
+            // Instead of checking if every possible executable path
+            // is valid, spawn each directly and catch ENOENT
+            let possiblePaths = try self.executable.possibleExecutablePaths(
+                withPathValue: self.environment.pathValue()
+            )
 
             var _inputPipe = inputPipeBox.take()!
             var _outputPipe = outputPipeBox.take()!

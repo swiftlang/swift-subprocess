@@ -199,17 +199,23 @@ extension Configuration {
         // Ensure the waiter thread is running.
         _setupMonitorSignalHandler()
 
-        // Instead of checking if every possible executable path
-        // is valid, spawn each directly and catch ENOENT
-        let possiblePaths = self.executable.possibleExecutablePaths(
-            withPathValue: self.environment.pathValue()
-        )
         var inputPipeBox: CreatedPipe? = consume inputPipe
         var outputPipeBox: CreatedPipe? = consume outputPipe
         var errorPipeBox: CreatedPipe? = consume errorPipe
 
         func spawnFunc(_ args: PreSpawnArgs) async throws -> SpawnResult {
             let (env, uidPtr, gidPtr, supplementaryGroups) = args
+
+            // Resolve before taking the pipes out of their boxes, so that a
+            // rejected executable name leaves them for the caller's `catch`
+            // below to close.
+            //
+            // Instead of checking if every possible executable path
+            // is valid, spawn each directly and catch ENOENT
+            let possiblePaths = try self.executable.possibleExecutablePaths(
+                withPathValue: self.environment.pathValue()
+            )
+
             var _inputPipe = inputPipeBox.take()!
             var _outputPipe = outputPipeBox.take()!
             var _errorPipe = errorPipeBox.take()!

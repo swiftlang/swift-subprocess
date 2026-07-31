@@ -343,49 +343,231 @@ extension SubprocessUnixTests {
         let executable = Executable.name("test-bin")
         let pathValue = "/first/path:/second/path:/third/path"
 
-        let paths = executable.possibleExecutablePaths(withPathValue: pathValue)
+        let paths = try executable.possibleExecutablePaths(withPathValue: pathValue)
         let pathsArray = Array(paths)
 
         #expect(
             pathsArray == [
-                "test-bin",
                 "/first/path/test-bin",
                 "/second/path/test-bin",
                 "/third/path/test-bin",
-
-                // Default search paths
-                "/usr/bin/test-bin",
-                "/bin/test-bin",
-                "/usr/sbin/test-bin",
-                "/sbin/test-bin",
-                "/usr/local/bin/test-bin",
             ])
     }
 
     @Test func testNoDuplicatedExecutablePaths() throws {
         let executable = Executable.name("test-bin")
         let duplicatePath = "/first/path:/first/path:/second/path"
-        let duplicatePaths = executable.possibleExecutablePaths(withPathValue: duplicatePath)
+        let duplicatePaths = try executable.possibleExecutablePaths(withPathValue: duplicatePath)
 
         #expect(Array(duplicatePaths).count == Set(duplicatePaths).count)
     }
 
+    /// The system's standard directories are a last resort for a `PATH`-less
+    /// environment, not an addition to a `PATH` that exists.
     @Test func testPossibleExecutablePathsWithNilPATH() throws {
         let executable = Executable.name("test-bin")
-        let paths = executable.possibleExecutablePaths(withPathValue: nil)
-        let pathsArray = Array(paths)
+        let paths = try executable.possibleExecutablePaths(withPathValue: nil)
 
         #expect(
-            pathsArray == [
-                "test-bin",
+            Array(paths) == Executable.defaultSearchPaths.map { "\($0)/test-bin" }
+        )
+    }
 
-                // Default search paths
-                "/usr/bin/test-bin",
-                "/bin/test-bin",
-                "/usr/sbin/test-bin",
-                "/sbin/test-bin",
-                "/usr/local/bin/test-bin",
+    /// That last resort is queried from the system rather than hard-coded, so it
+    /// is whatever this platform considers standard — and it is filtered the way
+    /// a `PATH` value is.
+    @Test func testDefaultSearchPathsComeFromTheSystem() throws {
+        let defaultSearchPaths = Executable.defaultSearchPaths
+        #expect(!defaultSearchPaths.isEmpty)
+        for directory in defaultSearchPaths {
+            #expect(FilePath(directory).isAbsolute, "\(directory) is not absolute")
+        }
+    }
+
+    /// The standard directories are the ones `confstr(_CS_PATH)` reports, which
+    /// is what `getconf PATH` prints and what `execvp(3)` searches when `PATH`
+    /// is unset.
+    @Test(
+        .enabled(
+            if: FileManager.default.isExecutableFile(atPath: "/usr/bin/getconf"),
+            "This test requires getconf"
+        )
+    )
+    func testDefaultSearchPathsMatchTheSystemStandardPath() async throws {
+        let result = try await Subprocess.run(
+            .path("/usr/bin/getconf"),
+            arguments: ["PATH"],
+            output: .string(limit: 4096)
+        )
+        try #require(result.terminationStatus.isSuccess)
+        let systemStandardPath = result.standardOutput.trimmingNewLineAndQuotes()
+        #expect(
+            Executable.defaultSearchPaths == systemStandardPath.split(separator: ":").map(String.init)
+        )
+    }
+
+    /// An empty `PATH` is a `PATH` that lists no directories, so nothing is
+    /// searched — the built-in directories do not come back.
+    @Test func testPossibleExecutablePathsWithEmptyPATH() throws {
+        let executable = Executable.name("test-bin")
+        #expect(Array(try executable.possibleExecutablePaths(withPathValue: "")).isEmpty)
+    }
+
+    /// Empty entries, which a leading, trailing, or doubled `:` introduces, and
+    /// relative entries are both a search of a current working directory, and
+    /// are skipped.
+    @Test func testExecutablePathsSkipEmptyAndRelativeEntries() throws {
+        let executable = Executable.name("test-bin")
+        let paths = try executable.possibleExecutablePaths(
+            withPathValue: ":/first/path::relative/path:.:..:/second/path:"
+        )
+
+        #expect(
+            Array(paths) == [
+                "/first/path/test-bin",
+                "/second/path/test-bin",
             ])
+    }
+
+    /// A name containing a path separator is a path, and is rejected rather
+    /// than resolved against some current directory.
+    @Test func testNameWithPathSeparatorIsRejected() async throws {
+        for name in ["bin/test-bin", "./test-bin", "/usr/bin/test-bin", "../test-bin"] {
+            #expect(throws: SubprocessError.self) {
+                _ = try Executable.name(name).possibleExecutablePaths(withPathValue: "/usr/bin")
+            }
+            let error = await #expect(throws: SubprocessError.self) {
+                _ = try await Executable.name(name).resolveExecutablePath(in: .inherit)
+            }
+            #expect(error?.code == .spawnFailed)
+            // The same name is rejected at spawn time, not just when resolving.
+            let spawnError = await #expect(throws: SubprocessError.self) {
+                _ = try await Subprocess.run(.name(name), output: .discarded)
+            }
+            #expect(spawnError?.code == .spawnFailed)
+        }
+    }
+
+    /// An existing executable named without a separator still resolves through
+    /// `PATH` only, so the name of a real binary that happens to sit in the
+    /// current directory is not enough to run it.
+    #if !os(Android) // Exit tests are not supported on Android
+    @Test func testCurrentWorkingDirectoryIsNotSearched() async throws {
+        await #expect(processExitsWith: .success) {
+            // Runs in an isolated process because it changes the current
+            // working directory, which is process-wide state that sibling
+            // suites in the same process would otherwise see.
+            let fixture = FileManager.default.temporaryDirectory
+                .appendingPathComponent("cwd-probe-\(UUID().uuidString)")
+            let searchDirectory = fixture.appendingPathComponent("bin")
+            try FileManager.default.createDirectory(
+                at: searchDirectory, withIntermediateDirectories: true
+            )
+            defer { try? FileManager.default.removeItem(at: fixture) }
+
+            // The executable exists *only* in the current directory, and the
+            // current directory is not on PATH.
+            let name = "test-executable-\(UUID().uuidString)"
+            let executable = fixture.appendingPathComponent(name)
+            try """
+            #!/bin/sh
+            echo "CWD"
+            """.write(to: executable, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: executable._fileSystemPath
+            )
+            #expect(FileManager.default.changeCurrentDirectoryPath(fixture._fileSystemPath))
+
+            let environment = Environment.custom(["PATH": searchDirectory._fileSystemPath])
+            let resolveError = await #expect(throws: SubprocessError.self) {
+                _ = try await Executable.name(name).resolveExecutablePath(in: environment)
+            }
+            #expect(resolveError?.code == .executableNotFound)
+
+            let spawnError = await #expect(throws: SubprocessError.self) {
+                _ = try await Subprocess.run(
+                    .name(name),
+                    environment: environment,
+                    output: .discarded
+                )
+            }
+            #expect(spawnError?.code == .executableNotFound)
+        }
+    }
+    #endif // !os(Android)
+
+    /// The working directory handed to `run` is where the subprocess starts,
+    /// not a directory the executable is looked for in. Resolution happens in
+    /// the parent, before the child changes directory, so the two agree.
+    @Test func testWorkingDirectoryIsNotSearched() async throws {
+        try await withExecutableSearchFixture { fixture in
+            let binDirectory = fixture.appendingPathComponent("bin")
+            try FileManager.default.createDirectory(
+                at: binDirectory, withIntermediateDirectories: true
+            )
+            let name = "test-executable-\(UUID().uuidString)"
+            // The executable exists only in the working directory, which is
+            // not on PATH.
+            try Self.writeExecutableScript(
+                at: fixture.appendingPathComponent(name), echoing: "WORKING-DIRECTORY"
+            )
+
+            let spawnError = await #expect(throws: SubprocessError.self) {
+                _ = try await Subprocess.run(
+                    .name(name),
+                    environment: .custom(["PATH": binDirectory._fileSystemPath]),
+                    workingDirectory: FilePath(fixture._fileSystemPath),
+                    output: .discarded
+                )
+            }
+            #expect(spawnError?.code == .executableNotFound)
+        }
+    }
+
+    /// The `PATH` the subprocess receives is what a name resolves against, so
+    /// the executable that resolution picks is the one that runs.
+    @Test func testResolutionUsesTheSubprocessPathValue() async throws {
+        try await withExecutableSearchFixture { fixture in
+            let childDirectory = fixture.appendingPathComponent("child")
+            try FileManager.default.createDirectory(
+                at: childDirectory, withIntermediateDirectories: true
+            )
+            let name = "test-executable-\(UUID().uuidString)"
+            let executable = childDirectory.appendingPathComponent(name)
+            try Self.writeExecutableScript(at: executable, echoing: "CHILD")
+
+            // The directory is reachable only through the environment passed to
+            // the subprocess; it is on neither the current process's PATH nor
+            // the built-in list.
+            let environment = Environment.custom(["PATH": childDirectory._fileSystemPath])
+            let resolved = try await Executable.name(name).resolveExecutablePath(in: environment)
+            #expect(resolved.string == executable._fileSystemPath)
+
+            let result = try await Subprocess.run(
+                .name(name),
+                environment: environment,
+                output: .string(limit: 32)
+            )
+            #expect(result.standardOutput.trimmingNewLineAndQuotes() == "CHILD")
+        }
+    }
+
+    /// When the environment passed to the subprocess sets no `PATH` of its own,
+    /// the current process's value is what gets searched.
+    @Test func testPathValueFallsBackToCurrentProcess() throws {
+        let currentPathValue = try #require(ProcessInfo.processInfo.environment["PATH"])
+
+        // A PATH for the subprocess is preferred, however it is expressed.
+        #expect(Environment.custom(["PATH": "/child/bin"]).pathValue() == "/child/bin")
+        #expect(Environment.inherit.updating(["PATH": "/child/bin"]).pathValue() == "/child/bin")
+        #expect(Environment.custom([Array("PATH=/child/bin".utf8)]).pathValue() == "/child/bin")
+
+        // Without one, the current process's value is used — including when the
+        // subprocess environment explicitly unsets `PATH`.
+        #expect(Environment.custom(["MARKER": "no-path-here"]).pathValue() == currentPathValue)
+        #expect(Environment.custom([Array("MARKER=no-path-here".utf8)]).pathValue() == currentPathValue)
+        #expect(Environment.inherit.updating(["PATH": nil]).pathValue() == currentPathValue)
+        #expect(Environment.inherit.pathValue() == currentPathValue)
     }
 
     /// A `PATH` entry that contains a *directory* whose name matches the
@@ -426,20 +608,6 @@ extension SubprocessUnixTests {
             )
             #expect(result.terminationStatus.isSuccess)
             #expect(result.standardOutput.trimmingNewLineAndQuotes() == "REAL")
-        }
-    }
-
-    /// A name that is itself the path of a directory must not resolve to that
-    /// directory, even though the directory is "executable" to `access(X_OK)`.
-    @Test func testNameThatIsADirectoryPathIsNotResolved() async throws {
-        try await withExecutableSearchFixture { fixture in
-            let directory = fixture.appendingPathComponent("test-executable-\(UUID().uuidString)")
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-
-            await #expect(throws: SubprocessError.self) {
-                _ = try await Executable.name(directory._fileSystemPath)
-                    .resolveExecutablePath(in: .inherit)
-            }
         }
     }
 

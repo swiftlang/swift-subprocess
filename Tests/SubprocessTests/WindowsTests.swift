@@ -629,10 +629,240 @@ extension SubprocessWindowsTests {
 
 // MARK: - Executable Resolution
 extension SubprocessWindowsTests {
+    /// Only the directories on `PATH` are searched, and only with the
+    /// extensions `PATHEXT` names. `CreateProcessW`'s own search would also
+    /// cover the application directory, the current directory, and the system
+    /// directories; `name(_:)` covers none of them.
+    @Test func testExecutablePathsAreLimitedToThePathValue() throws {
+        let paths = try Executable.name("test-bin").possibleExecutablePaths(
+            withPathValue: #"C:\first\path;C:\second\path"#
+        )
+        let pathsArray = Array(paths)
+
+        // Every candidate sits directly in one of the two `PATH` entries.
+        func isUnderAPathEntry(_ path: String) -> Bool {
+            let normalized = path.replacingOccurrences(of: "/", with: #"\"#).lowercased()
+            return normalized.hasPrefix(#"c:\first\path\"#)
+                || normalized.hasPrefix(#"c:\second\path\"#)
+        }
+        for path in pathsArray {
+            #expect(isUnderAPathEntry(path), "\(path) is outside the PATH value")
+        }
+
+        // `.exe` in the first `PATH` entry is among them, and the first entry
+        // is searched before the second.
+        let firstExe = try #require(
+            pathsArray.firstIndex(where: { Self.isSamePath($0, #"C:\first\path\test-bin.exe"#) })
+        )
+        let secondExe = try #require(
+            pathsArray.firstIndex(where: { Self.isSamePath($0, #"C:\second\path\test-bin.exe"#) })
+        )
+        #expect(firstExe < secondExe)
+
+        // Neither the current directory nor the system directory is a
+        // candidate, whatever they happen to be.
+        let systemDirectory = try fillNullTerminatedWideStringBuffer(
+            initialSize: DWORD(MAX_PATH),
+            maxSize: DWORD(Int16.max)
+        ) {
+            GetSystemDirectoryW($0.baseAddress, DWORD($0.count))
+        }
+        for directory in [FileManager.default.currentDirectoryPath, systemDirectory] {
+            let shadowed = FilePath(directory).appending("test-bin.exe").string
+            #expect(!pathsArray.contains(where: { Self.isSamePath($0, shadowed) }))
+        }
+    }
+
+    /// A `PATHEXT` extension is appended to the name, never substituted for an
+    /// extension the name already has, and a name that carries an extension is
+    /// tried as written first.
+    @Test func testExecutablePathsAppendExtensionsToDottedNames() throws {
+        let paths = try Executable.name("python3.11").possibleExecutablePaths(
+            withPathValue: #"C:\bin"#
+        )
+        let pathsArray = Array(paths)
+
+        let first = try #require(pathsArray.first)
+        #expect(Self.isSamePath(first, #"C:\bin\python3.11"#))
+        #expect(pathsArray.contains(where: { Self.isSamePath($0, #"C:\bin\python3.11.exe"#) }))
+        // `.11` must not be mistaken for the extension and replaced.
+        #expect(!pathsArray.contains(where: { Self.isSamePath($0, #"C:\bin\python3.exe"#) }))
+
+        // A name with no extension is only tried with extensions appended.
+        let extensionless = Array(
+            try Executable.name("test-bin").possibleExecutablePaths(withPathValue: #"C:\bin"#)
+        )
+        #expect(!extensionless.contains(where: { Self.isSamePath($0, #"C:\bin\test-bin"#) }))
+        #expect(extensionless.contains(where: { Self.isSamePath($0, #"C:\bin\test-bin.exe"#) }))
+        #expect(extensionless.contains(where: { Self.isSamePath($0, #"C:\bin\test-bin.cmd"#) }))
+    }
+
+    /// Empty entries, which a leading, trailing, or doubled `;` introduces, and
+    /// entries that aren't fully qualified are both a search of a current
+    /// directory, and are skipped. A drive-relative `C:bin` and a
+    /// root-relative `\bin` each depend on a current directory too.
+    @Test func testExecutablePathsSkipEmptyAndRelativeEntries() throws {
+        let relativeOnly = try Executable.name("test-bin").possibleExecutablePaths(
+            withPathValue: #";;relative\path;.;C:bin;\bin"#
+        )
+        #expect(Array(relativeOnly).isEmpty)
+
+        let empty = try Executable.name("test-bin").possibleExecutablePaths(withPathValue: "")
+        #expect(Array(empty).isEmpty)
+    }
+
+    /// `name(_:)` takes a name, so anything that names a location is rejected
+    /// rather than resolved against a current directory. Windows accepts either
+    /// slash, and `:` separates a drive from a drive-relative path.
+    @Test func testNameWithPathSeparatorIsRejected() async throws {
+        let names = [
+            #"bin\test-bin.exe"#,
+            #"bin/test-bin.exe"#,
+            #".\test-bin.exe"#,
+            #"C:\Windows\System32\cmd.exe"#,
+            "C:cmd.exe",
+        ]
+        for name in names {
+            #expect(throws: SubprocessError.self) {
+                _ = try Executable.name(name).possibleExecutablePaths(withPathValue: #"C:\bin"#)
+            }
+            let resolveError = await #expect(throws: SubprocessError.self) {
+                _ = try await Executable.name(name).resolveExecutablePath(in: .inherit)
+            }
+            #expect(resolveError?.code == .spawnFailed)
+            let spawnError = await #expect(throws: SubprocessError.self) {
+                _ = try await Subprocess.run(.name(name), output: .discarded)
+            }
+            #expect(spawnError?.code == .spawnFailed)
+        }
+    }
+
+    /// The current directory is not searched, so an executable that sits there
+    /// and nowhere on `PATH` is not found — not by resolution, and not by
+    /// `CreateProcessW`, whose own search would have found it.
+    @Test func testCurrentDirectoryIsNotSearched() async throws {
+        await #expect(processExitsWith: .success) {
+            // Runs in an isolated process because it changes the current
+            // directory, which is process-wide state that sibling suites
+            // running in the same process would otherwise observe.
+            try await SubprocessWindowsTests.withExecutableSearchFixture { shadow, bin, name in
+                // The executable exists only in what becomes the current directory.
+                try SubprocessWindowsTests.copyCmdExe(to: shadow.appendingPathComponent(name))
+                let originalDirectory = FileManager.default.currentDirectoryPath
+                // Restore before the fixture is removed: Windows refuses to
+                // delete a directory that is a process's current directory.
+                defer { _ = FileManager.default.changeCurrentDirectoryPath(originalDirectory) }
+                #expect(FileManager.default.changeCurrentDirectoryPath(shadow._fileSystemPath))
+
+                let environment = Environment.inherit.updating(["PATH": bin._fileSystemPath])
+                let resolveError = await #expect(throws: SubprocessError.self) {
+                    _ = try await Executable.name(name).resolveExecutablePath(in: environment)
+                }
+                #expect(resolveError?.code == .executableNotFound)
+
+                let spawnError = await #expect(throws: SubprocessError.self) {
+                    _ = try await Subprocess.run(
+                        .name(name),
+                        arguments: ["/c", "echo CURRENT-DIRECTORY"],
+                        environment: environment,
+                        output: .discarded
+                    )
+                }
+                #expect(spawnError?.code == .executableNotFound)
+            }
+        }
+    }
+
+    /// The working directory handed to `run` is where the subprocess starts,
+    /// not a directory the executable is looked for in.
+    @Test func testWorkingDirectoryIsNotSearched() async throws {
+        try await Self.withExecutableSearchFixture { shadowDirectory, binDirectory, name in
+            // The executable exists only in the working directory.
+            try Self.copyCmdExe(to: shadowDirectory.appendingPathComponent(name))
+
+            let spawnError = await #expect(throws: SubprocessError.self) {
+                _ = try await Subprocess.run(
+                    .name(name),
+                    arguments: ["/c", "echo WORKING-DIRECTORY"],
+                    environment: .inherit.updating(["PATH": binDirectory._fileSystemPath]),
+                    workingDirectory: FilePath(shadowDirectory._fileSystemPath),
+                    output: .discarded
+                )
+            }
+            #expect(spawnError?.code == .executableNotFound)
+        }
+    }
+
+    /// The `PATH` that a name resolves against is the subprocess's own, not
+    /// this process's. `CreateProcessW` reads `PATH` from the calling process
+    /// when it performs its own search, which is why Subprocess resolves the
+    /// name itself before calling it.
+    @Test func testResolutionUsesTheSubprocessPathValue() async throws {
+        try await Self.withExecutableSearchFixture { _, binDirectory, name in
+            let executable = binDirectory.appendingPathComponent(name)
+            try Self.copyCmdExe(to: executable)
+
+            // `binDirectory` is reachable only through the environment passed
+            // to the subprocess.
+            let environment = Environment.inherit.updating([
+                "PATH": binDirectory._fileSystemPath
+            ])
+            let resolved = try await Executable.name(name).resolveExecutablePath(in: environment)
+            #expect(Self.isSamePath(resolved.string, executable._fileSystemPath))
+
+            let result = try await Subprocess.run(
+                .name(name),
+                arguments: ["/c", "echo CHILD"],
+                environment: environment,
+                output: .string(limit: 32)
+            )
+            #expect(result.terminationStatus.isSuccess)
+            #expect(result.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines) == "CHILD")
+        }
+    }
+
+    /// With no `PATH` anywhere, the fallback is the set of directories
+    /// `CreateProcessW` searches on its own — minus the current directory, which
+    /// `name(_:)` never searches.
+    @Test func testDefaultSearchPathsAreTheSystemDirectories() throws {
+        let defaultSearchPaths = Executable.defaultSearchPaths
+        #expect(!defaultSearchPaths.isEmpty)
+        for directory in defaultSearchPaths {
+            #expect(FilePath(directory).isAbsolute, "\(directory) is not absolute")
+        }
+
+        let systemDirectory = try fillNullTerminatedWideStringBuffer(
+            initialSize: DWORD(MAX_PATH),
+            maxSize: DWORD(Int16.max)
+        ) {
+            GetSystemDirectoryW($0.baseAddress, DWORD($0.count))
+        }
+        #expect(defaultSearchPaths.contains(where: { Self.isSamePath($0, systemDirectory) }))
+        #expect(
+            !defaultSearchPaths.contains(where: {
+                Self.isSamePath($0, FileManager.default.currentDirectoryPath)
+            })
+        )
+
+        // Those directories, and only those, are what a `PATH`-less lookup walks.
+        func directoryPrefix(_ directory: String) -> String {
+            let normalized = directory.replacingOccurrences(of: "/", with: #"\"#).lowercased()
+            return normalized.hasSuffix(#"\"#) ? normalized : normalized + #"\"#
+        }
+        let paths = try Executable.name("test-bin").possibleExecutablePaths(withPathValue: nil)
+        for path in paths {
+            let normalized = path.replacingOccurrences(of: "/", with: #"\"#).lowercased()
+            #expect(
+                defaultSearchPaths.contains(where: { normalized.hasPrefix(directoryPrefix($0)) }),
+                "\(path) is outside the default search paths"
+            )
+        }
+    }
+
     /// A `PATH` entry that contains a *directory* whose name matches the
     /// executable must be skipped. `GetFileAttributesW` succeeds for a
-    /// directory and `SearchPathW` happily matches one, so the real executable
-    /// later on `PATH` would otherwise be shadowed.
+    /// directory, so the real executable later on `PATH` would otherwise be
+    /// shadowed.
     @Test func testNameResolutionSkipsDirectoryInPathEntry() async throws {
         try await Self.withExecutableSearchFixture { shadowDirectory, binDirectory, name in
             // A directory that shares the executable's name, earlier on PATH
@@ -652,23 +882,10 @@ extension SubprocessWindowsTests {
         }
     }
 
-    /// A name that is itself the path of a directory must not resolve to that
-    /// directory.
-    @Test func testNameThatIsADirectoryPathIsNotResolved() async throws {
-        try await Self.withExecutableSearchFixture { shadowDirectory, _, name in
-            let directory = shadowDirectory.appendingPathComponent(name)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-
-            await #expect(throws: SubprocessError.self) {
-                _ = try await Executable.name(directory._fileSystemPath)
-                    .resolveExecutablePath(in: .inherit)
-            }
-        }
-    }
-
-    /// The spawn-time candidate loop is only used when argument 0 is
-    /// overridden. `CreateProcessW` fails with ERROR_ACCESS_DENIED on a
-    /// directory, which must not abort the spawn while real candidates remain.
+    /// A directory candidate is dropped before it reaches `CreateProcessW`, and
+    /// the `ERROR_ACCESS_DENIED` branch in the spawn loop remains as a backstop
+    /// for a candidate that becomes a directory after the check. Neither must
+    /// abort the spawn while real candidates remain.
     @Test func testSpawnSkipsDirectoryCandidateWithArgumentZeroOverride() async throws {
         try await Self.withExecutableSearchFixture { shadowDirectory, binDirectory, name in
             try FileManager.default.createDirectory(
