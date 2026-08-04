@@ -45,6 +45,11 @@
 #include <sys/utsname.h>
 #include <sys/wait.h>
 
+#if __has_include(<paths.h>)
+// For _PATH_STDPATH / _PATH_DEFPATH
+#include <paths.h>
+#endif
+
 #if __has_include(<crt_externs.h>)
 #include <crt_externs.h>
 #elif defined(_WIN32)
@@ -84,6 +89,42 @@ uint64_t _subprocess_nofile_soft_limit(void) {
         return 0;
     }
     return (uint64_t)rl.rlim_cur;
+}
+
+size_t _subprocess_default_search_path(char * _Nullable buffer, size_t size) {
+    // `confstr(_CS_PATH)` is the POSIX query for the standard path, and is
+    // preferred because the C library answers for the running system. Bionic
+    // only declares it from API level 26, so Android uses its `<paths.h>`
+    // macro instead rather than raising this package's minimum API level.
+#if defined(_CS_PATH) && !defined(__ANDROID__)
+    size_t queried = confstr(_CS_PATH, buffer, size);
+    if (queried > 0) {
+        return queried;
+    }
+#endif
+
+    // Fall back to the standard path fixed at compile time. `_PATH_STDPATH` is
+    // the system utility path on Darwin and the BSDs and with glibc;
+    // `_PATH_DEFPATH` is what Bionic and musl provide.
+#if defined(_PATH_STDPATH)
+    const char *standardPath = _PATH_STDPATH;
+#elif defined(_PATH_DEFPATH)
+    const char *standardPath = _PATH_DEFPATH;
+#else
+    const char *standardPath = NULL;
+#endif
+
+    if (standardPath == NULL) {
+        return 0;
+    }
+    size_t required = strlen(standardPath) + 1;
+    if (buffer != NULL && size > 0) {
+        // Truncate and terminate the way `confstr` does, so the caller can
+        // detect the short buffer from the returned size alone.
+        strncpy(buffer, standardPath, size - 1);
+        buffer[size - 1] = '\0';
+    }
+    return required;
 }
 
 int _subprocess_pthread_create(

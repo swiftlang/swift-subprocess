@@ -59,6 +59,48 @@ extension Configuration {
             throw error
         }
 
+        // Resolve the executable before spawning rather than letting
+        // `CreateProcessW` search for it. Its built-in search runs only when the
+        // executable is named on `lpCommandLine`, and it does not match the
+        // contract of `Executable.name(_:)` in two ways: it consults the
+        // directory the application loaded from, the current directory, and the
+        // system directories ahead of `PATH`, and it reads `PATH` from *this*
+        // process's environment rather than from the `lpEnvironment` block the
+        // subprocess receives. Resolving here keeps a name resolving against the
+        // subprocess's `PATH` and nothing else, on every platform.
+        //
+        // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw
+        let possibleExecutablePaths: [String]
+        do {
+            switch self.executable.storage {
+            case .executable:
+                possibleExecutablePaths = try self.executable.possibleExecutablePaths(
+                    withPathValue: self.environment.pathValue()
+                ).filter {
+                    // `GetFileAttributesW` is bound by `MAX_PATH`, while
+                    // `CreateProcessW` receives a `\\?\`-prefixed path from
+                    // `withNTPathRepresentation` and is not. Leave a long
+                    // candidate for `CreateProcessW` to judge rather than
+                    // rejecting a spawn it would have accepted.
+                    $0.utf16.count >= Int(MAX_PATH) || Configuration.executableAccessible($0)
+                }
+            case .path(let path):
+                // A path is used exactly as given, so `CreateProcessW` reports
+                // whatever is wrong with it.
+                possibleExecutablePaths = [path.string]
+            }
+        } catch {
+            try self.safelyCloseMultiple(
+                inputRead: inputReadFileDescriptor,
+                inputWrite: inputWriteFileDescriptor,
+                outputRead: outputReadFileDescriptor,
+                outputWrite: outputWriteFileDescriptor,
+                errorRead: errorReadFileDescriptor,
+                errorWrite: errorWriteFileDescriptor
+            )
+            throw error
+        }
+
         // Create the Job Object up front. It persists across all candidate path
         // attempts, and is owned by this function until ownership transfers to
         // the `ProcessIdentifier` on the success path.
@@ -68,29 +110,6 @@ extension Configuration {
             if jobHandleOwned {
                 _ = CloseHandle(jobHandle)
             }
-        }
-
-        // CreateProcessW supports using `lpApplicationName` as well as `lpCommandLine` to
-        // specify executable path. However, only `lpCommandLine` supports PATH looking up,
-        // whereas `lpApplicationName` does not. In general we should rely on `lpCommandLine`'s
-        // automatic PATH lookup so we only need to call `CreateProcessW` once. However, if
-        // user wants to override executable path in arguments, we have to use `lpApplicationName`
-        // to specify the executable path. In this case, manually loop over all possible paths.
-        let possibleExecutablePaths: _OrderedSet<String>
-        if _fastPath(self.arguments.executablePathOverride == nil) {
-            // Fast path: we can rely on `CreateProcessW`'s built in Path searching
-            switch self.executable.storage {
-            case .executable(let executable):
-                possibleExecutablePaths = _OrderedSet([executable])
-            case .path(let path):
-                possibleExecutablePaths = _OrderedSet([path.string])
-            }
-        } else {
-            // Slow path: user requested arg0 override, therefore we must manually
-            // traverse through all possible executable paths
-            possibleExecutablePaths = self.executable.possibleExecutablePaths(
-                withPathValue: self.environment.pathValue()
-            )
         }
 
         for executablePath in possibleExecutablePaths {
@@ -327,7 +346,20 @@ extension Configuration {
             errorWrite: errorWriteFileDescriptor
         )
 
-        // If we reached this point, all possible executable paths have failed
+        // If we reached this point, all possible executable paths have failed.
+        // When a name resolved to nothing at all, `CreateProcessW` never ran and
+        // so never reported an unusable working directory. Check it here, so the
+        // error names the problem the caller can act on this is the same best-effort
+        // guess the Unix spawn path makes.
+        if let workingDirectory = self.workingDirectory?.string,
+            !Configuration.isDirectory(workingDirectory)
+        {
+            throw SubprocessError.failedToChangeWorkingDirectory(
+                workingDirectory,
+                underlyingError: SubprocessError.WindowsError(win32Error: DWORD(ERROR_DIRECTORY))
+            )
+        }
+
         throw SubprocessError.executableNotFound(
             self.executable.description,
             underlyingError: SubprocessError.WindowsError(win32Error: DWORD(ERROR_FILE_NOT_FOUND))
@@ -701,35 +733,79 @@ extension Execution {
 
 // MARK: - Executable Searching
 extension Executable {
-    // Technically not needed for CreateProcess since
-    // it takes process name. It's here to support
-    // Executable.resolveExecutablePath
+    /// The directories searched when neither the environment passed to the
+    /// subprocess nor the current process defines `PATH`.
+    ///
+    /// Windows has no `confstr(_CS_PATH)` to ask. The closest equivalent is the
+    /// set of directories `CreateProcessW` searches by itself, so those are
+    /// queried here, in the order it documents: the directory the application
+    /// loaded from, the 32-bit system directory, the 16-bit system directory,
+    /// and the Windows directory.
+    ///
+    /// The one step of that order deliberately left out is "the current
+    /// directory for the calling process". ``Executable/name(_:)`` never
+    /// searches a current directory to avoid potential  security issues.
+    ///
+    /// https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw
+    internal static let defaultSearchPaths: [String] = {
+        var directories: [String] = []
+
+        // 1. The directory from which the application loaded.
+        let applicationPath = try? fillNullTerminatedWideStringBuffer(
+            initialSize: DWORD(MAX_PATH),
+            maxSize: DWORD(Int16.max)
+        ) {
+            return GetModuleFileNameW(nil, $0.baseAddress, DWORD($0.count))
+        }
+        if let applicationPath {
+            directories.append(FilePath(applicationPath).removingLastComponent().string)
+        }
+
+        // 2. The 32-bit Windows system directory.
+        let systemDirectorySize = GetSystemDirectoryW(nil, 0)
+        let systemDirectory = try? fillNullTerminatedWideStringBuffer(
+            initialSize: systemDirectorySize,
+            maxSize: DWORD(Int16.max)
+        ) {
+            return GetSystemDirectoryW($0.baseAddress, DWORD($0.count))
+        }
+        if let systemDirectory {
+            directories.append(systemDirectory)
+        }
+
+        let windowsDirectorySize = GetWindowsDirectoryW(nil, 0)
+        let windowsDirectory = try? fillNullTerminatedWideStringBuffer(
+            initialSize: windowsDirectorySize,
+            maxSize: DWORD(Int16.max)
+        ) {
+            return GetWindowsDirectoryW($0.baseAddress, DWORD($0.count))
+        }
+        if let windowsDirectory {
+            // 3. The 16-bit Windows system directory. Windows documentation
+            // states that "No such standard function (similar to
+            // GetSystemDirectory) exists for the 16-bit system folder", so use
+            // "\(windowsDirectory)\System" instead.
+            directories.append(FilePath(windowsDirectory).appending("System").string)
+            // 4. The Windows directory.
+            directories.append(windowsDirectory)
+        }
+
+        // Filtered the way a `PATH` value is, so the absolute-only rule holds
+        // however the system answered.
+        return directories.filter { FilePath($0).isAbsolute }
+    }()
+
     internal func resolveExecutablePath(withPathValue pathValue: String?) throws(SubprocessError) -> String {
         switch self.storage {
         case .executable(let executableName):
-            let (searchResult, searchError) = try Self.searchPath(
-                for: executableName,
-                withPathValue: pathValue
-            )
-            if let searchResult {
-                if Configuration.executableAccessible(searchResult) {
-                    return searchResult
-                }
-                // `SearchPathW` matches directories as well as files, and it
-                // stops at its first match with no way to resume, so a
-                // directory named like the executable hides every later
-                // candidate. A directory is never runnable; continue the
-                // search over the candidate paths, which replicate the same
-                // search order, and take the first one that is a real file.
-                let firstAccessibleExecutable = possibleExecutablePaths(withPathValue: pathValue)
-                    .first { Configuration.executableAccessible($0) }
-                if let firstAccessibleExecutable {
-                    return firstAccessibleExecutable
-                }
+            let firstAccessibleExecutable = try possibleExecutablePaths(withPathValue: pathValue)
+                .first { Configuration.executableAccessible($0) }
+            if let firstAccessibleExecutable {
+                return firstAccessibleExecutable
             }
             throw SubprocessError.executableNotFound(
                 executableName,
-                underlyingError: SubprocessError.WindowsError(win32Error: searchError)
+                underlyingError: SubprocessError.WindowsError(win32Error: DWORD(ERROR_FILE_NOT_FOUND))
             )
         case .path(let executablePath):
             // Use path directly
@@ -737,189 +813,30 @@ extension Executable {
         }
     }
 
-    /// Runs `SearchPathW` for `executableName`, returning the path it matched
-    /// and, when it matched nothing, the reason it reported.
+    /// The paths to try, in order, for this executable.
     ///
-    /// The `withCString` helpers this uses carry a typed `throws`, so this is
-    /// declared throwing even though `SearchPathW` itself reports failure in
-    /// its return value rather than by throwing.
-    private static func searchPath(
-        for executableName: String,
-        withPathValue pathValue: String?
-    ) throws(SubprocessError) -> (path: String?, error: DWORD) {
-        return try executableName._withCString(
-            encodedAs: UTF16.self
-        ) { exeName throws(SubprocessError) -> (String?, DWORD) in
-            return try pathValue.withOptionalCString(
-                encodedAs: UTF16.self
-            ) { path throws(SubprocessError) -> (String?, DWORD) in
-                let pathLength = SearchPathW(
-                    path,
-                    exeName,
-                    nil,
-                    0,
-                    nil,
-                    nil
-                )
-                guard pathLength > 0 else {
-                    return (nil, GetLastError())
-                }
-                let resolved = withUnsafeTemporaryAllocation(
-                    of: WCHAR.self,
-                    capacity: Int(pathLength) + 1
-                ) {
-                    _ = SearchPathW(
-                        path,
-                        exeName,
-                        nil,
-                        pathLength + 1,
-                        $0.baseAddress,
-                        nil
-                    )
-                    return String(decodingCString: $0.baseAddress!, as: UTF16.self)
-                }
-                return (resolved, DWORD(ERROR_FILE_NOT_FOUND))
-            }
-        }
-    }
-
-    /// `CreateProcessW` allows users to specify the executable path via
-    /// `lpApplicationName` or via `lpCommandLine`.
+    /// A name is joined to each directory returned by
+    /// `Executable.searchPaths(withPathValue:)`, and only to those: unlike
+    /// `CreateProcessW`'s own search, the directory the application loaded
+    /// from, the current directory, and the system directories are not
+    /// consulted, and the `PATH` that is walked is the subprocess's rather than
+    /// this process's. See ``Executable/name(_:)`` for the contract this implements.
     ///
-    /// However, only `lpCommandLine` supports
-    /// path searching, whereas `lpApplicationName` does not. To support the
-    /// "argument 0 override" feature, Subprocess must use `lpApplicationName` instead of
-    /// relying on `lpCommandLine` (so we can potentially set a different value for `lpCommandLine`).
-    ///
-    /// This method replicates the executable searching behavior of `CreateProcessW`'s
-    /// `lpCommandLine`. Specifically, it follows the steps listed in `CreateProcessW`'s documentation:
-    ///
-    /// 1. The directory from which the application loaded.
-    /// 2. The current directory for the calling process.
-    /// 3. The 32-bit Windows system directory.
-    /// 4. The 16-bit Windows system directory.
-    /// 5. The Windows directory.
-    /// 6. The directories that are listed in the PATH environment variable.
-    ///
-    /// For more information:
-    /// https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw
+    /// Each directory is tried with every extension in `PATHEXT`, since
+    /// `CreateProcessW` appends only `.exe` and a name such as `npm` is
+    /// commonly a `.cmd`.
     internal func possibleExecutablePaths(
         withPathValue pathValue: String?
-    ) -> _OrderedSet<String> {
-        func insertExecutableAddingExtension(
-            _ name: String,
-            currentPath: String,
-            pathExtensions: _OrderedSet<String>,
-            storage: inout _OrderedSet<String>
-        ) {
-            let fullPath = FilePath(currentPath).appending(name)
-            if !name.hasExtension() {
-                for ext in pathExtensions {
-                    var path = fullPath
-                    path.extension = ext
-                    storage.insert(path.string)
-                }
-            } else {
-                storage.insert(fullPath.string)
-            }
-        }
-
+    ) throws(SubprocessError) -> _OrderedSet<String> {
         switch self.storage {
         case .executable(let name):
+            try Self.validate(name: name)
             var possiblePaths: _OrderedSet<String> = .init()
-            let currentEnvironmentValues = Environment.currentEnvironmentValues()
-            // If `name` does not include extensions, we need to try these extensions
-            var pathExtensions: _OrderedSet<String> = _OrderedSet(["com", "exe", "bat", "cmd"])
-            if let extensionList = currentEnvironmentValues["PATHEXT"] {
-                for var ext in extensionList.split(separator: ";") {
-                    ext.removeFirst(1)
-                    pathExtensions.insert(String(ext).lowercased())
-                }
-            }
-            // 1. The directory from which the application loaded.
-            let applicationDirectory = try? fillNullTerminatedWideStringBuffer(
-                initialSize: DWORD(MAX_PATH), maxSize: DWORD(Int16.max)
-            ) {
-                return GetModuleFileNameW(nil, $0.baseAddress, DWORD($0.count))
-            }
-            if let applicationDirectory {
-                insertExecutableAddingExtension(
-                    name,
-                    currentPath: FilePath(applicationDirectory).removingLastComponent().string,
-                    pathExtensions: pathExtensions,
-                    storage: &possiblePaths
-                )
-            }
-            // 2. Current directory
-            let directorySize = GetCurrentDirectoryW(0, nil)
-            let currentDirectory = try? fillNullTerminatedWideStringBuffer(
-                initialSize: directorySize,
-                maxSize: DWORD(Int16.max)
-            ) {
-                return GetCurrentDirectoryW(DWORD($0.count), $0.baseAddress)
-            }
-            if let currentDirectory {
-                insertExecutableAddingExtension(
-                    name,
-                    currentPath: currentDirectory,
-                    pathExtensions: pathExtensions,
-                    storage: &possiblePaths
-                )
-            }
-            // 3. System directory (System32)
-            let systemDirectorySize = GetSystemDirectoryW(nil, 0)
-            let systemDirectory = try? fillNullTerminatedWideStringBuffer(
-                initialSize: systemDirectorySize,
-                maxSize: DWORD(Int16.max)
-            ) {
-                return GetSystemDirectoryW($0.baseAddress, DWORD($0.count))
-            }
-            if let systemDirectory {
-                insertExecutableAddingExtension(
-                    name,
-                    currentPath: systemDirectory,
-                    pathExtensions: pathExtensions,
-                    storage: &possiblePaths
-                )
-            }
-            // 4. The Windows directory
-            let windowsDirectorySize = GetWindowsDirectoryW(nil, 0)
-            let windowsDirectory = try? fillNullTerminatedWideStringBuffer(
-                initialSize: windowsDirectorySize,
-                maxSize: DWORD(Int16.max)
-            ) {
-                return GetWindowsDirectoryW($0.baseAddress, DWORD($0.count))
-            }
-            if let windowsDirectory {
-                insertExecutableAddingExtension(
-                    name,
-                    currentPath: windowsDirectory,
-                    pathExtensions: pathExtensions,
-                    storage: &possiblePaths
-                )
-
-                // 5. 16 bit System Directory
-                // Windows documentation stats that "No such standard function
-                // (similar to GetSystemDirectory) exists for the 16-bit system folder".
-                // Use "\(windowsDirectory)\System" instead
-                let systemDirectory16 = FilePath(windowsDirectory).appending("System")
-                insertExecutableAddingExtension(
-                    name,
-                    currentPath: systemDirectory16.string,
-                    pathExtensions: pathExtensions,
-                    storage: &possiblePaths
-                )
-            }
-            // 6. The directories that are listed in the PATH environment variable
-            if let pathValue {
-                let searchPaths = pathValue.split(separator: ";").map { String($0) }
-                for possiblePath in searchPaths {
-                    insertExecutableAddingExtension(
-                        name,
-                        currentPath: possiblePath,
-                        pathExtensions: pathExtensions,
-                        storage: &possiblePaths
-                    )
+            let fileNames = Self.candidateFileNames(for: name)
+            for directory in Self.searchPaths(withPathValue: pathValue) {
+                let directoryPath = FilePath(directory)
+                for fileName in fileNames {
+                    possiblePaths.insert(directoryPath.appending(fileName).string)
                 }
             }
             return possiblePaths
@@ -927,16 +844,45 @@ extension Executable {
             return _OrderedSet([path.string])
         }
     }
+
+    /// The file names to look for, in order, for the executable named `name`.
+    ///
+    /// A name that already carries an extension is tried as written first,
+    /// matching `CreateProcessW`, which appends `.exe` only to a name that has
+    /// no extension at all. Every `PATHEXT` extension is then *appended*, never
+    /// substituted, so a dotted name still resolves: `python3.11` looks for
+    /// `python3.11` and then `python3.11.exe`, not `python3.exe`. A name that
+    /// resolves to a `.bat` or `.cmd` runs through the hardened `cmd.exe`
+    /// invocation in `generateWindowsCommandAndArguments(withPossibleExecutablePath:)`.
+    private static func candidateFileNames(for name: String) -> [String] {
+        // If `name` does not include extensions, we need to try these extensions
+        var pathExtensions: _OrderedSet<String> = _OrderedSet(["com", "exe", "bat", "cmd"])
+        if let extensionList = Environment.currentEnvironmentValues()["PATHEXT"] {
+            for var ext in extensionList.split(separator: ";") {
+                ext.removeFirst(1)
+                pathExtensions.insert(String(ext).lowercased())
+            }
+        }
+        var fileNames: [String] = FilePath(name).extension == nil ? [] : [name]
+        fileNames.append(contentsOf: pathExtensions.map { "\(name).\($0)" })
+        return fileNames
+    }
 }
 
 // MARK: - Environment Resolution
 extension Environment {
+    /// The `PATH` value to resolve ``Executable/name(_:)`` against.
+    ///
+    /// The value the subprocess receives wins, so a name resolves in the
+    /// environment it will run in. When that environment carries no `PATH`,
+    /// this process's own value is used.`nil` means neither defines one.
     internal func pathValue() -> String? {
         switch self.config {
         case .inherit(let overrides):
-            // If PATH value exists in overrides, use it
-            if let value = overrides[.path] {
-                return value
+            // If PATH value exists in overrides, use it. An override maps to
+            // `nil` to unset the value, which falls through to this process.
+            if let overridden = overrides[.path], let overridden {
+                return overridden
             }
             // Fall back to current process
             return Self.currentEnvironmentValues()[.path]
@@ -944,7 +890,7 @@ extension Environment {
             if let value = fullEnvironment[.path] {
                 return value
             }
-            return nil
+            return Self.currentEnvironmentValues()[.path]
         }
     }
 
@@ -1584,9 +1530,10 @@ extension Configuration {
     /// Returns whether `path` names something this process can execute: it must
     /// exist, and it must not be a directory.
     ///
-    /// Existence alone is not enough. Both `SearchPathW` and the
-    /// `CreateProcessW` candidate loop otherwise accept a directory whose name
-    /// matches the executable, and a directory can never be run.
+    /// Existence alone is not enough. The candidate paths that
+    /// `possibleExecutablePaths(withPathValue:)` produces otherwise accept a
+    /// directory whose name matches the executable, and a directory can never
+    /// be run.
     internal static func executableAccessible(_ path: String) -> Bool {
         return path.withCString(encodedAs: UTF16.self) {
             let attrs = GetFileAttributesW($0)
@@ -1755,11 +1702,6 @@ extension String {
                 }
             }
         }
-    }
-
-    internal func hasExtension() -> Bool {
-        let components = self.split(separator: ".")
-        return components.count > 1 && components.last?.count == 3
     }
 
     /// Returns `true` if this path names a Windows batch file (`.bat` or

@@ -92,6 +92,39 @@ extension SubprocessIntegrationTests {
         }
     }
 
+    /// `name(_:)` takes a name to look up on `PATH`, so a value that names a
+    /// location instead is rejected rather than resolved against a current
+    /// directory. `/` is a path separator on every platform Subprocess supports.
+    @Test func testExecutableNameWithPathSeparatorIsRejected() async throws {
+        let error = await #expect(throws: SubprocessError.self) {
+            _ = try await Subprocess.run(.name("bin/do-not-exist"), output: .discarded)
+        }
+        #expect(error?.code == .spawnFailed)
+
+        let resolveError = await #expect(throws: SubprocessError.self) {
+            _ = try await Executable.name("bin/do-not-exist").resolveExecutablePath(in: .inherit)
+        }
+        #expect(resolveError?.code == .spawnFailed)
+    }
+
+    /// A `PATH` that is set but empty lists no directories, so a name resolves
+    /// to nothing rather than falling back to a built-in list of directories.
+    @Test func testExecutableNameWithEmptyPathValue() async throws {
+        #if os(Windows)
+        let name = "cmd.exe"
+        #else
+        let name = "echo"
+        #endif
+        let error = await #expect(throws: SubprocessError.self) {
+            _ = try await Subprocess.run(
+                .name(name),
+                environment: .custom(["PATH": ""]),
+                output: .discarded
+            )
+        }
+        #expect(error?.code == .executableNotFound)
+    }
+
     @Test func testExecutableAtPath() async throws {
         #if os(Windows)
         let cmdExe = ProcessInfo.processInfo.environment["COMSPEC"] ?? ProcessInfo.processInfo.environment["ComSpec"] ?? ProcessInfo.processInfo.environment["comspec"]
@@ -613,12 +646,13 @@ extension SubprocessIntegrationTests {
         // PATH="$PATH:$HOME/Desktop/.DS_Store"
         // posix_spawn returns ENOTDIR in this case because `.DS_Store` is a valid
         // file, but not a directory so it can't append the executable name.
+        // Such an entry must be skipped, letting a later entry win.
         let setup = TestSetup(
             executable: .name("echo"),
             arguments: ["testEnvironmentPathWithNonDirectoryPaths"],
             environment: .inherit.updating([
                 // /bin/ls is a valid file, but not directory
-                "PATH": "/bin/ls"
+                "PATH": "/bin/ls:/bin"
             ])
         )
 

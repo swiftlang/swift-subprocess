@@ -332,6 +332,18 @@ public struct Executable: Sendable, Hashable {
     /// Subprocess searches for the executable by name in the directories listed
     /// in the `PATH` environment variable, in order, and runs the first match it
     /// finds. To run an executable at a known location instead, use ``path(_:)``.
+    ///
+    /// The search uses the `PATH` of the environment you pass to the subprocess,
+    /// falling back to the `PATH` of the current process when that environment
+    /// doesn't set one, and to the directories the platform considers standard
+    /// when neither sets one. Only absolute directories are searched: Subprocess
+    /// skips empty and relative `PATH` entries, and never searches the current
+    /// working directory of either process. The working directory you pass to
+    /// `run` therefore has no effect on which executable runs.
+    ///
+    /// The executable name must be a name, not a path: passing a name that
+    /// contains a path separator throws a ``SubprocessError`` with the code
+    /// ``SubprocessError/Code/spawnFailed``. Use ``path(_:)`` for a location.
     public static func name(_ executableName: String) -> Self {
         return .init(_config: .executable(executableName))
     }
@@ -342,11 +354,77 @@ public struct Executable: Sendable, Hashable {
         return .init(_config: .path(filePath))
     }
     /// Resolves the full executable path using the environment you provide.
+    ///
+    /// For an executable created with ``name(_:)``, this searches `PATH` the
+    /// same way running the subprocess does, and returns an absolute path.
+    /// An executable created with ``path(_:)`` is returned unchanged, without
+    /// checking whether anything exists there.
+    ///
+    /// - Throws: ``SubprocessError`` with the code
+    ///   ``SubprocessError/Code/executableNotFound`` when no directory on
+    ///   `PATH` holds a matching executable, or
+    ///   ``SubprocessError/Code/spawnFailed`` when the name contains a path
+    ///   separator.
     public func resolveExecutablePath(in environment: Environment) async throws(SubprocessError) -> FilePath {
         try await runOnBackgroundThread { () throws(SubprocessError) -> FilePath in
             let path = try self.resolveExecutablePath(withPathValue: environment.pathValue())
             return FilePath(path)
         }
+    }
+}
+
+// MARK: - Executable Name Resolution Policy
+
+extension Executable {
+    #if os(Windows)
+    /// The character that separates one directory from the next in a `PATH`
+    /// value.
+    internal static let pathValueSeparator: Character = ";"
+    /// The characters that name a location, and so may not appear in a name
+    /// passed to ``name(_:)``.
+    ///
+    /// Windows accepts either slash as a separator, and `:` separates a drive
+    /// from a drive-relative path, so `C:tool` names a location in the same way
+    /// `.\tool` does.
+    internal static let pathSeparators: [Character] = ["/", "\\", ":"]
+    #else
+    /// The character that separates one directory from the next in a `PATH`
+    /// value.
+    internal static let pathValueSeparator: Character = ":"
+    /// The characters that name a location, and so may not appear in a name
+    /// passed to ``name(_:)``.
+    internal static let pathSeparators: [Character] = ["/"]
+    #endif
+
+    /// Rejects a name that names a location rather than an executable.
+    ///
+    /// A name containing a path separator is ambiguous: it reads as a name to
+    /// look up on `PATH` and as a path to resolve against some current
+    /// directory, and the two answers differ. ``path(_:)`` expresses the
+    /// second intent unambiguously.
+    internal static func validate(name: String) throws(SubprocessError) {
+        guard let separator = name.first(where: { Self.pathSeparators.contains($0) }) else {
+            return
+        }
+        throw SubprocessError.spawnFailed(
+            withUnderlyingError: nil,
+            reason: """
+                Executable name "\(name)" must not contain the path separator "\(separator)". \
+                Executable.name(_:) looks a name up in the directories listed in PATH; \
+                use Executable.path(_:) to run an executable at a known location.
+                """
+        )
+    }
+
+    internal static func searchPaths(withPathValue pathValue: String?) -> [String] {
+        guard let pathValue else {
+            return Self.defaultSearchPaths
+        }
+        // `split` omits empty subsequences, dropping the empty entries that a
+        // leading, trailing, or doubled separator introduces.
+        return pathValue.split(separator: Self.pathValueSeparator)
+            .map(String.init)
+            .filter { FilePath($0).isAbsolute }
     }
 }
 

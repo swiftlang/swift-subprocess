@@ -111,6 +111,14 @@ int _was_process_suspended(int status);
 /// correct type regardless of how the Swift Glibc/Darwin overlay imports it.
 uint64_t _subprocess_nofile_soft_limit(void);
 
+/// Writes the system's standard `PATH` value into `buffer`.
+///
+/// Follows the `confstr(3)` protocol: returns the buffer size required to hold
+/// the value including its null terminator, and writes at most `size` bytes,
+/// truncating and null-terminating if the value does not fit. Returns 0 when
+/// the platform reports no standard path, in which case nothing is written.
+size_t _subprocess_default_search_path(char * _Nullable buffer, size_t size);
+
 void _subprocess_lock_environ(void);
 void _subprocess_unlock_environ(void);
 char * _Nullable * _Nullable _subprocess_get_environ(void);
