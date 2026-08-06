@@ -1,6 +1,6 @@
 # Subprocess
 
-Subprocess is a cross-platform Swift package for spawning child processes, built from the ground up with Swift concurrency.
+Subprocess is a cross-platform Swift package for launching subprocesses, built from the ground up with Swift concurrency.
 
 [![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fswiftlang%2Fswift-subprocess%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/swiftlang/swift-subprocess) [![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fswiftlang%2Fswift-subprocess%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/swiftlang/swift-subprocess)
 
@@ -68,7 +68,7 @@ This returns an `ExecutionResult` containing the process identifier, termination
 
 ### Run with a Custom Closure
 
-For more control, pass a closure that runs while the child process is active. The closure receives a single `Execution` value that you use to send signals, write to standard input, and stream standard output and standard error.
+For more control, pass a closure that runs while the subprocess is active. The closure receives a single `Execution` value that you use to send signals, write to standard input, and stream standard output and standard error.
 
 > [!CAUTION]
 > The `Execution`, `SubprocessOutputSequence`, and `StandardInputWriter` values are valid only for the duration of the closure. Don't let them escape the closure.
@@ -195,7 +195,7 @@ import Subprocess
 let result = try await run(
     .path("/bin/ls"),
     arguments: ["-a"],
-    // Inherit environment values from the parent process
+    // Inherit environment values from the calling process
     // and add NewKey=NewValue
     environment: .inherit.updating(["NewKey": "NewValue"]),
     workingDirectory: "/Users/",
@@ -218,8 +218,8 @@ let result = try await run(config, output: .string(limit: 4096))
 ### Input and Output Options
 
 By default, `Subprocess`:
-- Provides no input to the child process
-- Discards the child process's standard error
+- Provides no input to the subprocess
+- Discards the subprocess's standard error
 
 For the collected-result API, you must specify how to capture standard output.
 
@@ -229,7 +229,7 @@ For the collected-result API, you must specify how to capture standard output.
 | --- | --- |
 | `.none` | No input (default) |
 | `.fileDescriptor(_:closeAfterSpawningProcess:)` | Read from a file descriptor |
-| `.currentStandardInput` | Read from the parent process's standard input |
+| `.currentStandardInput` | Read from the calling process's standard input |
 | `.string(_:)` or `.string(_:using:)` | Read from a string with optional encoding |
 | `.array(_:)` | Read from a `[UInt8]` array |
 | `Span<BitwiseCopyable>` | Read from a span (passed directly as the `input` parameter) |
@@ -244,14 +244,14 @@ For the collected-result API, you must specify how to capture standard output.
 | --- | --- |
 | `.discarded` | Discard output |
 | `.fileDescriptor(_:closeAfterSpawningProcess:)` | Write to a file descriptor |
-| `.currentStandardOutput` or `.currentStandardError` | Write to the parent process's standard output or standard error |
+| `.currentStandardOutput` or `.currentStandardError` | Write to the calling process's standard output or standard error |
 | `.string(limit:)` or `.string(limit:encoding:)` | Collect as `String?` |
 | `.bytes(limit:)` | Collect as `[UInt8]` |
 | `.sequence` | Stream to the closure via `execution.standardOutput` or `execution.standardError` (closure-based `run` only) |
 | `.data(limit:)` | Collect as `Data` (requires `SubprocessFoundation`) |
 | `.combinedWithOutput` | Merge standard error into the standard output stream (error parameter only) |
 
-The `limit` parameter specifies the maximum number of bytes to collect. `Subprocess` throws an error if the child process produces more output than the limit allows.
+The `limit` parameter specifies the maximum number of bytes to collect. `Subprocess` throws an error if the subprocess produces more output than the limit allows.
 
 Use `.combinedWithOutput` for the `error` parameter to merge standard output and standard error into a single stream, equivalent to the shell redirection `2>&1`:
 
@@ -267,7 +267,7 @@ let result = try await run(
 
 ### Graceful Teardown
 
-When a parent task is cancelled, `Subprocess` can perform a configurable teardown sequence before forcefully terminating the child process. Set this up via `PlatformOptions.teardownSequence`:
+When a calling task is cancelled, `Subprocess` can perform a configurable teardown sequence before forcefully terminating the subprocess. Set this up via `PlatformOptions.teardownSequence`:
 
 ```swift
 let serverTask = Task {
@@ -299,14 +299,14 @@ platformOptions.teardownSequence = [
 ]
 ```
 
-The teardown sequence always concludes by sending a kill signal.
+The teardown sequence always concludes by sending a termination signal.
 
 You can also trigger a teardown manually from within the closure via `execution.teardown(using:)`, or send individual signals on Unix with `execution.send(signal:)`.
 
 
 ### Platform-Specific Options and Escape Hatches
 
-`PlatformOptions` provides platform-specific settings for the child process:
+`PlatformOptions` provides platform-specific settings for the subprocess:
 
 - **Unix:** `userID`, `groupID`, `supplementaryGroups`, `processGroupID`, `createSession`
 - **macOS:** All Unix options, plus `qualityOfService` and `preSpawnProcessConfigurator`
