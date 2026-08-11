@@ -636,10 +636,13 @@ internal func waitForProcessTermination(
 @Sendable
 internal func reapProcess(
     with processIdentifier: ProcessIdentifier
-) throws(SubprocessError) -> TerminationStatus {
+) throws(SubprocessError) -> (TerminationStatus, ResourceUsage) {
     // Windows keeps the exit code reachable through the process HANDLE
     // until the HANDLE is closed, so there is no zombie to reap. We just
     // need to read the exit code via `GetExitCodeProcess`.
+    // Collect resource usage while the process handle is still valid
+    let resourceUsage = ResourceUsage(processHandle: processIdentifier.processDescriptor)
+
     var status: DWORD = 0
     guard GetExitCodeProcess(processIdentifier.processDescriptor, &status) else {
         throw SubprocessError.failedToMonitor(
@@ -647,7 +650,58 @@ internal func reapProcess(
         )
     }
 
-    return .exited(status)
+    return (.exited(status), resourceUsage)
+}
+
+extension ResourceUsage {
+    /// Reads CPU time and peak memory for a process that has already exited.
+    ///
+    /// The handle must still be open. Windows has no single call that reports
+    /// both, so a failure of either one leaves its fields zeroed rather than
+    /// failing the reap: the exit status is the caller's primary result, and
+    /// losing it because an accounting query failed would be the worse outcome.
+    internal init(processHandle: HANDLE) {
+        var userTime = Duration.zero
+        var systemTime = Duration.zero
+        var creationFileTime = FILETIME()
+        var exitFileTime = FILETIME()
+        var kernelFileTime = FILETIME()
+        var userFileTime = FILETIME()
+        if GetProcessTimes(
+            processHandle,
+            &creationFileTime,
+            &exitFileTime,
+            &kernelFileTime,
+            &userFileTime
+        ) {
+            userTime = Duration(userFileTime)
+            systemTime = Duration(kernelFileTime)
+        }
+
+        var maxRSS = 0
+        var memInfo = PROCESS_MEMORY_COUNTERS()
+        memInfo.cb = DWORD(MemoryLayout<PROCESS_MEMORY_COUNTERS>.size)
+        if K32GetProcessMemoryInfo(
+            processHandle,
+            &memInfo,
+            DWORD(MemoryLayout<PROCESS_MEMORY_COUNTERS>.size)
+        ) {
+            maxRSS = Int(memInfo.PeakWorkingSetSize)
+        }
+
+        self.init(userTime: userTime, systemTime: systemTime, maxRSS: maxRSS)
+    }
+}
+
+extension Duration {
+    /// Converts a `FILETIME` interval, which counts 100-nanosecond units.
+    fileprivate init(_ fileTime: FILETIME) {
+        let hundredNanos = UInt64(fileTime.dwHighDateTime) << 32 | UInt64(fileTime.dwLowDateTime)
+        self.init(
+            secondsComponent: Int64(hundredNanos / 10_000_000),
+            attosecondsComponent: Int64(hundredNanos % 10_000_000) * 100_000_000_000
+        )
+    }
 }
 
 // MARK: - Subprocess Control
