@@ -227,6 +227,16 @@ extension Configuration {
             let errorReadFileDescriptor: IODescriptor? = _errorPipe.readFileDescriptor()
             let errorWriteFileDescriptor: IODescriptor? = _errorPipe.writeFileDescriptor()
 
+            // Captured before any of the descriptors above are consumed, so
+            // diagnostics below can still report the fd number involved in a
+            // failure after `safelyCloseMultiple` has taken ownership of them.
+            let inputReadFD = inputReadFileDescriptor?.platformDescriptor()
+            let inputWriteFD = inputWriteFileDescriptor?.platformDescriptor()
+            let outputReadFD = outputReadFileDescriptor?.platformDescriptor()
+            let outputWriteFD = outputWriteFileDescriptor?.platformDescriptor()
+            let errorReadFD = errorReadFileDescriptor?.platformDescriptor()
+            let errorWriteFD = errorWriteFileDescriptor?.platformDescriptor()
+
             for possibleExecutablePath in possiblePaths {
                 // Setup Arguments
                 let argv: [UnsafeMutablePointer<CChar>?] = self.arguments.createArgs(
@@ -260,7 +270,8 @@ extension Configuration {
                             errorWrite: errorWriteFileDescriptor
                         )
                         throw SubprocessError.spawnFailed(
-                            withUnderlyingError: Errno(rawValue: result)
+                            withUnderlyingError: Errno(rawValue: result),
+                            reason: "posix_spawn_file_actions_adddup2(stdin read fd \(inputReadFD!) -> 0) failed"
                         )
                     }
                 }
@@ -279,7 +290,8 @@ extension Configuration {
                             errorWrite: errorWriteFileDescriptor
                         )
                         throw SubprocessError.spawnFailed(
-                            withUnderlyingError: Errno(rawValue: result)
+                            withUnderlyingError: Errno(rawValue: result),
+                            reason: "posix_spawn_file_actions_addclose(stdin write fd \(inputWriteFD!)) failed"
                         )
                     }
                 }
@@ -298,7 +310,8 @@ extension Configuration {
                             errorWrite: errorWriteFileDescriptor
                         )
                         throw SubprocessError.spawnFailed(
-                            withUnderlyingError: Errno(rawValue: result)
+                            withUnderlyingError: Errno(rawValue: result),
+                            reason: "posix_spawn_file_actions_adddup2(stdout write fd \(outputWriteFD!) -> 1) failed"
                         )
                     }
                 }
@@ -317,7 +330,8 @@ extension Configuration {
                             errorWrite: errorWriteFileDescriptor
                         )
                         throw SubprocessError.spawnFailed(
-                            withUnderlyingError: Errno(rawValue: result)
+                            withUnderlyingError: Errno(rawValue: result),
+                            reason: "posix_spawn_file_actions_addclose(stdout read fd \(outputReadFD!)) failed"
                         )
                     }
                 }
@@ -336,7 +350,8 @@ extension Configuration {
                             errorWrite: errorWriteFileDescriptor
                         )
                         throw SubprocessError.spawnFailed(
-                            withUnderlyingError: Errno(rawValue: result)
+                            withUnderlyingError: Errno(rawValue: result),
+                            reason: "posix_spawn_file_actions_adddup2(stderr write fd \(errorWriteFD!) -> 2) failed"
                         )
                     }
                 }
@@ -355,7 +370,8 @@ extension Configuration {
                             errorWrite: errorWriteFileDescriptor
                         )
                         throw SubprocessError.spawnFailed(
-                            withUnderlyingError: Errno(rawValue: result)
+                            withUnderlyingError: Errno(rawValue: result),
+                            reason: "posix_spawn_file_actions_addclose(stderr read fd \(errorReadFD!)) failed"
                         )
                     }
                 }
@@ -410,7 +426,10 @@ extension Configuration {
 
                     let error: SubprocessError
                     if spawnAttributeError != 0 {
-                        error = SubprocessError.spawnFailed(withUnderlyingError: Errno(rawValue: result))
+                        error = SubprocessError.spawnFailed(
+                            withUnderlyingError: Errno(rawValue: spawnAttributeError),
+                            reason: "posix_spawnattr configuration failed"
+                        )
                     } else {
                         error = SubprocessError.failedToChangeWorkingDirectory(
                             self.workingDirectory?.string,
@@ -458,6 +477,40 @@ extension Configuration {
                         // Move on to another possible path
                         continue
                     }
+                    // On EBADF, check-before-close which (if any) of our own
+                    // fds went bad between building the file actions above
+                    // and the kernel actually applying them, to distinguish
+                    // "our own fd bookkeeping is wrong" from "something else
+                    // closed this fd out from under us". Must run before
+                    // `safelyCloseMultiple` below, which would otherwise
+                    // close (or silently no-op past) the very fd we're
+                    // trying to inspect.
+                    var spawnFailureReason = "_subprocess_spawn() failed for executable path \"\(possibleExecutablePath)\""
+                    if spawnError == EBADF {
+                        let candidateFDs: [(String, PlatformFileDescriptor?)] = [
+                            ("stdin read -> 0", inputReadFD),
+                            ("stdin write (parent side)", inputWriteFD),
+                            ("stdout write -> 1", outputWriteFD),
+                            ("stdout read (parent side)", outputReadFD),
+                            ("stderr write -> 2", errorWriteFD),
+                            ("stderr read (parent side)", errorReadFD),
+                        ]
+                        let staleFDs = candidateFDs.compactMap { label, fd -> String? in
+                            guard let fd, fcntl(fd, F_GETFD) == -1, errno == EBADF else {
+                                return nil
+                            }
+                            return "\(label) (fd \(fd))"
+                        }
+                        if staleFDs.isEmpty {
+                            let openFDs = candidateFDs.compactMap { label, fd -> String? in
+                                guard let fd else { return nil }
+                                return "\(label)=\(fd)"
+                            }.joined(separator: ", ")
+                            spawnFailureReason += "; all of our fds were still open at failure time (\(openFDs)) -- EBADF did not come from these"
+                        } else {
+                            spawnFailureReason += "; already invalid at spawn time: \(staleFDs.joined(separator: ", "))"
+                        }
+                    }
                     // Throw all other errors
                     try self.safelyCloseMultiple(
                         inputRead: inputReadFileDescriptor,
@@ -467,7 +520,10 @@ extension Configuration {
                         errorRead: errorReadFileDescriptor,
                         errorWrite: errorWriteFileDescriptor
                     )
-                    throw SubprocessError.spawnFailed(withUnderlyingError: Errno(rawValue: spawnError))
+                    throw SubprocessError.spawnFailed(
+                        withUnderlyingError: Errno(rawValue: spawnError),
+                        reason: spawnFailureReason
+                    )
                 }
 
                 // After spawn finishes, close all child side fds
