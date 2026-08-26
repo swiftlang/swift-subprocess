@@ -19,6 +19,8 @@ import SystemPackage
 import Darwin
 #elseif canImport(Glibc)
 import Glibc
+#elseif canImport(Android)
+import Android
 #elseif canImport(Bionic)
 import Bionic
 #elseif canImport(Musl)
@@ -773,6 +775,169 @@ extension SubprocessIntegrationTests {
             _ = try await _run(setup, input: .none, output: .string(limit: .max), error: .discarded)
         }
     }
+
+    #if !os(Windows)
+    /// A path that exists but is not a directory is reported as `ENOTDIR`, not as
+    /// a missing executable.
+    ///
+    /// Both working-directory validation routes have to reach this conclusion:
+    /// the `O_SEARCH`/`O_PATH` open fails with `ENOTDIR` because both imply
+    /// `O_DIRECTORY`, and the `stat` route has to check the file type explicitly
+    /// because `access(X_OK)` succeeds on an executable regular file.
+    @Test func testWorkingDirectoryIsNotADirectory() async throws {
+        let notADirectory = "/bin/sh"
+        let expectedError: SubprocessError = .failedToChangeWorkingDirectory(
+            notADirectory,
+            underlyingError: Errno(rawValue: ENOTDIR)
+        )
+        await #expect(throws: expectedError) {
+            _ = try await _run(
+                TestSetup(
+                    executable: .path("/bin/pwd"),
+                    arguments: [],
+                    workingDirectory: FilePath(notADirectory)
+                ),
+                input: .none,
+                output: .string(limit: .max),
+                error: .discarded
+            )
+        }
+    }
+
+    /// `chdir` needs only execute (search) permission on a directory, so a
+    /// directory this process may search but not read must still be usable as a
+    /// working directory.
+    ///
+    /// This guards the descriptor the `fchdir` file action is built from: opening
+    /// it `O_RDONLY` would reject such a directory, which is why the shim asks
+    /// for `O_SEARCH`/`O_PATH` instead.
+    @Test(
+        .enabled(
+            if: geteuid() != 0,
+            "root bypasses directory permission checks, so this would pass vacuously"
+        )
+    )
+    func testWorkingDirectoryWithExecuteOnlyPermission() async throws {
+        let directoryPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("subprocess-execute-only-\(randomString(length: 12, lettersOnly: true))")
+            ._fileSystemPath
+        try FileManager.default.createDirectory(
+            atPath: directoryPath,
+            withIntermediateDirectories: true
+        )
+        defer {
+            // Restore read permission first: the directory cannot be removed
+            // while its contents are unreadable.
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: directoryPath
+            )
+            try? FileManager.default.removeItem(atPath: directoryPath)
+        }
+        // Searchable, but not readable.
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o111],
+            ofItemAtPath: directoryPath
+        )
+        // Confirm the premise: an O_RDONLY open of this directory is refused,
+        // so a passing test really does exercise the execute-only case. The
+        // descriptor and `errno` are captured together, since #expect may run
+        // code that clobbers `errno` between the two.
+        let (readOnlyDescriptor, readOnlyError) = directoryPath.withCString {
+            (path) -> (CInt, CInt) in
+            let descriptor = open(path, O_RDONLY | O_DIRECTORY)
+            return (descriptor, descriptor == -1 ? errno : 0)
+        }
+        if readOnlyDescriptor != -1 {
+            close(readOnlyDescriptor)
+        }
+        #expect(readOnlyDescriptor == -1)
+        #expect(readOnlyError == EACCES)
+
+        let workingDirectory = FilePath(directoryPath)
+        let result = try await _run(
+            TestSetup(
+                executable: .path("/bin/pwd"),
+                arguments: [],
+                workingDirectory: workingDirectory
+            ),
+            input: .none,
+            output: .string(limit: .max),
+            error: .discarded
+        )
+        #expect(result.terminationStatus.isSuccess)
+        let resultPath = result.standardOutput.trimmingNewLineAndQuotes()
+        #if canImport(Darwin)
+        // On Darwin, /var is linked to /private/var; /tmp is linked to /private/tmp
+        var expected = workingDirectory
+        if expected.starts(with: "/var") || expected.starts(with: "/tmp") {
+            expected = FilePath("/private").appending(expected.components)
+        }
+        #expect(FilePath(resultPath) == expected)
+        #else
+        #expect(FilePath(resultPath) == workingDirectory)
+        #endif
+    }
+
+    /// A directory the process cannot search at all is reported as `EACCES`, not
+    /// as a missing executable.
+    ///
+    /// This is the counterpart to
+    /// ``testWorkingDirectoryWithExecuteOnlyPermission()``: that one proves the
+    /// check is not too strict, this one proves it is not too lax. Only a real
+    /// `O_SEARCH` (Darwin, FreeBSD) rejects such a directory on open; where the
+    /// flags fall back to `O_PATH` the kernel checks no permission on the target,
+    /// so the open succeeds and only an explicit searchability check catches it.
+    /// Without that check the `fchdir` file action fails `EACCES` in the child,
+    /// and because `EACCES` is a try-the-next-candidate errno the caller would be
+    /// told the executable does not exist.
+    @Test(
+        .enabled(
+            if: geteuid() != 0,
+            "root bypasses directory permission checks, so this would pass vacuously"
+        )
+    )
+    func testWorkingDirectoryWithoutSearchPermission() async throws {
+        let directoryPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("subprocess-unsearchable-\(randomString(length: 12, lettersOnly: true))")
+            ._fileSystemPath
+        try FileManager.default.createDirectory(
+            atPath: directoryPath,
+            withIntermediateDirectories: true
+        )
+        defer {
+            // Restore permissions first: the directory cannot be removed while it
+            // cannot be searched.
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: directoryPath
+            )
+            try? FileManager.default.removeItem(atPath: directoryPath)
+        }
+        // Neither readable nor searchable.
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o000],
+            ofItemAtPath: directoryPath
+        )
+
+        let expectedError: SubprocessError = .failedToChangeWorkingDirectory(
+            directoryPath,
+            underlyingError: Errno(rawValue: EACCES)
+        )
+        await #expect(throws: expectedError) {
+            _ = try await _run(
+                TestSetup(
+                    executable: .path("/bin/pwd"),
+                    arguments: [],
+                    workingDirectory: FilePath(directoryPath)
+                ),
+                input: .none,
+                output: .string(limit: .max),
+                error: .discarded
+            )
+        }
+    }
+    #endif // !os(Windows)
 }
 
 // MARK: - Input Tests

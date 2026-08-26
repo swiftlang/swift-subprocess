@@ -17,15 +17,26 @@ import System
 import SystemPackage
 #endif
 
-#if os(OpenBSD)
-// FIXME: Why is this necessary only on OpenBSD?
-public import _SubprocessCShims
-#else
+#if canImport(Darwin)
+// Internal is enough here: Darwin declares no `PlatformSpawnAttributes` or
+// `PlatformSpawnFileActions` -- its `preSpawnProcessConfigurator` predates them
+// and keeps its own signature -- so nothing public in this file names a type
+// this module owns.
 import _SubprocessCShims
+#else
+// `public` because the `PlatformSpawnAttributes` and `PlatformSpawnFileActions`
+// typealiases below are public, and on every platform whose C library declares
+// `posix_spawnattr_t` and `posix_spawn_file_actions_t` as structs, Swift resolves
+// those types through this module rather than through the libc overlay -- even
+// where that overlay is itself imported publicly. An internal import would make
+// them internal types, and a public typealias may not name one.
+public import _SubprocessCShims
 #endif
 
 #if canImport(Darwin)
-import Darwin
+// `public` because `ProcessIdentifier.value` below is public and typed `pid_t`.
+// `Subprocess+Darwin.swift` imports Darwin publicly for the same reason.
+public import Darwin
 #elseif canImport(Android)
 public import Android
 #elseif canImport(Glibc)
@@ -552,284 +563,6 @@ internal extension PlatformFileDescriptor {
     static var invalidDescriptor: Self { -1 }
 }
 
-// MARK: - Spawning
-
-#if !canImport(Darwin)
-
-#if canImport(Android)
-public typealias pid_t = Android.pid_t
-public typealias uid_t = Android.uid_t
-public typealias gid_t = Android.gid_t
-#elseif canImport(Glibc)
-public typealias pid_t = Glibc.pid_t
-public typealias uid_t = Glibc.uid_t
-public typealias gid_t = Glibc.gid_t
-#elseif canImport(Musl)
-public typealias pid_t = Musl.pid_t
-public typealias uid_t = Musl.uid_t
-public typealias gid_t = Musl.gid_t
-#endif
-
-extension Configuration {
-
-    // @unchecked Sendable because we need to capture UnsafePointers
-    // to send to another thread. While UnsafePointers are not
-    // Sendable, we are not mutating them -- we only need these type
-    // for C interface.
-    internal struct SpawnContext: @unchecked Sendable {
-        let argv: [UnsafeMutablePointer<CChar>?]
-        let env: [UnsafeMutablePointer<CChar>?]
-        let uidPtr: UnsafeMutablePointer<uid_t>?
-        let gidPtr: UnsafeMutablePointer<gid_t>?
-        let processGroupIDPtr: UnsafeMutablePointer<gid_t>?
-    }
-
-    internal func spawn(
-        withInput inputPipe: consuming CreatedPipe,
-        outputPipe: consuming CreatedPipe,
-        errorPipe: consuming CreatedPipe
-    ) async throws -> SpawnResult {
-        // Ensure the waiter thread is running.
-        _setupMonitorSignalHandler()
-
-        var inputPipeBox: CreatedPipe? = consume inputPipe
-        var outputPipeBox: CreatedPipe? = consume outputPipe
-        var errorPipeBox: CreatedPipe? = consume errorPipe
-
-        func spawnFunc(_ args: PreSpawnArgs) async throws -> SpawnResult {
-            let (env, uidPtr, gidPtr, supplementaryGroups) = args
-
-            // Resolve before taking the pipes out of their boxes, so that a
-            // rejected executable name leaves them for the caller's `catch`
-            // below to close.
-            //
-            // Instead of checking if every possible executable path
-            // is valid, spawn each directly and catch ENOENT
-            let possiblePaths = try self.executable.possibleExecutablePaths(
-                withPathValue: self.environment.pathValue()
-            )
-
-            var _inputPipe = inputPipeBox.take()!
-            var _outputPipe = outputPipeBox.take()!
-            var _errorPipe = errorPipeBox.take()!
-
-            let inputReadFileDescriptor: IODescriptor? = _inputPipe.readFileDescriptor()
-            let inputWriteFileDescriptor: IODescriptor? = _inputPipe.writeFileDescriptor()
-            let outputReadFileDescriptor: IODescriptor? = _outputPipe.readFileDescriptor()
-            let outputWriteFileDescriptor: IODescriptor? = _outputPipe.writeFileDescriptor()
-            let errorReadFileDescriptor: IODescriptor? = _errorPipe.readFileDescriptor()
-            let errorWriteFileDescriptor: IODescriptor? = _errorPipe.writeFileDescriptor()
-
-            for possibleExecutablePath in possiblePaths {
-                var processGroupIDPtr: UnsafeMutablePointer<gid_t>? = nil
-                if let processGroupID = self.platformOptions.processGroupID {
-                    processGroupIDPtr = .allocate(capacity: 1)
-                    processGroupIDPtr?.pointee = gid_t(processGroupID)
-                }
-                defer {
-                    processGroupIDPtr?.deallocate()
-                }
-                // Setup Arguments
-                let argv: [UnsafeMutablePointer<CChar>?] = self.arguments.createArgs(
-                    withExecutablePath: possibleExecutablePath
-                )
-                defer {
-                    for ptr in argv { ptr?.deallocate() }
-                }
-                // Setup input
-                let fileDescriptors: [CInt] = [
-                    inputReadFileDescriptor?.platformDescriptor() ?? -1,
-                    inputWriteFileDescriptor?.platformDescriptor() ?? -1,
-                    outputWriteFileDescriptor?.platformDescriptor() ?? -1,
-                    outputReadFileDescriptor?.platformDescriptor() ?? -1,
-                    errorWriteFileDescriptor?.platformDescriptor() ?? -1,
-                    errorReadFileDescriptor?.platformDescriptor() ?? -1,
-                ]
-
-                // Spawn
-                let spawnContext = SpawnContext(
-                    argv: argv, env: env, uidPtr: uidPtr, gidPtr: gidPtr, processGroupIDPtr: processGroupIDPtr
-                )
-                let (pid, processDescriptor, spawnError) = try await self.forkExecRetryingTransientFailure(
-                    executablePath: possibleExecutablePath,
-                    fileDescriptors: fileDescriptors,
-                    spawnContext: spawnContext,
-                    supplementaryGroups: supplementaryGroups
-                )
-                // Spawn error
-                if spawnError != 0 {
-                    if [ENOENT, EACCES, ENOTDIR].contains(spawnError) {
-                        // clone3(CLONE_PIDFD) allocates a pidfd before exec runs.
-                        // If exec fails we retry with the next candidate path, so
-                        // close the pidfd here to avoid leaking it across retries.
-                        if processDescriptor != .invalidDescriptor {
-                            do throws(SubprocessError) {
-                                try _safelyClose(.fileDescriptor(FileDescriptor(rawValue: processDescriptor)))
-                            } catch {
-                                throw SubprocessError.spawnFailed(withUnderlyingError: error.underlyingError)
-                            }
-                        }
-                        // Move on to another possible path
-                        continue
-                    }
-                    // Throw all other errors
-                    try self.safelyCloseMultiple(
-                        inputRead: inputReadFileDescriptor,
-                        inputWrite: inputWriteFileDescriptor,
-                        outputRead: outputReadFileDescriptor,
-                        outputWrite: outputWriteFileDescriptor,
-                        errorRead: errorReadFileDescriptor,
-                        errorWrite: errorWriteFileDescriptor
-                    )
-                    // A fork/clone3 that succeeded but failed to execve still
-                    // produced a process descriptor. The fork-vs-exec retry
-                    // discriminator has already run on this outcome, so closing
-                    // it here cannot make the exec-side failure look fork-side.
-                    // Unlike the branch above, close best-effort (mirroring
-                    // ProcessIdentifier.close()) so the spawn error remains as
-                    // the thrown error. Descriptor-less fallbacks returned
-                    // .invalidDescriptor and need no close. This comes after
-                    // the safelyCloseMultiple call, since if that throws, the
-                    // worst case here is one pidfd leaking; otherwise, if this
-                    // came first and throws, the worst case would be six fds
-                    // never closing and their deinit methods fatal-erroring.
-                    if processDescriptor != .invalidDescriptor {
-                        try? _safelyClose(.fileDescriptor(FileDescriptor(rawValue: processDescriptor)))
-                    }
-                    throw SubprocessError.spawnFailed(withUnderlyingError: Errno(rawValue: spawnError))
-                }
-                // After spawn finishes, close all child side fds
-                try self.safelyCloseMultiple(
-                    inputRead: inputReadFileDescriptor,
-                    inputWrite: nil,
-                    outputRead: nil,
-                    outputWrite: outputWriteFileDescriptor,
-                    errorRead: nil,
-                    errorWrite: errorWriteFileDescriptor
-                )
-                let processIdentifier: ProcessIdentifier = .init(
-                    value: pid,
-                    processDescriptor: processDescriptor
-                )
-                return SpawnResult(
-                    processIdentifier: processIdentifier,
-                    inputWriteEnd: inputWriteFileDescriptor,
-                    outputReadEnd: outputReadFileDescriptor,
-                    errorReadEnd: errorReadFileDescriptor
-                )
-            }
-
-            // If we reach this point, it means either the executable path
-            // or working directory is not valid. Since posix_spawn does not
-            // provide which one is not valid, here we make a best effort guess
-            // by checking whether the working directory is valid. This technically
-            // still causes TOUTOC issue, but it's the best we can do for error recovery.
-            try self.safelyCloseMultiple(
-                inputRead: inputReadFileDescriptor,
-                inputWrite: inputWriteFileDescriptor,
-                outputRead: outputReadFileDescriptor,
-                outputWrite: outputWriteFileDescriptor,
-                errorRead: errorReadFileDescriptor,
-                errorWrite: errorWriteFileDescriptor
-            )
-            if let workingDirectory = self.workingDirectory?.string {
-                guard Configuration.pathAccessible(workingDirectory, mode: F_OK) else {
-                    throw SubprocessError.failedToChangeWorkingDirectory(
-                        workingDirectory,
-                        underlyingError: Errno(rawValue: ENOENT)
-                    )
-                }
-            }
-            throw SubprocessError.executableNotFound(
-                self.executable.description,
-                underlyingError: Errno(rawValue: ENOENT)
-            )
-        }
-
-        do {
-            return try await self.preSpawn(spawnFunc)
-        } catch {
-            var _inputPipe = inputPipeBox.take()
-            var _outputPipe = outputPipeBox.take()
-            var _errorPipe = errorPipeBox.take()
-            // If any part of spawning failed, make sure we clean up pipes
-            try? self.safelyCloseMultiple(
-                inputRead: _inputPipe?.readFileDescriptor(),
-                inputWrite: _inputPipe?.writeFileDescriptor(),
-                outputRead: _outputPipe?.readFileDescriptor(),
-                outputWrite: _outputPipe?.writeFileDescriptor(),
-                errorRead: _errorPipe?.readFileDescriptor(),
-                errorWrite: _errorPipe?.writeFileDescriptor()
-            )
-
-            throw error
-        }
-    }
-
-    /// Spawns a subprocess on the background worker thread, retrying transient failures with bounded jittered backoff.
-    ///
-    /// Calls `_subprocess_fork_exec()` on the shared background worker thread.
-    ///
-    /// `EAGAIN` from `clone3()`/`fork()` means the kernel could not create the
-    /// task because a per-uid or system task-count limit was momentarily
-    /// reached. The condition is transient, so a bounded number of retries is
-    /// attempted before the error is surfaced unchanged.
-    ///
-    /// Only a fork-side `EAGAIN` is retried, identified by the shim returning
-    /// without a process descriptor (`.invalidDescriptor`): the kernel created
-    /// nothing, so re-attempting is clean. An exec-side failure carries a
-    /// valid descriptor for a child the shim has already reaped and is left
-    /// for the caller to handle as before.
-    ///
-    /// The backoff runs here, in the async context between worker-thread
-    /// invocations, not inside the shim. The shim holds a process-wide fork
-    /// lock with signals blocked, and the worker is a single shared executor,
-    /// so sleeping in either would stall every other spawn.
-    private func forkExecRetryingTransientFailure(
-        executablePath: String,
-        fileDescriptors: [CInt],
-        spawnContext: SpawnContext,
-        supplementaryGroups: [gid_t]?
-    ) async throws(SubprocessError) -> (pid_t, PlatformFileDescriptor, CInt) {
-        return try await self.runSpawnAttemptsRetryingTransientFailure {
-            () async throws(SubprocessError) -> (pid_t, PlatformFileDescriptor, CInt) in
-            return try await runOnBackgroundThread { () throws(SubprocessError) in
-                return try executablePath._withCString { exePath throws(SubprocessError) in
-                    return try (self.workingDirectory?.string).withOptionalCString { workingDir in
-                        return supplementaryGroups.withOptionalUnsafeBufferPointer { sgroups in
-                            return fileDescriptors.withUnsafeBufferPointer { fds in
-                                var pid: pid_t = 0
-                                var processDescriptor: PlatformFileDescriptor = .invalidDescriptor
-                                let rc = _subprocess_fork_exec(
-                                    &pid,
-                                    &processDescriptor,
-                                    exePath,
-                                    workingDir,
-                                    fds.baseAddress!,
-                                    spawnContext.argv,
-                                    spawnContext.env,
-                                    spawnContext.uidPtr,
-                                    spawnContext.gidPtr,
-                                    spawnContext.processGroupIDPtr,
-                                    CInt(supplementaryGroups?.count ?? 0),
-                                    sgroups?.baseAddress,
-                                    self.platformOptions.createSession ? 1 : 0
-                                )
-                                return (pid, processDescriptor, rc)
-                            }
-                        }
-                    }
-                }
-            }
-        } shouldRetryTransientFailure: { outcome in
-            // Retry only a transient fork-side EAGAIN: `.invalidDescriptor` means
-            // the kernel created nothing, so re-attempting is clean.
-            let (_, processDescriptor, spawnError) = outcome
-            return spawnError == EAGAIN && processDescriptor == .invalidDescriptor
-        }
-    }
-}
-
 // MARK:  - ProcessIdentifier
 
 /// A platform-independent identifier for a subprocess.
@@ -839,6 +572,12 @@ public struct ProcessIdentifier: Sendable, Hashable {
 
     #if os(Linux) || os(Android) || os(FreeBSD)
     /// The process file descriptor (pidfd) for the running execution.
+    ///
+    /// `-1` when this platform provides no way to obtain one for how the process
+    /// was launched. On FreeBSD that is the case for any process launched with
+    /// `posix_spawn`, which is the common path: a process descriptor is
+    /// available there only from `pdfork`, which only the `fork`/`exec` fallback
+    /// path uses.
     public let processDescriptor: CInt
     #else
     internal let processDescriptor: CInt // not used on other platforms
@@ -863,6 +602,116 @@ extension ProcessIdentifier: CustomStringConvertible, CustomDebugStringConvertib
     public var debugDescription: String { "\(self.value)" }
 }
 
+// MARK: - Platform Types
+
+#if !canImport(Darwin)
+
+#if canImport(Android)
+public typealias pid_t = Android.pid_t
+public typealias uid_t = Android.uid_t
+public typealias gid_t = Android.gid_t
+#elseif canImport(Glibc)
+public typealias pid_t = Glibc.pid_t
+public typealias uid_t = Glibc.uid_t
+public typealias gid_t = Glibc.gid_t
+#elseif canImport(Musl)
+public typealias pid_t = Musl.pid_t
+public typealias uid_t = Musl.uid_t
+public typealias gid_t = Musl.gid_t
+#endif
+
+// MARK: - Platform spawn attribute pointers
+
+// Swift imports `posix_spawnattr_init` and `posix_spawn_file_actions_init` as
+// taking a pointer to an *optional* on FreeBSD and OpenBSD, and a pointer to a
+// non-optional everywhere else, so the two spellings below are not
+// interchangeable and there is no single one that works.
+//
+// The discriminator is not the typedef shape. glibc and musl typedef a struct,
+// which is never imported as optional. Bionic, FreeBSD and OpenBSD all typedef a
+// pointer — but Bionic's `<spawn.h>` is nullability-audited
+// (`posix_spawn_file_actions_t _Nonnull * _Nonnull`), so its pointee imports as
+// non-optional too, while the two BSDs leave theirs unannotated and so get the
+// implicitly-optional import. That leaves exactly FreeBSD and OpenBSD on one
+// side. `_assertPlatformSpawnTypesMatchLibc` below turns a mistake here into a
+// compile error rather than a broken public API.
+#if os(FreeBSD) || os(OpenBSD)
+
+/// A pointer to the platform's `posix_spawn` attributes, in the form this
+/// platform's C library accepts.
+///
+/// The exact type varies by platform, because the C libraries do not agree on
+/// how `posix_spawnattr_t` is declared and Swift imports the differences: it is
+/// `UnsafeMutablePointer<posix_spawnattr_t?>` on FreeBSD and OpenBSD, whose
+/// headers leave the pointee's nullability unannotated, and
+/// `UnsafeMutablePointer<posix_spawnattr_t>` everywhere else. Naming this
+/// typealias rather than either spelling compiles on every platform that
+/// declares it.
+///
+/// Darwin does not. Its ``PlatformOptions/preSpawnProcessConfigurator`` predates
+/// these typealiases and keeps its original signature, which takes the attributes
+/// and file actions `inout` rather than as pointers, so code that configures the
+/// spawn on Darwin *and* elsewhere still needs to branch on
+/// `#if canImport(Darwin)` -- in the closure's body as well as its signature.
+public typealias PlatformSpawnAttributes = UnsafeMutablePointer<posix_spawnattr_t?>
+/// A pointer to the platform's `posix_spawn` file actions, in the form this
+/// platform's C library accepts.
+///
+/// The exact type varies by platform, for the reason given on
+/// ``PlatformSpawnAttributes``: it is
+/// `UnsafeMutablePointer<posix_spawn_file_actions_t?>` on FreeBSD and OpenBSD
+/// and `UnsafeMutablePointer<posix_spawn_file_actions_t>` everywhere else.
+public typealias PlatformSpawnFileActions = UnsafeMutablePointer<posix_spawn_file_actions_t?>
+
+#else
+
+/// A pointer to the platform's `posix_spawn` attributes, in the form this
+/// platform's C library accepts.
+///
+/// The exact type varies by platform, because the C libraries do not agree on
+/// how `posix_spawnattr_t` is declared and Swift imports the differences: it is
+/// `UnsafeMutablePointer<posix_spawnattr_t?>` on FreeBSD and OpenBSD, whose
+/// headers leave the pointee's nullability unannotated, and
+/// `UnsafeMutablePointer<posix_spawnattr_t>` everywhere else. Naming this
+/// typealias rather than either spelling compiles on every platform that
+/// declares it.
+///
+/// Darwin does not. Its ``PlatformOptions/preSpawnProcessConfigurator`` predates
+/// these typealiases and keeps its original signature, which takes the attributes
+/// and file actions `inout` rather than as pointers, so code that configures the
+/// spawn on Darwin *and* elsewhere still needs to branch on
+/// `#if canImport(Darwin)` -- in the closure's body as well as its signature.
+public typealias PlatformSpawnAttributes = UnsafeMutablePointer<posix_spawnattr_t>
+/// A pointer to the platform's `posix_spawn` file actions, in the form this
+/// platform's C library accepts.
+///
+/// The exact type varies by platform, for the reason given on
+/// ``PlatformSpawnAttributes``: it is
+/// `UnsafeMutablePointer<posix_spawn_file_actions_t?>` on FreeBSD and OpenBSD
+/// and `UnsafeMutablePointer<posix_spawn_file_actions_t>` everywhere else.
+public typealias PlatformSpawnFileActions = UnsafeMutablePointer<posix_spawn_file_actions_t>
+
+#endif
+
+/// Compile-time proof that the two typealiases above name exactly the types this
+/// platform's C library takes.
+///
+/// Never called; it exists so that getting the condition above wrong is a build
+/// failure on the affected platform instead of a public API nobody can use.
+///
+/// It deliberately probes mutating entry points rather than the `init`s. Bionic
+/// annotates only its `init`s `_Nullable` — they are out-parameters — and
+/// everything else `_Nonnull`, so the two import differently there and `init` is
+/// the unrepresentative one. These are the calls a configurator actually makes.
+@available(*, unavailable)
+private func _assertPlatformSpawnTypesMatchLibc(
+    _ fileActions: PlatformSpawnFileActions,
+    _ spawnAttributes: PlatformSpawnAttributes
+) {
+    _ = posix_spawn_file_actions_adddup2(fileActions, 0, 0)
+    _ = posix_spawnattr_setflags(spawnAttributes, 0)
+}
+
 // MARK: - Platform Specific Options
 
 /// The collection of platform-specific settings
@@ -881,6 +730,15 @@ public struct PlatformOptions: Sendable {
     ///
     /// Equivalent to calling `setpgid()` on the subprocess.
     /// The process group ID groups related processes for controlling signals.
+    ///
+    /// Whether a `setpgid` failure is reported depends on how the subprocess is
+    /// launched. Where the C library applies it, as part of `posix_spawn`, a
+    /// failure fails the launch and is thrown. Where this package applies it
+    /// itself, in a forked child, it is currently ignored and the subprocess
+    /// launches in the parent's process group instead -- which is the case
+    /// whenever ``userID``, ``groupID`` or ``supplementaryGroups`` is also set,
+    /// when this is combined with ``createSession``, or on a platform whose
+    /// `posix_spawn` cannot express the request.
     public var processGroupID: pid_t? = nil
     /// A Boolean value that indicates whether to create a session
     /// and detach from the terminal.
@@ -891,6 +749,32 @@ public struct PlatformOptions: Sendable {
     ///
     /// The sequence always ends by sending a `.kill` signal.
     public var teardownSequence: [TeardownStep] = []
+    /// A closure that configures platform-specific
+    /// process-launching constructs.
+    ///
+    /// Use this closure to directly configure or override
+    /// the underlying platform-specific launch settings that the
+    /// library uses internally, when higher-level APIs aren't
+    /// available for such modifications.
+    ///
+    /// This closure allows modification of the `posix_spawnattr_t` attribute
+    /// and file actions `posix_spawn_file_actions_t` before they are sent to
+    /// `posix_spawn()`.
+    ///
+    /// This is best-effort: it may not be called when a configuration cannot be
+    /// expressed with `posix_spawn` and must be launched with `fork` and `exec`
+    /// instead. That happens when ``userID``, ``groupID`` or
+    /// ``supplementaryGroups`` is set, when ``createSession`` is combined with
+    /// ``processGroupID``, or when this platform's C library cannot close
+    /// inherited file descriptors, change directory, or create a session
+    /// through `posix_spawn`.
+    public var preSpawnProcessConfigurator:
+        (
+            @Sendable (
+                PlatformSpawnAttributes,
+                PlatformSpawnFileActions
+            ) throws -> Void
+        )? = nil
     /// Creates platform options with default values.
     public init() {}
 }
@@ -904,7 +788,8 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
             \(indent)    groupID: \(String(describing: groupID)),
             \(indent)    supplementaryGroups: \(String(describing: supplementaryGroups)),
             \(indent)    processGroupID: \(String(describing: processGroupID)),
-            \(indent)    createSession: \(createSession)
+            \(indent)    createSession: \(createSession),
+            \(indent)    preSpawnProcessConfigurator: \(self.preSpawnProcessConfigurator == nil ? "not set" : "set")
             \(indent))
             """
     }
@@ -965,6 +850,14 @@ extension ProcessIdentifier {
     }
 }
 
+// FIXME: once FreeBSD 15.1 can be required, reap a descriptor-backed child with
+// pdwait(2) rather than waitid(P_PID, ...), so the child is reaped through its
+// process descriptor instead of by pid. pdwait fills in a `struct __siginfo`,
+// which is what `TerminationStatus.init(_ siginfo:)` already consumes, so the
+// change is confined to `_blockingReap`, `_reap` and `_peekIfExited`. Added to
+// FreeBSD as syscall 601 in January 2026, with a pdwait.2 manual page and an
+// entry in lib/libsys/Makefile.sys, so it is a first-class userspace wrapper:
+// present in stable/15, absent from releng/15.0.
 @available(*, noasync)
 internal func _blockingReap(pid: pid_t) throws(Errno) -> TerminationStatus {
     let siginfo = try _waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED)

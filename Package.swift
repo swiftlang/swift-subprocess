@@ -81,7 +81,12 @@ let package = Package(
         .target(
             name: "_SubprocessCShims",
             path: "Sources/_SubprocessCShims",
-            exclude: ["CMakeLists.txt"]
+            exclude: ["CMakeLists.txt"],
+            linkerSettings: [
+                // For dlsym, used to detect posix_spawn file actions that some
+                // libc versions lack.
+                .linkedLibrary("dl", .when(platforms: [.linux, .android]))
+            ]
         ),
     ]
 )

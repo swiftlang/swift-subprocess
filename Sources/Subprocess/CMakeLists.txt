@@ -35,17 +35,20 @@ if(WIN32)
 elseif(LINUX OR ANDROID)
   target_sources(Subprocess PRIVATE
     Platforms/Subprocess+Linux.swift
+    Platforms/Subprocess+Spawn.swift
     Platforms/Subprocess+Unix.swift)
 elseif(APPLE)
   target_sources(Subprocess PRIVATE
     Platforms/Subprocess+BSD.swift
     Platforms/Subprocess+Darwin.swift
+    Platforms/Subprocess+Spawn.swift
     Platforms/Subprocess+Unix.swift)
   target_compile_options(Subprocess PRIVATE
     "$<$<COMPILE_LANGUAGE:Swift>:-DSUBPROCESS_ASYNCIO_KQUEUE>")
 elseif(FREEBSD OR OPENBSD)
   target_sources(Subprocess PRIVATE
     Platforms/Subprocess+BSD.swift
+    Platforms/Subprocess+Spawn.swift
     Platforms/Subprocess+Unix.swift)
   target_compile_options(Subprocess PRIVATE
     "$<$<COMPILE_LANGUAGE:Swift>:-DSUBPROCESS_ASYNCIO_KQUEUE>")

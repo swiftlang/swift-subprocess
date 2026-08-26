@@ -14,5 +14,9 @@ add_library(_SubprocessCShims STATIC
 target_include_directories(_SubprocessCShims PUBLIC
   include)
 
+# For dlsym, used to detect posix_spawn file actions that some libc versions
+# lack. Empty on platforms where dlsym lives in libc.
+target_link_libraries(_SubprocessCShims PRIVATE ${CMAKE_DL_LIBS})
+
 install(TARGETS _SubprocessCShims
   EXPORT SwiftSubprocessTargets)

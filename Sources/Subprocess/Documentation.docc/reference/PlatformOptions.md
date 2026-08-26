@@ -29,6 +29,8 @@
 ### Customizing process launching
 
 - ``preSpawnProcessConfigurator``
+- ``PlatformSpawnAttributes``
+- ``PlatformSpawnFileActions``
 
 ### Configuring the console and window on Windows
 

@@ -7,6 +7,44 @@ on:
   pull_request:
     types: [opened, reopened, synchronize]
 
+# TEMPORARY, REMOVE BEFORE MERGING, along with the `openbsd` job below.
+#
+# OpenBSD is the only platform this package supports that has no coverage in
+# swiftlang/github-workflows, and it is the one platform where `posix_spawn` can
+# express nothing this package needs: it has neither a close-all mechanism, nor
+# POSIX_SPAWN_SETSID, nor an fchdir file action, so every spawn there takes the
+# fork/exec path. Adapted from swift-toolchain-sqlite, which boots OpenBSD in
+# QEMU under cloud-init and reports the exit status back through a tar tape.
+env:
+  OPENBSD_META_DATA_CONTENT: |
+      {
+        "instance-id": "iid-local01",
+        "dsmode": "local"
+      }
+  OPENBSD_USER_DATA_CONTENT: |
+      #cloud-config
+      timezone: UTC
+      write_files:
+      - content: |
+          set -ex
+          function atexit {
+              echo 1 > /tmp/result
+              tar cvf /dev/sd1c -C /tmp result
+              halt -p;
+          }
+          trap atexit EXIT
+          printf '\033\143'
+          export PATH=/usr/local/bin:$PATH
+          mount /dev/sd3c /mnt
+          cp -r /mnt/repo /home/repo/
+          cd /home/repo/
+          swift test
+          echo $? > /tmp/result
+          tar cvf /dev/sd1c -C /tmp result
+          halt -p
+        path: /etc/rc.local
+        permissions: '0755'
+
 jobs:
   tests:
     name: Test
@@ -71,6 +109,44 @@ jobs:
         uses: actions/checkout@v7
       - name: Run Test
         run: bash -c './scripts/test-using-qemu.sh ${{ matrix.dist-kern }} -- swift test'
+
+  # TEMPORARY, REMOVE BEFORE MERGING, along with the `env` block above.
+  openbsd:
+    name: OpenBSD (7.8 - amd64)
+    runs-on: ubuntu-latest
+    # 30 minutes suffices for the `swift build` this was adapted from; the test
+    # suite spawns thousands of processes inside an emulated guest.
+    timeout-minutes: 90
+    container:
+      image: ghcr.io/3405691582/openbsd-swift-amd64:7.8
+      env:
+        CPU: "4"
+        MEM: "16G"
+        KVM: "-enable-kvm"
+      options: --device /dev/kvm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Write cloud-init files
+        run: |
+            echo "$OPENBSD_META_DATA_CONTENT" > /usr/local/share/cidata/meta-data
+            echo "$OPENBSD_USER_DATA_CONTENT" > /usr/local/share/cidata/user-data
+
+      - name: Prepare cloud-init
+        run: |
+            cp -r $GITHUB_WORKSPACE /usr/local/share/cidata/repo/ && \
+            cat /usr/local/share/cidata/meta-data && \
+            cat /usr/local/share/cidata/user-data && \
+            ls /usr/local/share/cidata
+
+      - name: Run
+        run: /usr/local/bin/cmd.sh
+
+      - name: Report
+        run: |
+            ls -l /usr/local/share/tape && \
+            exit $(cat /usr/local/share/tape/result)
 
   soundness:
     name: Soundness
