@@ -10,7 +10,7 @@ on:
 jobs:
   tests:
     name: Test
-    uses: swiftlang/github-workflows/.github/workflows/swift_package_test.yml@main
+    uses: swiftlang/github-workflows/.github/workflows/swift_package_test.yml@0.0.14
     with:
       linux_os_versions: '["amazonlinux2023", "bookworm", "noble", "jammy", "rhel-ubi9"]'
       linux_swift_versions: '["6.2", "nightly-main"]'
@@ -41,7 +41,7 @@ jobs:
         Invoke-Program swift test -c release
         Invoke-Program swift test --disable-default-traits
       enable_macos_checks: true
-      macos_xcode_versions: '["26.4"]'
+      macos_xcode_versions: '["swift_6.3", "swift_6.4"]'
       macos_build_command: "xcrun swift test && xcrun swift test -c release && xcrun swift test --disable-default-traits"
       enable_linux_static_sdk_build: true
       enable_android_sdk_build: true
@@ -74,7 +74,7 @@ jobs:
 
   soundness:
     name: Soundness
-    uses: swiftlang/github-workflows/.github/workflows/soundness.yml@0.0.13
+    uses: swiftlang/github-workflows/.github/workflows/soundness.yml@0.0.14
     with:
       license_header_check_project_name: "Swift.org"
       docs_check_enabled: false
