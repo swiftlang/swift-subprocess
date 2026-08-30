@@ -35,6 +35,13 @@ import SystemPackage
 #endif
 
 @Suite(.serialized)
+struct SubprocessUnixRootTests {
+    init() {
+        _ = globallyIgnoredSIGPIPE
+    }
+}
+
+@Suite(.serialized)
 struct SubprocessUnixTests {
     init() {
         _ = globallyIgnoredSIGPIPE
@@ -42,8 +49,7 @@ struct SubprocessUnixTests {
 }
 
 // MARK: - PlatformOption Tests
-extension SubprocessUnixTests {
-    // Run this test with sudo
+extension SubprocessUnixRootTests {
     @Test(
         .enabled(
             if: getgid() == 0,
@@ -61,7 +67,6 @@ extension SubprocessUnixTests {
         )
     }
 
-    // Run this test with sudo
     @Test(
         .enabled(
             if: getgid() == 0,
@@ -79,7 +84,6 @@ extension SubprocessUnixTests {
         )
     }
 
-    // Run this test with sudo
     @Test(
         .enabled(
             if: getgid() == 0,
@@ -107,7 +111,6 @@ extension SubprocessUnixTests {
         )
     }
 
-    // Run this test with sudo
     @Test(
         .enabled(
             if: getgid() == 0,
@@ -171,7 +174,9 @@ extension SubprocessUnixTests {
         // PGID should == PID
         #expect(match.output.pid == match.output.pgid)
     }
+}
 
+extension SubprocessUnixTests {
     @Test(
         .enabled(
             "This test requires ps (install procps package on Debian or RedHat Linux distros)",
@@ -1265,7 +1270,7 @@ extension SubprocessUnixTests {
 }
 
 // MARK: - Utils
-extension SubprocessUnixTests {
+extension SubprocessUnixRootTests {
     private func assertID(
         withArgument argument: String,
         platformOptions: PlatformOptions,
