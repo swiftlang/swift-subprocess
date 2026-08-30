@@ -1338,7 +1338,7 @@ extension Configuration {
         }
 
         var commandLineArguments = args
-        if case .string(let overrideName) = self.arguments.executablePathOverride {
+        if case .string(let overrideName) = self.arguments._executablePathOverride {
             // Use the override as argument0 and set applicationName
             commandLineArguments.insert(overrideName, at: 0)
         } else {
@@ -1348,7 +1348,7 @@ extension Configuration {
         return (
             // Omit applicationName (and therefore rely on commandAndArgs for
             // executable path) when we don't need to override arg0.
-            applicationName: self.arguments.executablePathOverride == nil ? nil : executablePath,
+            applicationName: self.arguments._executablePathOverride == nil ? nil : executablePath,
             commandAndArgs: Self.quoteWindowsCommandLine(commandLineArguments)
         )
     }

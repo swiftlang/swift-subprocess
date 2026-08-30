@@ -10,3 +10,8 @@
 ### Resolving the executable path
 
 - ``resolveExecutablePath(in:)``
+
+### Inspecting an executable
+
+- ``representation``
+- ``Representation``
