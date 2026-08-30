@@ -114,3 +114,4 @@ Subprocess also handles the concerns that surround a running process:
 ### Handling errors
 
 - ``SubprocessError``
+- ``ExecutionContext``

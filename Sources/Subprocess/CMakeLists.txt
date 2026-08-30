@@ -11,6 +11,7 @@
 
 add_library(Subprocess
   Execution.swift
+  ExecutionContext.swift
   Buffer.swift
   Error.swift
   Teardown.swift

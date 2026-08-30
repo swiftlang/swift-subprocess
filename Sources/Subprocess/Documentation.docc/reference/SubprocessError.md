@@ -6,6 +6,7 @@
 
 - ``code``
 - ``underlyingError``
+- ``executionContext``
 
 ### Accessing error codes
 
