@@ -71,10 +71,12 @@ step()  { printf '\033[36m[STEP]\033[0m  %s\n'  "$*"; }
 declare -A PROFILES
 #                               LXC spec                          | file            | kernel    | kernel donor spec
 # Modern Ubuntu userspace + AlmaLinux kernel donor, for exercising old-kernel code paths
-# (e.g. pre-pidfd SIGCHLD-based process monitoring) on amd64.  No arm64 equivalent exists
-# for the AlmaLinux donors on LXC, so these profiles are amd64-only.
-PROFILES["ubuntu-kernel-4.18"]="ubuntu/resolute/amd64/default    | rootfs.tar.xz  | lxc-disk  | almalinux/8/amd64/default"
-PROFILES["ubuntu-kernel-5.14"]="ubuntu/resolute/amd64/default    | rootfs.tar.xz  | lxc-disk  | almalinux/9/amd64/default"
+# (e.g. pre-pidfd SIGCHLD-based process monitoring) on amd64.  Uses noble (24.04 LTS)
+# rather than a newer release since swiftly does not yet recognize newer Ubuntu releases
+# as a supported platform.  No arm64 equivalent exists for the AlmaLinux donors on LXC,
+# so these profiles are amd64-only.
+PROFILES["ubuntu-kernel-4.18"]="ubuntu/noble/amd64/default       | rootfs.tar.xz  | lxc-disk  | almalinux/8/amd64/default"
+PROFILES["ubuntu-kernel-5.14"]="ubuntu/noble/amd64/default       | rootfs.tar.xz  | lxc-disk  | almalinux/9/amd64/default"
 PROFILES["almalinux-8"]="almalinux/8/amd64/cloud                 | disk.qcow2     | disk      | "
 PROFILES["almalinux-8-arm64"]="almalinux/8/arm64/cloud           | disk.qcow2     | disk      | "
 PROFILES["almalinux-9"]="almalinux/9/amd64/cloud                 | disk.qcow2     | disk      | "
@@ -902,6 +904,26 @@ scp -r -P "$SSH_HOST_PORT" -i "$WORK_DIR/vm_key" \
 
 # ── Install Swift toolchain ───────────────────────────────────────────────────
 if [[ "$NO_SWIFT" != "true" ]]; then
+    # Freshly-booted Debian-family images run apt-daily/unattended-upgrades timers
+    # in the background, which can be holding /var/lib/dpkg/lock-frontend right
+    # when we try to apt-get install below.  Stop/mask those units and wait for
+    # the lock to free up.  No-ops harmlessly on non-Debian rootfs (no such units,
+    # no such lock files).
+    step "Waiting for any boot-time apt/dpkg activity to clear..."
+    ssh "${SSH_OPTS[@]}" root@localhost bash <<'ENDSSH' || true
+systemctl stop apt-daily.service apt-daily-upgrade.service apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service 2>/dev/null
+systemctl mask apt-daily.service apt-daily-upgrade.service apt-daily.timer apt-daily-upgrade.timer 2>/dev/null
+for i in $(seq 1 30); do
+    busy=false
+    if command -v fuser >/dev/null 2>&1; then
+        fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock >/dev/null 2>&1 && busy=true
+    fi
+    $busy || break
+    sleep 2
+done
+exit 0
+ENDSSH
+
     step "Installing Swift toolchain via swiftly..."
     ssh "${SSH_OPTS[@]}" root@localhost \
         "cd /mnt/host && bash scripts/prep-linux-swift.sh --install-swiftly"
