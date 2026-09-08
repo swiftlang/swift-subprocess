@@ -85,12 +85,11 @@ public struct SubprocessOutputSequence: AsyncSequence, @unchecked Sendable {
                 upTo: self.preferredBufferSize
             )
             guard let data else {
-                // We finished reading. Close the file descriptor now
-                #if canImport(WinSDK)
-                try _safelyClose(.handle(self.diskIO))
-                #else
-                try _safelyClose(.fileDescriptor(self.diskIO))
-                #endif
+                // We finished reading, but don't close the descriptor here:
+                // `run` owns closing it exactly once, at the end of the
+                // scope in which this sequence is valid, whether or not the
+                // sequence was ever iterated or was fully drained. See
+                // `SubprocessOutputSequence.close()`.
                 return nil
             }
             return Buffer(data: data)
@@ -121,6 +120,22 @@ public struct SubprocessOutputSequence: AsyncSequence, @unchecked Sendable {
             fatalError("SubprocessOutputSequence is single-pass. It can only be iterated once.")
         }
         return Iterator(diskIO: self.diskIO, processIdentifier: self.processIdentifier)
+    }
+
+    /// Closes the underlying descriptor.
+    ///
+    /// `run` calls this exactly once the body closure that received this
+    /// sequence returns or throws, whether or not the sequence was ever
+    /// iterated, or was fully drained to end-of-stream first. The iterator
+    /// itself never closes the descriptor, so a caller that stops consuming
+    /// the sequence before end-of-stream (for example, `break`ing out of a
+    /// `for await` loop early) doesn't leak it.
+    internal func close() throws(SubprocessError) {
+        #if canImport(WinSDK)
+        try _safelyClose(.handle(self.diskIO))
+        #else
+        try _safelyClose(.fileDescriptor(self.diskIO))
+        #endif
     }
 
     /// Splits the buffer into strings using the specified separator.

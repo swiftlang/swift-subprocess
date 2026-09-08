@@ -3906,6 +3906,72 @@ extension SubprocessIntegrationTests {
             )
         }
     }
+
+    /// Breaking out of a `.sequence` output stream before it reaches
+    /// end-of-stream must not leak the underlying pipe descriptor.
+    @Test func testBreakingOutOfSequenceOutputEarlyDoesNotLeakResources() async throws {
+        await #expect(processExitsWith: .success) {
+            #if os(Windows)
+            let executable: Executable = .name("cmd.exe")
+            func makeArguments(_ i: Int) -> Arguments { ["/c", "echo", "hello-\(i)"] }
+            #else
+            let executable: Executable = .name("echo")
+            func makeArguments(_ i: Int) -> Arguments { ["hello-\(i)"] }
+            #endif
+
+            // Warm up once so lazily-created singletons are allocated before
+            // we sample the baseline.
+            _ = try await Subprocess.run(
+                executable,
+                arguments: makeArguments(0),
+                input: .none,
+                output: .sequence,
+                error: .discarded
+            ) { execution in
+                for try await _ in execution.standardOutput {
+                    break
+                }
+            }
+            guard let before = openResourceCount() else {
+                #if compiler(>=6.3)
+                try Test.cancel("Cannot determine the number of open resources")
+                #else
+                return
+                #endif
+            }
+
+            let iterations = 200
+            for i in 0..<iterations {
+                _ = try await Subprocess.run(
+                    executable,
+                    arguments: makeArguments(i),
+                    input: .none,
+                    output: .sequence,
+                    error: .discarded
+                ) { execution in
+                    for try await _ in execution.standardOutput {
+                        // Stop consuming before end-of-stream, the way an
+                        // application that only wants the first chunk would.
+                        break
+                    }
+                }
+            }
+
+            guard let after = openResourceCount() else {
+                #if compiler(>=6.3)
+                try Test.cancel("Cannot determine the number of open resources")
+                #else
+                return
+                #endif
+            }
+            let delta = after - before
+
+            precondition(
+                delta < iterations,
+                "Subprocess leaked \(delta) resources while breaking out of .sequence output early \(iterations) times."
+            )
+        }
+    }
 }
 #endif // !os(Android)
 
