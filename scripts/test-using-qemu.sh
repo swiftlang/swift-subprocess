@@ -60,18 +60,23 @@ step()  { printf '\033[36m[STEP]\033[0m  %s\n'  "$*"; }
 #                                   KERNEL_DONOR_SPEC names that donor image's LXC path
 #
 # KERNEL_DONOR_SPEC:   LXC path (distro/release/arch/variant) of the kernel donor image.
-#                      Used only for lxc-disk mode.  Debian Bullseye ships kernel 5.10 LTS
-#                      and is publicly accessible, making it a good donor for AL2 userspace.
+#                      Used only for lxc-disk mode.  AmazonLinux 2 images are no longer
+#                      published on images.linuxcontainers.org, so old-kernel testing pairs
+#                      a modern Ubuntu userspace with an AlmaLinux kernel donor instead:
+#                      AlmaLinux 8's default (non-cloud) image carries kernel 4.18, and
+#                      AlmaLinux 9's carries kernel 5.14 — both ship disk.qcow2.
 #
 # To add a new combination, append a line here — no other code changes needed.
 
 declare -A PROFILES
 #                               LXC spec                          | file            | kernel    | kernel donor spec
-PROFILES["al2-5.10"]="amazonlinux/2/amd64/default                | rootfs.tar.xz  | lxc-disk  | debian/bullseye/amd64/cloud"
-PROFILES["al2-5.10-arm64"]="amazonlinux/2/arm64/default          | rootfs.tar.xz  | lxc-disk  | debian/bullseye/arm64/cloud"
-# almalinux/8/amd64/default (not cloud) carries kernel 4.18 and has disk.qcow2;
-# no arm64 equivalent exists on LXC so this profile is amd64-only.
-PROFILES["al2-4.18"]="amazonlinux/2/amd64/default                | rootfs.tar.xz  | lxc-disk  | almalinux/8/amd64/default"
+# Modern Ubuntu userspace + AlmaLinux kernel donor, for exercising old-kernel code paths
+# (e.g. pre-pidfd SIGCHLD-based process monitoring) on amd64.  Uses noble (24.04 LTS)
+# rather than a newer release since swiftly does not yet recognize newer Ubuntu releases
+# as a supported platform.  No arm64 equivalent exists for the AlmaLinux donors on LXC,
+# so these profiles are amd64-only.
+PROFILES["ubuntu-kernel-4.18"]="ubuntu/noble/amd64/default       | rootfs.tar.xz  | lxc-disk  | almalinux/8/amd64/default"
+PROFILES["ubuntu-kernel-5.14"]="ubuntu/noble/amd64/default       | rootfs.tar.xz  | lxc-disk  | almalinux/9/amd64/default"
 PROFILES["almalinux-8"]="almalinux/8/amd64/cloud                 | disk.qcow2     | disk      | "
 PROFILES["almalinux-8-arm64"]="almalinux/8/arm64/cloud           | disk.qcow2     | disk      | "
 PROFILES["almalinux-9"]="almalinux/9/amd64/cloud                 | disk.qcow2     | disk      | "
@@ -132,9 +137,9 @@ OPTIONS:
       --skip-install     Skip tool installation
       --no-swift         Skip Swift toolchain installation
 
-PROFILE (default: al2-5.10):
+PROFILE (default: ubuntu-kernel-5.14):
   A named entry from the built-in profile table.  Run --list-profiles to see all.
-  Examples:  al2-5.10   almalinux-8   ubuntu-22.04   debian-12
+  Examples:  ubuntu-kernel-5.14   ubuntu-kernel-4.18   almalinux-8   ubuntu-22.04   debian-12
 
 GUEST COMMAND (after --):
   Runs as root inside the VM, in /mnt/host, with Swift on PATH.
@@ -146,7 +151,7 @@ ENVIRONMENT: VM_MEMORY  VM_CPUS  SSH_PORT  KEEP_WORK  WORK_DIR  VM_DISK_SIZE  TM
 NOTES:
   - Host must be Ubuntu (apt-get is used for tool installation); python3 must be available.
   - disk mode images require cloud-init in the guest (Ubuntu, Debian, Fedora, AlmaLinux do).
-  - rootfs mode (e.g. al2-5.10) fetches userspace from LXC and kernel from a donor disk image.
+  - rootfs mode (e.g. ubuntu-kernel-5.14) fetches userspace from LXC and kernel from a donor disk image.
   - lxc-disk kernel mode downloads a second LXC disk.qcow2 and extracts vmlinuz+initrd via debugfs.
   - rootfs mode waits up to 10 min for SSH; first boot installs openssh-server if absent.
   - amd64: QEMU's built-in SeaBIOS handles GRUB boot; no extra firmware needed.
@@ -157,7 +162,7 @@ EOF
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 HOST_WORKDIR="$(pwd)"
-PROFILE_NAME="al2-5.10"
+PROFILE_NAME="ubuntu-kernel-5.14"
 # Default to an interactive shell when stdin is a terminal, swift test otherwise
 [[ -t 0 ]] && GUEST_COMMAND="bash" || GUEST_COMMAND="swift test"
 KEEP_IMAGE=false
@@ -468,7 +473,10 @@ else
         # LXC container rootfs images have no ifcfg for the VM NIC (containers
         # use host networking).  Without it NetworkManager burns time on DHCP
         # retries.  QEMU SLIRP NAT always uses fixed addresses, so a static
-        # config is safe and comes up instantly.
+        # config is safe and comes up instantly.  This is only read by
+        # NetworkManager's ifcfg-rh plugin (RHEL-family rootfs); it's inert on
+        # Debian-family rootfs, which instead get their address from the
+        # qemu-network-setup.service oneshot below.
         # Use TYPE=Ethernet (not DEVICE=eth0) so the config matches regardless
         # of whether RHEL 8 udev renames virtio-net to ens3/enp0s2/etc.
         mkdir -p "$ROOTFS_DIR/etc/sysconfig/network-scripts"
@@ -523,12 +531,12 @@ print(r[0][4][0])
         info "  yum repos:   $(grep -rh 'mirrorlist\|baseurl' "$ROOTFS_DIR/etc/yum.repos.d/" 2>/dev/null | tr '\n' '|' || echo 'none')"
         info "  yum vars:    awsproto=$(cat "$ROOTFS_DIR/etc/yum/vars/awsproto" 2>/dev/null || echo 'unset') amazonlinux=$(cat "$ROOTFS_DIR/etc/yum/vars/amazonlinux" 2>/dev/null || echo 'unset') awsregion=$(cat "$ROOTFS_DIR/etc/yum/vars/awsregion" 2>/dev/null || echo 'unset') awsdomain=$(cat "$ROOTFS_DIR/etc/yum/vars/awsdomain" 2>/dev/null || echo 'unset')"
 
-        # The AlmaLinux 8 dracut initrd is built for local-disk boot and does not
+        # The AlmaLinux dracut initrd is built for local-disk boot and does not
         # include the network module, so ip= on the kernel cmdline is ignored.
-        # The Debian initrd does DHCP in early boot, which is why al2-5.10 gets
-        # a working network for free.  For al2-4.18 we inject a minimal early
-        # service that configures the first non-loopback NIC with QEMU SLIRP's
-        # fixed addresses before network.target is reached.
+        # We inject a minimal early service that configures the first
+        # non-loopback NIC with QEMU SLIRP's fixed addresses before
+        # network.target is reached — needed regardless of userspace distro
+        # whenever the kernel donor's initrd doesn't already bring up the NIC.
         # NOTE: net.ifnames=0 suppresses the kernel's own predictable naming, but
         # RHEL 8 udev's 80-net-setup-link.rules may still rename virtio-net to
         # e.g. ens3 or enp0s2 via the "path" policy in 99-default.link.  The
@@ -595,8 +603,8 @@ SVCEOF
         done
 
         # ── Bootstrap sshd if not pre-installed ──────────────────────────────────
-        # LXC container images are minimal; openssh-server is often absent (e.g. AL2).
-        # If sshd is missing, drop a one-shot systemd unit that installs it on first
+        # LXC container images are minimal; openssh-server is often absent (e.g.
+        # Ubuntu, AL2).  If sshd is missing, drop a one-shot systemd unit that installs it on first
         # boot via the guest's own package manager.  QEMU's user-mode NAT gives the VM
         # internet access, so yum/apt can reach their public CDN mirrors.
         # The ConditionPathExists guard makes it a no-op on subsequent boots.
@@ -632,14 +640,13 @@ ExecStart=/bin/bash -c '\
         printf https > /etc/yum/vars/awsproto; \
     fi; \
     printf "nameserver 10.0.2.3\nnameserver 8.8.8.8\nnameserver 1.1.1.1\n" > /etc/resolv.conf; \
-    echo "BOOTSTRAP: waiting for TCP connectivity to cdn.amazonlinux.com:443..."; \
+    echo "BOOTSTRAP: waiting for general TCP connectivity (1.1.1.1:443)..."; \
     CONNECTED=false; \
     for i in $(seq 1 30); do \
-        bash -c "exec 3<>/dev/tcp/cdn.amazonlinux.com/443" 2>/dev/null && CONNECTED=true && break; \
+        bash -c "exec 3<>/dev/tcp/1.1.1.1/443" 2>/dev/null && CONNECTED=true && break; \
         sleep 2; \
     done; \
     echo "BOOTSTRAP: TCP connected=$CONNECTED"; \
-    echo "BOOTSTRAP: hosts=$(grep cdn.amazon /etc/hosts 2>/dev/null || echo none)"; \
     echo "BOOTSTRAP: installing openssh-server"; \
     if command -v yum >/dev/null 2>&1; then \
         yum install -y openssh-server; \
@@ -897,6 +904,26 @@ scp -r -P "$SSH_HOST_PORT" -i "$WORK_DIR/vm_key" \
 
 # ── Install Swift toolchain ───────────────────────────────────────────────────
 if [[ "$NO_SWIFT" != "true" ]]; then
+    # Freshly-booted Debian-family images run apt-daily/unattended-upgrades timers
+    # in the background, which can be holding /var/lib/dpkg/lock-frontend right
+    # when we try to apt-get install below.  Stop/mask those units and wait for
+    # the lock to free up.  No-ops harmlessly on non-Debian rootfs (no such units,
+    # no such lock files).
+    step "Waiting for any boot-time apt/dpkg activity to clear..."
+    ssh "${SSH_OPTS[@]}" root@localhost bash <<'ENDSSH' || true
+systemctl stop apt-daily.service apt-daily-upgrade.service apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service 2>/dev/null
+systemctl mask apt-daily.service apt-daily-upgrade.service apt-daily.timer apt-daily-upgrade.timer 2>/dev/null
+for i in $(seq 1 30); do
+    busy=false
+    if command -v fuser >/dev/null 2>&1; then
+        fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock >/dev/null 2>&1 && busy=true
+    fi
+    $busy || break
+    sleep 2
+done
+exit 0
+ENDSSH
+
     step "Installing Swift toolchain via swiftly..."
     ssh "${SSH_OPTS[@]}" root@localhost \
         "cd /mnt/host && bash scripts/prep-linux-swift.sh --install-swiftly"
