@@ -126,10 +126,9 @@ extension SubprocessProcessMonitoringTests {
     @Test func testNormalExit() async throws {
         let config = self.immediateExitProcess(withExitCode: 0)
         try await withSpawnedExecution(config: config) { execution in
-            let monitorResult = try await monitorProcessTermination(
+            let (monitorResult, _) = try await monitorProcessTermination(
                 for: execution.processIdentifier
             )
-
             #expect(monitorResult.isSuccess)
         }
     }
@@ -137,10 +136,9 @@ extension SubprocessProcessMonitoringTests {
     @Test func testExitCode() async throws {
         let config = self.immediateExitProcess(withExitCode: 42)
         try await withSpawnedExecution(config: config) { execution in
-            let monitorResult = try await monitorProcessTermination(
+            let (monitorResult, _) = try await monitorProcessTermination(
                 for: execution.processIdentifier
             )
-
             #expect(monitorResult == .exited(42))
         }
     }
@@ -155,7 +153,7 @@ extension SubprocessProcessMonitoringTests {
             // Send signal to process
             try execution.send(signal: .terminate)
 
-            let result = try await monitorProcessTermination(
+            let (result, _) = try await monitorProcessTermination(
                 for: execution.processIdentifier
             )
             #expect(result == .signaled(SIGTERM))
@@ -185,7 +183,7 @@ extension SubprocessProcessMonitoringTests {
             )
             #endif
             // Now make sure monitorProcessTermination() can still get the correct result
-            let monitorResult = try await monitorProcessTermination(
+            let (monitorResult, _) = try await monitorProcessTermination(
                 for: execution.processIdentifier
             )
             #expect(monitorResult == TerminationStatus.exited(0))
@@ -195,10 +193,9 @@ extension SubprocessProcessMonitoringTests {
     @Test func testCanMonitorLongRunningProcess() async throws {
         let config = self.longRunningProcess(withTimeOutSeconds: 1)
         try await withSpawnedExecution(config: config) { execution in
-            let monitorResult = try await monitorProcessTermination(
+            let (monitorResult, _) = try await monitorProcessTermination(
                 for: execution.processIdentifier
             )
-
             #expect(monitorResult.isSuccess)
         }
     }
@@ -237,7 +234,7 @@ extension SubprocessProcessMonitoringTests {
         try await withSpawnedExecution(config: child1) { child1Execution in
             try await withSpawnedExecution(config: child2) { child2Execution in
                 // Monitor child2, but make sure we don't reap child1's status
-                let status = try await monitorProcessTermination(
+                let (status, _) = try await monitorProcessTermination(
                     for: child2Execution.processIdentifier
                 )
                 #expect(status.isSuccess)
@@ -285,7 +282,7 @@ extension SubprocessProcessMonitoringTests {
                     )
 
                     try await withSpawnedExecution(config: config) { execution in
-                        let monitorResult = try await monitorProcessTermination(
+                        let (monitorResult, _) = try await monitorProcessTermination(
                             for: execution.processIdentifier
                         )
                         #expect(monitorResult.isSuccess)
@@ -325,7 +322,7 @@ extension SubprocessProcessMonitoringTests {
                 try await group.waitForAll()
             }
             // Every waiter resumed without error; reap the process once.
-            let status = try reapProcess(with: execution.processIdentifier)
+            let (status, _) = try reapProcess(with: execution.processIdentifier)
             #expect(status.isSuccess)
         }
     }
@@ -355,7 +352,7 @@ extension SubprocessProcessMonitoringTests {
         try await withThrowingTaskGroup { group in
             for pid in spawnedProcesses {
                 group.addTask {
-                    let status = try await monitorProcessTermination(for: pid)
+                    let (status, _) = try await monitorProcessTermination(for: pid)
                     #expect(status.isSuccess)
                 }
             }
@@ -365,7 +362,121 @@ extension SubprocessProcessMonitoringTests {
     }
 }
 
-internal func monitorProcessTermination(for processIdentifier: ProcessIdentifier) async throws -> TerminationStatus {
+// MARK: - Resource Usage Tests
+
+/// Bounds here are deliberately loose. The failure mode worth catching is a
+/// platform that wires `ResourceUsage` up structurally but reports zeros, so
+/// these assert orders of magnitude rather than values.
+extension SubprocessProcessMonitoringTests {
+    /// Burns CPU in-process so `userTime` has something to report.
+    private func cpuBoundProcess() -> Configuration {
+        #if os(Windows)
+        return Configuration(
+            executable: .name("powershell.exe"),
+            arguments: ["-Command", "$i = 0; while ($i -lt 3000000) { $i++ }"]
+        )
+        #else
+        return Configuration(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "i=0; while [ $i -lt 300000 ]; do i=$((i+1)); done"]
+        )
+        #endif
+    }
+
+    /// Allocates a buffer of `bytes` by asking `dd` for it as a single block.
+    /// The byte count is spelled out because `dd` suffix syntax isn't portable.
+    private func allocatingProcess(bytes: Int) -> Configuration {
+        return Configuration(
+            executable: .path("/bin/dd"),
+            arguments: ["if=/dev/zero", "of=/dev/null", "bs=\(bytes)", "count=1"]
+        )
+    }
+
+    @Test func testResourceUsageReportsCPUTime() async throws {
+        let result = try await run(self.cpuBoundProcess(), output: .discarded)
+        #expect(result.terminationStatus.isSuccess)
+        // A few hundred thousand shell loop iterations cannot cost zero.
+        #expect(result.resourceUsage.userTime > .zero)
+        #expect(result.resourceUsage.systemTime >= .zero)
+        #expect(result.resourceUsage.maxRSS > 0)
+    }
+
+    @Test func testResourceUsageChargesOnlyCPUTimeNotWallTime() async throws {
+        let result = try await run(self.longRunningProcess(withTimeOutSeconds: 1), output: .discarded)
+        #expect(result.terminationStatus.isSuccess)
+        #expect(result.resourceUsage.maxRSS > 0)
+        #if !os(Windows)
+        // The child slept for a second; almost none of that is its own CPU.
+        //
+        // Not asserted on Windows, where the only sleeper available without
+        // adding a test helper is powershell.exe. Its interpreter startup costs
+        // seconds of CPU on its own -- measured at 2.75s against a 1s sleep --
+        // so the quantity this is checking isn't observable through it.
+        // `testResourceUsageReportsCPUTime` still covers Windows CPU accounting.
+        let cpuTime = result.resourceUsage.userTime + result.resourceUsage.systemTime
+        #expect(cpuTime < .milliseconds(500))
+        #endif
+    }
+
+    #if !os(Windows)
+    @Test func testResourceUsageMaxRSSScalesWithAllocation() async throws {
+        let allocation = 32 * 1024 * 1024
+        let small = try await run(self.allocatingProcess(bytes: 1024), output: .discarded)
+        let large = try await run(self.allocatingProcess(bytes: allocation), output: .discarded)
+        #expect(small.terminationStatus.isSuccess)
+        #expect(large.terminationStatus.isSuccess)
+        // `maxRSS` is documented in bytes on every platform. If a platform's
+        // KiB-to-bytes scaling were wrong, this would be off by 1024x.
+        #expect(large.resourceUsage.maxRSS > allocation / 2)
+        #expect(large.resourceUsage.maxRSS > small.resourceUsage.maxRSS)
+    }
+
+    @Test func testResourceUsageIsReportedForSignaledProcess() async throws {
+        // The child busies itself first and then kills itself, rather than being
+        // spawned idle and signaled from here, for two independent reasons:
+        //
+        // FreeBSD samples RSS on statclock ticks instead of tracking a
+        // high-water mark on every fault, so a child killed the instant it
+        // spawns reports ru_maxrss == 0. It has to run long enough to be
+        // sampled at least once.
+        //
+        // SIGKILL cannot be trapped, so the child is guaranteed to die *from*
+        // the signal. A shell sent SIGTERM may trap it and exit 128+signum
+        // instead, which is what Android's mksh does.
+        let config = Configuration(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "i=0; while [ $i -lt 200000 ]; do i=$((i+1)); done; kill -s KILL $$"]
+        )
+        let result = try await run(config, output: .discarded)
+        #expect(result.terminationStatus == .signaled(SIGKILL))
+        // A child that died on a signal is still accounted for.
+        #expect(result.resourceUsage.userTime > .zero)
+        #expect(result.resourceUsage.maxRSS > 0)
+    }
+
+    @Test func testResourceUsageMatchesUnderlyingRusage() async throws {
+        let result = try await run(self.cpuBoundProcess(), output: .discarded)
+        let usage = result.resourceUsage
+        let expectedUserTime =
+            Duration.seconds(usage.rusage.ru_utime.tv_sec) + .microseconds(usage.rusage.ru_utime.tv_usec)
+        let expectedSystemTime =
+            Duration.seconds(usage.rusage.ru_stime.tv_sec) + .microseconds(usage.rusage.ru_stime.tv_usec)
+        #expect(usage.userTime == expectedUserTime)
+        #expect(usage.systemTime == expectedSystemTime)
+    }
+    #endif
+
+    @Test func testResourceUsageEqualityIgnoresRawRusagePadding() async throws {
+        let result = try await run(self.immediateExitProcess(withExitCode: 0), output: .discarded)
+        let usage = result.resourceUsage
+        // Equality and hashing are defined over the interpreted fields, so a
+        // value always matches itself regardless of the raw C struct's bytes.
+        #expect(usage == usage)
+        #expect(Set([usage, usage]).count == 1)
+    }
+}
+
+internal func monitorProcessTermination(for processIdentifier: ProcessIdentifier) async throws -> (TerminationStatus, ResourceUsage) {
     try await waitForProcessTermination(for: processIdentifier)
     return try reapProcess(with: processIdentifier)
 }

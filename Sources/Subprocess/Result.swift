@@ -15,6 +15,72 @@ import System
 import SystemPackage
 #endif
 
+#if canImport(Darwin)
+public import Darwin
+#elseif canImport(Glibc)
+public import Glibc
+#elseif canImport(Musl)
+public import Musl
+#elseif canImport(Android)
+public import Android
+#endif
+
+// Don't import `_SubprocessCShims` into this file. On some platforms that makes
+// it, rather than the platform libc overlay, the module `rusage` is attributed
+// to, and `ResourceUsage.rusage` can then no longer be public. The conversions
+// that need C struct members in scope live in Subprocess+Unix.swift and
+// Subprocess+Windows.swift instead.
+
+// MARK: - ResourceUsage
+
+/// Resource usage information for a terminated subprocess.
+///
+/// Equality and hashing consider only ``userTime``, ``systemTime``, and
+/// ``maxRSS``. Where the platform exposes it, `rusage` takes no part in them, so
+/// two values agreeing on those three are equal even if their raw structs differ.
+public struct ResourceUsage: Sendable, Hashable {
+    /// The total amount of time spent executing in user mode.
+    public let userTime: Duration
+    /// The total amount of time spent executing in kernel mode.
+    public let systemTime: Duration
+    /// The peak resident set size (maximum memory used), in bytes.
+    public let maxRSS: Int
+
+    #if !os(Windows)
+    /// The underlying POSIX resource usage information.
+    public let rusage: rusage
+    #endif
+
+    #if os(Windows)
+    internal init(userTime: Duration, systemTime: Duration, maxRSS: Int) {
+        self.userTime = userTime
+        self.systemTime = systemTime
+        self.maxRSS = maxRSS
+    }
+    #else
+    internal init(userTime: Duration, systemTime: Duration, maxRSS: Int, rusage: rusage) {
+        self.userTime = userTime
+        self.systemTime = systemTime
+        self.maxRSS = maxRSS
+        self.rusage = rusage
+    }
+    #endif
+
+    // Written by hand rather than synthesized: `rusage` is a C struct that
+    // conforms to neither protocol, and conforming a type this package doesn't
+    // own -- retroactively and publicly -- would collide with anyone else who
+    // does the same.
+    public static func == (lhs: ResourceUsage, rhs: ResourceUsage) -> Bool {
+        lhs.userTime == rhs.userTime && lhs.systemTime == rhs.systemTime && lhs.maxRSS == rhs.maxRSS
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(self.userTime)
+        hasher.combine(self.systemTime)
+        hasher.combine(self.maxRSS)
+    }
+}
+
 // MARK: - Result
 
 /// The result of running a subprocess, including the closure's return value,
@@ -42,6 +108,8 @@ public struct ExecutionResult<
     public let standardOutput: Output.OutputType
     /// The collected standard error of the subprocess.
     public let standardError: Error.OutputType
+    /// The resource usage of the terminated child process.
+    public let resourceUsage: ResourceUsage
 
     /// The value returned by the body closure passed to `run`.
     public let closureResult: ClosureResult
@@ -49,12 +117,14 @@ public struct ExecutionResult<
     internal init(
         processIdentifier: ProcessIdentifier,
         terminationStatus: TerminationStatus,
+        resourceUsage: ResourceUsage,
         closureResult: consuming ClosureResult,
         standardOutput: Output.OutputType,
         standardError: Error.OutputType
     ) {
         self.processIdentifier = processIdentifier
         self.terminationStatus = terminationStatus
+        self.resourceUsage = resourceUsage
         self.closureResult = closureResult
         self.standardOutput = standardOutput
         self.standardError = standardError
@@ -83,6 +153,7 @@ extension ExecutionResult: CustomStringConvertible where Output.OutputType: Cust
             ExecutionResult(
                 processIdentifier: \(self.processIdentifier),
                 terminationStatus: \(self.terminationStatus.description),
+                resourceUsage: \(self.resourceUsage),
                 closureResult: \(String(describing: self.closureResult)),
                 standardOutput: \(self.standardOutput.description)
                 standardError: \(self.standardError.description)
@@ -99,6 +170,7 @@ where Output.OutputType: CustomDebugStringConvertible, Error.OutputType: CustomD
             ExecutionResult(
                 processIdentifier: \(self.processIdentifier),
                 terminationStatus: \(self.terminationStatus.debugDescription),
+                resourceUsage: \(self.resourceUsage),
                 closureResult: \(String(describing: self.closureResult)),
                 standardOutput: \(self.standardOutput.debugDescription)
                 standardError: \(self.standardError.debugDescription)
@@ -114,11 +186,14 @@ where Output.OutputType: CustomDebugStringConvertible, Error.OutputType: CustomD
 internal struct ExecutionOutcome<Result: Sendable & ~Copyable>: Sendable, ~Copyable {
     /// The termination status of the subprocess.
     internal let terminationStatus: TerminationStatus
+    /// The resource usage of the terminated child process.
+    internal let resourceUsage: ResourceUsage
     /// The value returned by the closure passed to the `run` method.
     internal let value: Result
 
-    internal init(terminationStatus: TerminationStatus, value: consuming Result) {
+    internal init(terminationStatus: TerminationStatus, resourceUsage: ResourceUsage, value: consuming Result) {
         self.terminationStatus = terminationStatus
+        self.resourceUsage = resourceUsage
         self.value = value
     }
 }
@@ -135,6 +210,7 @@ extension ExecutionOutcome: CustomStringConvertible where Result: CustomStringCo
         return """
             ExecutionOutcome(
                 terminationStatus: \(self.terminationStatus.description),
+                resourceUsage: \(self.resourceUsage),
                 value: \(self.value.description)
             )
             """
@@ -147,6 +223,7 @@ extension ExecutionOutcome: CustomDebugStringConvertible where Result: CustomDeb
         return """
             ExecutionOutcome(
                 terminationStatus: \(self.terminationStatus.debugDescription),
+                resourceUsage: \(self.resourceUsage),
                 value: \(self.value.debugDescription)
             )
             """

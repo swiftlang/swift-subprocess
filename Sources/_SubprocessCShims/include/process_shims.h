@@ -106,6 +106,19 @@ int _was_process_signaled(int status);
 int _get_signal_code(int status);
 int _was_process_suspended(int status);
 
+/// Reaps `pid`, writing its wait status to `status` and the resource usage the
+/// kernel accounted to it into `usage`.
+///
+/// This wraps libc's `wait4` rather than calling it from Swift directly: musl
+/// declares `wait4` only under `_GNU_SOURCE`/`_BSD_SOURCE`, so it isn't
+/// reliably visible through every platform's Swift overlay. Wrapping the libc
+/// entry point (rather than issuing a raw `waitid` syscall, which is the only
+/// other interface that reports `rusage`) also keeps a single definition of
+/// `struct rusage` in play: the raw syscall writes the kernel's layout, whose
+/// `__kernel_old_timeval` fields disagree with libc's wherever `time_t` is
+/// 64-bit on a 32-bit architecture.
+pid_t _subprocess_wait4(pid_t pid, int * _Nonnull status, int options, struct rusage * _Nonnull usage);
+
 /// Returns the soft RLIMIT_NOFILE value for the current process, or 0 on
 /// error.  Implemented in C so that RLIMIT_NOFILE always resolves to the
 /// correct type regardless of how the Swift Glibc/Darwin overlay imports it.
