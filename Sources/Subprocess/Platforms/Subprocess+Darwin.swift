@@ -410,7 +410,7 @@ extension Configuration {
 
                     let error: SubprocessError
                     if spawnAttributeError != 0 {
-                        error = SubprocessError.spawnFailed(withUnderlyingError: Errno(rawValue: result))
+                        error = SubprocessError.spawnFailed(withUnderlyingError: Errno(rawValue: spawnAttributeError))
                     } else {
                         error = SubprocessError.failedToChangeWorkingDirectory(
                             self.workingDirectory?.string,
