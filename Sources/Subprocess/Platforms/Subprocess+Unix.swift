@@ -957,8 +957,8 @@ extension ProcessIdentifier {
     /// Checks whether the process has already exited without consuming the
     /// zombie.
     ///
-    /// Returns `true` if a child has exited (or stopped/continued in a
-    /// way `waitid` reports), `false` if the child is still running.
+    /// Returns `true` only for a terminal exit. Stop and continue notifications
+    /// do not mean the child has exited.
     /// The zombie remains available for a subsequent call to `blockingReap()`.
     internal func peekIfExited() throws(Errno) -> Bool {
         try _peekIfExited(pid: value)
@@ -984,7 +984,15 @@ internal func _peekIfExited(pid: pid_t) throws(Errno) -> Bool {
     // WNOWAIT leaves the zombie in the process table so a subsequent
     // `_blockingReap` (or `_reap`) can still consume it.
     let siginfo = try _waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED | WNOHANG | WNOWAIT)
-    return !(siginfo.si_pid == 0 && siginfo.si_signo == 0)
+    // Darwin can report a pending stop notification even with WEXITED.
+    // Treating every nonempty result as an exit bypasses monitoring and sends
+    // CLD_STOPPED into the terminal-status decoder, which traps.
+    switch siginfo.si_code {
+    case .init(CLD_EXITED), .init(CLD_KILLED), .init(CLD_DUMPED):
+        return true
+    default:
+        return false
+    }
 }
 
 internal func _waitid(idtype: idtype_t, id: id_t, flags: Int32) throws(Errno) -> siginfo_t {
