@@ -340,7 +340,7 @@ private let setup: () = {
     if !_isWaitprocessDescriptorSupported() {
         var pipeCreationError: SubprocessError? = nil
         do {
-            let (readEnd, writeEnd) = try FileDescriptor.pipe()
+            let (readEnd, writeEnd) = try FileDescriptor.cloexecPipe()
             _signalPipe = (readEnd.rawValue, writeEnd.rawValue)
             // Make the pipe non-blocking. The read end MUST be non-blocking
             // so the drain loop in _notifyAllKnownChildProcesses exits cleanly
