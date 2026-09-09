@@ -246,6 +246,14 @@ extension Configuration {
                 }
 
                 // Input
+                //
+                // posix_spawn_file_actions_adddup2 (used here and below for
+                // output/error) is specified as equivalent to dup2, which
+                // always clears close-on-exec on the target descriptor
+                // regardless of the source's close-on-exec state, so the
+                // pipe read/write ends handed to the child here still
+                // survive its execve() even though the pipes themselves are
+                // created close-on-exec.
                 var result: Int32 = -1
                 if inputReadFileDescriptor != nil {
                     result = posix_spawn_file_actions_adddup2(

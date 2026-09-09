@@ -527,12 +527,65 @@ extension Configuration {
 
 // MARK: - FileDescriptor extensions
 extension FileDescriptor {
+    /// Creates a pipe, marking both ends close-on-exec atomically where the
+    /// platform/OS combination supports it (via `pipe2(2)`), so a `fork()`
+    /// racing on another thread cannot inherit the new descriptors into an
+    /// unrelated spawned child. Falls back to `pipe()` followed by
+    /// `fcntl(F_SETFD, FD_CLOEXEC)` where the atomic primitive isn't
+    /// available.
+    ///
+    /// The end(s) of this pipe handed to a spawned child remain usable by
+    /// it: the `dup2`/`posix_spawn_file_actions_adddup2` call that binds one
+    /// end to the child's stdin/stdout/stderr always clears close-on-exec on
+    /// the resulting descriptor, regardless of the source descriptor's own
+    /// close-on-exec state.
+    ///
+    /// The corresponding C function is `pipe2`.
+    internal static func cloexecPipe() throws -> (
+        readEnd: FileDescriptor,
+        writeEnd: FileDescriptor
+    ) {
+        var fds: (Int32, Int32) = (-1, -1)
+        let rc = withUnsafeMutablePointer(to: &fds) { pointer in
+            pointer.withMemoryRebound(to: Int32.self, capacity: 2) { fds in
+                _subprocess_pipe_cloexec(fds)
+            }
+        }
+        guard rc == 0 else {
+            throw Errno(rawValue: errno)
+        }
+        return (readEnd: FileDescriptor(rawValue: fds.0), writeEnd: FileDescriptor(rawValue: fds.1))
+    }
+
+    /// Duplicates this file descriptor onto the lowest-numbered unused
+    /// descriptor, marking the new descriptor close-on-exec.
+    ///
+    /// Implemented with `fcntl(F_DUPFD_CLOEXEC)`, which atomically obtains
+    /// the new descriptor and marks it close-on-exec in one syscall: a plain
+    /// `dup()` followed by a separate `fcntl(F_SETFD, FD_CLOEXEC)` could
+    /// race a `fork()` on another thread, which could inherit the new
+    /// descriptor into an unrelated spawned child before this thread gets a
+    /// chance to mark it close-on-exec.
+    internal func safeDuplicate(retryOnInterrupt: Bool = true) throws -> FileDescriptor {
+        while true {
+            let newValue = _subprocess_dup_cloexec(self.rawValue)
+            if newValue >= 0 {
+                return FileDescriptor(rawValue: newValue)
+            }
+            let currentError = Errno(rawValue: errno)
+            if retryOnInterrupt && currentError == .interrupted {
+                continue
+            }
+            throw currentError
+        }
+    }
+
     internal static func ssp_pipe() throws(SubprocessError) -> (
         readEnd: FileDescriptor,
         writeEnd: FileDescriptor
     ) {
         do {
-            return try pipe()
+            return try cloexecPipe()
         } catch {
             throw SubprocessError.asyncIOFailed(
                 reason: "Failed to create pipe",

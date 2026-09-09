@@ -344,7 +344,7 @@ private let setup: () = {
     // Create the shutdown pipe used to wake the monitor thread at exit.
     let shutdownPipe: (readEnd: FileDescriptor, writeEnd: FileDescriptor)
     do {
-        shutdownPipe = try FileDescriptor.pipe()
+        shutdownPipe = try FileDescriptor.cloexecPipe()
     } catch {
         _reportFailureWithErrno((error as? Errno)?.rawValue ?? EBADF)
         return

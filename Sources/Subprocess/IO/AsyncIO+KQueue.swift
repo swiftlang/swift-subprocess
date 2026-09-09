@@ -81,7 +81,7 @@ final class AsyncIO: Sendable {
         }
         let shutdownPipe: (readEnd: FileDescriptor, writeEnd: FileDescriptor)
         do {
-            shutdownPipe = try FileDescriptor.pipe()
+            shutdownPipe = try FileDescriptor.cloexecPipe()
         } catch {
             let error: SubprocessError = .asyncIOFailed(
                 reason: "pipe failed for shutdown signaling",

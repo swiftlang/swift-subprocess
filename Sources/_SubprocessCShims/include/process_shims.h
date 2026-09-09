@@ -66,6 +66,34 @@ int _subprocess_pthread_create(
     void * _Nullable context
 );
 
+#if TARGET_OS_MAC || TARGET_OS_UNIX
+/// Creates a pipe, atomically marking both ends close-on-exec where the
+/// platform/OS combination supports `pipe2(2)`. Falls back to `pipe()`
+/// followed by `fcntl(F_SETFD, FD_CLOEXEC)` where the atomic primitive isn't
+/// available, which (unlike `pipe2`) cannot avoid briefly leaving the
+/// descriptors inheritable to a `fork()` racing on another thread.
+int _subprocess_pipe_cloexec(int fildes[_Nonnull 2]);
+
+/// Duplicates `fildes` onto `fildes2` (as `dup2` would), atomically marking
+/// the new descriptor close-on-exec where the platform/OS combination
+/// supports `dup3(2)`. As with a raw `dup3()` call, `fildes` must not equal
+/// `fildes2` (returns `EINVAL` otherwise, even on the `dup2`-based fallback
+/// path).
+///
+/// No caller needs this yet; provided for parity with
+/// `_subprocess_pipe_cloexec` so a future one doesn't have to reimplement
+/// the same SDK-availability handling.
+int _subprocess_dup3_cloexec(int fildes, int fildes2);
+
+/// Duplicates `fildes` onto the lowest-numbered unused descriptor, marking
+/// the new descriptor close-on-exec.
+///
+/// Implemented with `fcntl(F_DUPFD_CLOEXEC)`, which -- unlike `pipe2`/`dup3`
+/// above -- has been available on Darwin, Linux, and the BSDs for a long
+/// time, so no SDK-availability fallback is needed here.
+int _subprocess_dup_cloexec(int fildes);
+#endif // TARGET_OS_MAC || TARGET_OS_UNIX
+
 #if __has_include(<mach/vm_page_size.h>)
 vm_size_t _subprocess_vm_size(void);
 #endif
