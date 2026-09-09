@@ -140,6 +140,103 @@ int _subprocess_pthread_create(
     return pthread_create(ptr, attr, start, context);
 }
 
+// MARK: - Close-on-exec pipe/dup helpers
+//
+// `pipe2(2)`/`dup3(2)` atomically create/duplicate a descriptor with
+// `O_CLOEXEC` set. A plain `pipe()`/`dup2()` followed by a separate
+// `fcntl(F_SETFD, FD_CLOEXEC)` is not atomic: a `fork()` racing on another
+// thread between the two calls can inherit the not-yet-marked descriptor
+// into an unrelated child this library spawns concurrently. See
+// https://github.com/swiftlang/swift-build/pull/1520 for the same class of
+// fix applied to swift-build.
+//
+// `pipe2`/`dup3` are declared unconditionally on Linux, FreeBSD, and
+// OpenBSD. Darwin does not declare them yet: `<Availability.h>` only
+// defines `__MAC_27_0` once the SDK knows about a macOS release new enough
+// to vend them, so until Xcode ships that SDK we fall back to the
+// non-atomic `pipe()`/`dup2()` + `fcntl(F_SETFD, ...)` sequence there. Once
+// it does, this starts using the atomic syscalls automatically, with no
+// further changes needed here.
+#if TARGET_OS_MAC || TARGET_OS_UNIX
+
+#if TARGET_OS_MAC
+#include <Availability.h>
+
+static int _subprocess_set_cloexec(int fd) {
+    int flags = fcntl(fd, F_GETFD);
+    if (flags == -1) {
+        return -1;
+    }
+    return fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+}
+
+static int _subprocess_pipe_fallback(int fildes[2]) {
+    if (pipe(fildes) != 0) {
+        return -1;
+    }
+    if (_subprocess_set_cloexec(fildes[0]) != 0 || _subprocess_set_cloexec(fildes[1]) != 0) {
+        int savedErrno = errno;
+        close(fildes[0]);
+        close(fildes[1]);
+        errno = savedErrno;
+        return -1;
+    }
+    return 0;
+}
+
+static int _subprocess_dup_fallback(int fildes, int fildes2) {
+    if (fildes == fildes2) {
+        // Match dup3(2)'s stricter behavior (EINVAL when old == new) so
+        // callers see consistent semantics regardless of which path is
+        // taken under the hood.
+        errno = EINVAL;
+        return -1;
+    }
+    if (dup2(fildes, fildes2) < 0) {
+        return -1;
+    }
+    if (_subprocess_set_cloexec(fildes2) != 0) {
+        int savedErrno = errno;
+        close(fildes2);
+        errno = savedErrno;
+        return -1;
+    }
+    return fildes2;
+}
+#endif // TARGET_OS_MAC
+
+int _subprocess_pipe_cloexec(int fildes[2]) {
+#if TARGET_OS_MAC
+#if defined(__MAC_27_0)
+    if (__builtin_available(macOS 27, iOS 27, tvOS 27, watchOS 27, visionOS 27, *)) {
+        return pipe2(fildes, O_CLOEXEC);
+    }
+#endif
+    return _subprocess_pipe_fallback(fildes);
+#else // TARGET_OS_UNIX
+    return pipe2(fildes, O_CLOEXEC);
+#endif
+}
+
+int _subprocess_dup3_cloexec(int fildes, int fildes2) {
+#if TARGET_OS_MAC
+#if defined(__MAC_27_0)
+    if (__builtin_available(macOS 27, iOS 27, tvOS 27, watchOS 27, visionOS 27, *)) {
+        return dup3(fildes, fildes2, O_CLOEXEC);
+    }
+#endif
+    return _subprocess_dup_fallback(fildes, fildes2);
+#else // TARGET_OS_UNIX
+    return dup3(fildes, fildes2, O_CLOEXEC);
+#endif
+}
+
+int _subprocess_dup_cloexec(int fildes) {
+    return fcntl(fildes, F_DUPFD_CLOEXEC, 0);
+}
+
+#endif // TARGET_OS_MAC || TARGET_OS_UNIX
+
 #endif
 
 #if __has_include(<mach/vm_page_size.h>)
@@ -191,35 +288,11 @@ static int _subprocess_spawn_prefork(
     if (rc != 0) {
         return rc;
     }
-    // Setup pipe to catch exec failures from child
+    // Setup pipe to catch exec failures from child. Both ends are marked
+    // close-on-exec atomically (where possible) so a fork() racing on
+    // another thread cannot inherit them into an unrelated child.
     int pipefd[2];
-    if (pipe(pipefd) != 0) {
-        return errno;
-    }
-    // Set FD_CLOEXEC so the pipe is automatically closed when exec succeeds
-    flags = fcntl(pipefd[0], F_GETFD);
-    if (flags == -1) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        return errno;
-    }
-    flags |= FD_CLOEXEC;
-    if (fcntl(pipefd[0], F_SETFD, flags) == -1) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        return errno;
-    }
-
-    flags = fcntl(pipefd[1], F_GETFD);
-    if (flags == -1) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        return errno;
-    }
-    flags |= FD_CLOEXEC;
-    if (fcntl(pipefd[1], F_SETFD, flags) == -1) {
-        close(pipefd[0]);
-        close(pipefd[1]);
+    if (_subprocess_pipe_cloexec(pipefd) != 0) {
         return errno;
     }
 
@@ -605,35 +678,11 @@ int _subprocess_fork_exec(
     close(pipefd[1]); \
     _exit(EXIT_FAILURE)
 
-    // Setup pipe to catch exec failures from child
+    // Setup pipe to catch exec failures from child. Both ends are marked
+    // close-on-exec atomically (where possible) so a fork() racing on
+    // another thread cannot inherit them into an unrelated child.
     int pipefd[2];
-    if (pipe(pipefd) != 0) {
-        return errno;
-    }
-    // Set FD_CLOEXEC so the pipe is automatically closed when exec succeeds
-    short flags = fcntl(pipefd[0], F_GETFD);
-    if (flags == -1) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        return errno;
-    }
-    flags |= FD_CLOEXEC;
-    if (fcntl(pipefd[0], F_SETFD, flags) == -1) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        return errno;
-    }
-
-    flags = fcntl(pipefd[1], F_GETFD);
-    if (flags == -1) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        return errno;
-    }
-    flags |= FD_CLOEXEC;
-    if (fcntl(pipefd[1], F_SETFD, flags) == -1) {
-        close(pipefd[0]);
-        close(pipefd[1]);
+    if (_subprocess_pipe_cloexec(pipefd) != 0) {
         return errno;
     }
 
@@ -746,7 +795,10 @@ int _subprocess_fork_exec(
             (void)setpgid(0, *process_group_id);
         }
 
-        // Bind stdin, stdout, and stderr
+        // Bind stdin, stdout, and stderr. Plain dup2, not
+        // _subprocess_dup3_cloexec: dup2 already clears close-on-exec on
+        // the target regardless of the source's close-on-exec state, and
+        // the target must survive the execve() below.
         if (file_descriptors[0] >= 0) {
             rc = dup2(file_descriptors[0], STDIN_FILENO);
         } else {
