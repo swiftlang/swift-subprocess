@@ -1081,7 +1081,7 @@ internal struct IODescriptor: ~Copyable {
 
     func duplicate() throws(SubprocessError) -> IODescriptor {
         do throws(any Error) {
-            return try IODescriptor(self._descriptor.duplicate(), closeWhenDone: self.closeWhenDone)
+            return try IODescriptor(self._descriptor.safeDuplicate(), closeWhenDone: self.closeWhenDone)
         } catch {
             throw SubprocessError.asyncIOFailed(
                 reason: "Failed to duplicate file descriptor \(self._descriptor)",
@@ -1291,7 +1291,7 @@ internal struct CreatedPipe: ~Copyable, Sendable {
         }
         #else
         do {
-            let pipe = try FileDescriptor.pipe()
+            let pipe = try FileDescriptor.cloexecPipe()
             self._readFileDescriptor = .init(
                 pipe.readEnd,
                 closeWhenDone: closeWhenDone
@@ -1483,6 +1483,16 @@ extension HANDLE {
             )
         }
         return handle
+    }
+
+    /// Alias for `duplicate()`, for API symmetry with the POSIX
+    /// `FileDescriptor.safeDuplicate()`. Windows has no `dup3`/
+    /// `F_DUPFD_CLOEXEC` equivalent: handle inheritance is controlled
+    /// explicitly via the `STARTUPINFOEX` handle list passed at process
+    /// creation, not via a close-on-exec-style flag on the handle itself, so
+    /// there is nothing additional to opt into here.
+    func safeDuplicate() throws(SubprocessError) -> HANDLE {
+        try self.duplicate()
     }
 }
 #endif

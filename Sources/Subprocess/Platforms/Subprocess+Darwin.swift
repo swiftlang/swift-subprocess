@@ -189,6 +189,10 @@ extension Configuration {
         let env: [UnsafeMutablePointer<CChar>?]
         let uidPtr: UnsafeMutablePointer<uid_t>?
         let gidPtr: UnsafeMutablePointer<gid_t>?
+        /// Every descriptor referenced by `fileActions`; see
+        /// `_subprocess_spawn`, whose pre-fork path must clear `FD_CLOEXEC`
+        /// on these in the forked child before spawning.
+        let fileActionDescriptors: [CInt]
     }
 
     internal func spawn(
@@ -246,8 +250,25 @@ extension Configuration {
                 }
 
                 // Input
+                //
+                // `posix_spawn_file_actions_adddup2` (used here and below for
+                // output/error) is specified as equivalent to `dup2`, which
+                // always clears close-on-exec on the *target* descriptor
+                // regardless of the source's close-on-exec state, so the pipe
+                // ends bound to the child's stdio survive its `exec()` even
+                // though the pipes are created close-on-exec.
+                //
+                // Every descriptor a file action names still has to be
+                // recorded in `fileActionDescriptors` and handed to
+                // `_subprocess_spawn`: its pre-fork path execs this process
+                // via `POSIX_SPAWN_SETEXEC`, which closes close-on-exec
+                // descriptors before applying the file actions, so the forked
+                // child has to clear the flag first or the spawn fails with
+                // `EBADF`.
+                var fileActionDescriptors: [CInt] = []
                 var result: Int32 = -1
                 if inputReadFileDescriptor != nil {
+                    fileActionDescriptors.append(inputReadFileDescriptor!.platformDescriptor())
                     result = posix_spawn_file_actions_adddup2(
                         &fileActions, inputReadFileDescriptor!.platformDescriptor(), 0)
                     guard result == 0 else {
@@ -266,6 +287,7 @@ extension Configuration {
                 }
                 if inputWriteFileDescriptor != nil {
                     // Close parent side
+                    fileActionDescriptors.append(inputWriteFileDescriptor!.platformDescriptor())
                     result = posix_spawn_file_actions_addclose(
                         &fileActions, inputWriteFileDescriptor!.platformDescriptor()
                     )
@@ -285,6 +307,7 @@ extension Configuration {
                 }
                 // Output
                 if outputWriteFileDescriptor != nil {
+                    fileActionDescriptors.append(outputWriteFileDescriptor!.platformDescriptor())
                     result = posix_spawn_file_actions_adddup2(
                         &fileActions, outputWriteFileDescriptor!.platformDescriptor(), 1
                     )
@@ -304,6 +327,7 @@ extension Configuration {
                 }
                 if outputReadFileDescriptor != nil {
                     // Close parent side
+                    fileActionDescriptors.append(outputReadFileDescriptor!.platformDescriptor())
                     result = posix_spawn_file_actions_addclose(
                         &fileActions, outputReadFileDescriptor!.platformDescriptor()
                     )
@@ -323,6 +347,7 @@ extension Configuration {
                 }
                 // Error
                 if errorWriteFileDescriptor != nil {
+                    fileActionDescriptors.append(errorWriteFileDescriptor!.platformDescriptor())
                     result = posix_spawn_file_actions_adddup2(
                         &fileActions, errorWriteFileDescriptor!.platformDescriptor(), 2
                     )
@@ -342,6 +367,7 @@ extension Configuration {
                 }
                 if errorReadFileDescriptor != nil {
                     // Close parent side
+                    fileActionDescriptors.append(errorReadFileDescriptor!.platformDescriptor())
                     result = posix_spawn_file_actions_addclose(
                         &fileActions, errorReadFileDescriptor!.platformDescriptor()
                     )
@@ -445,7 +471,8 @@ extension Configuration {
                     argv: argv,
                     env: env,
                     uidPtr: uidPtr,
-                    gidPtr: gidPtr
+                    gidPtr: gidPtr,
+                    fileActionDescriptors: fileActionDescriptors
                 )
                 let (spawnError, pid) = try await self.spawnRetryingTransientFailure(
                     executablePath: possibleExecutablePath,
@@ -562,19 +589,24 @@ extension Configuration {
                         var pid: pid_t = 0
                         var _fileActions = spawnContext.fileActions
                         var _spawnAttributes = spawnContext.spawnAttributes
-                        let rc = _subprocess_spawn(
-                            &pid,
-                            exePath,
-                            &_fileActions,
-                            &_spawnAttributes,
-                            spawnContext.argv,
-                            spawnContext.env,
-                            spawnContext.uidPtr,
-                            spawnContext.gidPtr,
-                            Int32(supplementaryGroups?.count ?? 0),
-                            sgroups?.baseAddress,
-                            self.platformOptions.createSession ? 1 : 0
-                        )
+                        let rc = spawnContext.fileActionDescriptors.withUnsafeBufferPointer {
+                            fileActionFDs in
+                            _subprocess_spawn(
+                                &pid,
+                                exePath,
+                                &_fileActions,
+                                &_spawnAttributes,
+                                spawnContext.argv,
+                                spawnContext.env,
+                                spawnContext.uidPtr,
+                                spawnContext.gidPtr,
+                                Int32(supplementaryGroups?.count ?? 0),
+                                sgroups?.baseAddress,
+                                self.platformOptions.createSession ? 1 : 0,
+                                Int32(fileActionFDs.count),
+                                fileActionFDs.baseAddress
+                            )
+                        }
                         return (rc, pid)
                     }
                 }

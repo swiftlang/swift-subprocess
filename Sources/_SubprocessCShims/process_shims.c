@@ -140,6 +140,103 @@ int _subprocess_pthread_create(
     return pthread_create(ptr, attr, start, context);
 }
 
+// MARK: - Close-on-exec pipe/dup helpers
+//
+// `pipe2(2)`/`dup3(2)` atomically create/duplicate a descriptor with
+// `O_CLOEXEC` set. A plain `pipe()`/`dup2()` followed by a separate
+// `fcntl(F_SETFD, FD_CLOEXEC)` is not atomic: a `fork()` racing on another
+// thread between the two calls can inherit the not-yet-marked descriptor
+// into an unrelated child this library spawns concurrently. See
+// https://github.com/swiftlang/swift-build/pull/1520 for the same class of
+// fix applied to swift-build.
+//
+// `pipe2`/`dup3` are declared unconditionally on Linux, FreeBSD, and
+// OpenBSD. Darwin does not declare them yet: `<Availability.h>` only
+// defines `__MAC_27_0` once the SDK knows about a macOS release new enough
+// to vend them, so until Xcode ships that SDK we fall back to the
+// non-atomic `pipe()`/`dup2()` + `fcntl(F_SETFD, ...)` sequence there. Once
+// it does, this starts using the atomic syscalls automatically, with no
+// further changes needed here.
+#if TARGET_OS_MAC || TARGET_OS_UNIX
+
+#if TARGET_OS_MAC
+#include <Availability.h>
+
+static int _subprocess_set_cloexec(int fd) {
+    int flags = fcntl(fd, F_GETFD);
+    if (flags == -1) {
+        return -1;
+    }
+    return fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+}
+
+static int _subprocess_pipe_fallback(int fildes[2]) {
+    if (pipe(fildes) != 0) {
+        return -1;
+    }
+    if (_subprocess_set_cloexec(fildes[0]) != 0 || _subprocess_set_cloexec(fildes[1]) != 0) {
+        int savedErrno = errno;
+        close(fildes[0]);
+        close(fildes[1]);
+        errno = savedErrno;
+        return -1;
+    }
+    return 0;
+}
+
+static int _subprocess_dup_fallback(int fildes, int fildes2) {
+    if (fildes == fildes2) {
+        // Match dup3(2)'s stricter behavior (EINVAL when old == new) so
+        // callers see consistent semantics regardless of which path is
+        // taken under the hood.
+        errno = EINVAL;
+        return -1;
+    }
+    if (dup2(fildes, fildes2) < 0) {
+        return -1;
+    }
+    if (_subprocess_set_cloexec(fildes2) != 0) {
+        int savedErrno = errno;
+        close(fildes2);
+        errno = savedErrno;
+        return -1;
+    }
+    return fildes2;
+}
+#endif // TARGET_OS_MAC
+
+int _subprocess_pipe_cloexec(int fildes[2]) {
+#if TARGET_OS_MAC
+#if defined(__MAC_27_0)
+    if (__builtin_available(macOS 27, iOS 27, tvOS 27, watchOS 27, visionOS 27, *)) {
+        return pipe2(fildes, O_CLOEXEC);
+    }
+#endif
+    return _subprocess_pipe_fallback(fildes);
+#else // TARGET_OS_UNIX
+    return pipe2(fildes, O_CLOEXEC);
+#endif
+}
+
+int _subprocess_dup3_cloexec(int fildes, int fildes2) {
+#if TARGET_OS_MAC
+#if defined(__MAC_27_0)
+    if (__builtin_available(macOS 27, iOS 27, tvOS 27, watchOS 27, visionOS 27, *)) {
+        return dup3(fildes, fildes2, O_CLOEXEC);
+    }
+#endif
+    return _subprocess_dup_fallback(fildes, fildes2);
+#else // TARGET_OS_UNIX
+    return dup3(fildes, fildes2, O_CLOEXEC);
+#endif
+}
+
+int _subprocess_dup_cloexec(int fildes) {
+    return fcntl(fildes, F_DUPFD_CLOEXEC, 0);
+}
+
+#endif // TARGET_OS_MAC || TARGET_OS_UNIX
+
 #endif
 
 #if __has_include(<mach/vm_page_size.h>)
@@ -171,7 +268,8 @@ static int _subprocess_spawn_prefork(
     uid_t * _Nullable uid,
     gid_t * _Nullable gid,
     int number_of_sgroups, const gid_t * _Nullable sgroups,
-    int create_session
+    int create_session,
+    int number_of_file_action_fds, const int * _Nullable file_action_fds
 ) {
 #define write_error_and_exit int error = errno; \
     write(pipefd[1], &error, sizeof(error));\
@@ -191,35 +289,11 @@ static int _subprocess_spawn_prefork(
     if (rc != 0) {
         return rc;
     }
-    // Setup pipe to catch exec failures from child
+    // Setup pipe to catch exec failures from child. Both ends are marked
+    // close-on-exec atomically (where possible) so a fork() racing on
+    // another thread cannot inherit them into an unrelated child.
     int pipefd[2];
-    if (pipe(pipefd) != 0) {
-        return errno;
-    }
-    // Set FD_CLOEXEC so the pipe is automatically closed when exec succeeds
-    flags = fcntl(pipefd[0], F_GETFD);
-    if (flags == -1) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        return errno;
-    }
-    flags |= FD_CLOEXEC;
-    if (fcntl(pipefd[0], F_SETFD, flags) == -1) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        return errno;
-    }
-
-    flags = fcntl(pipefd[1], F_GETFD);
-    if (flags == -1) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        return errno;
-    }
-    flags |= FD_CLOEXEC;
-    if (fcntl(pipefd[1], F_SETFD, flags) == -1) {
-        close(pipefd[0]);
-        close(pipefd[1]);
+    if (_subprocess_pipe_cloexec(pipefd) != 0) {
         return errno;
     }
 
@@ -265,6 +339,37 @@ static int _subprocess_spawn_prefork(
 
         if (create_session != 0) {
             (void)setsid();
+        }
+
+        // Clear FD_CLOEXEC on every descriptor the file actions refer to.
+        //
+        // We spawn with POSIX_SPAWN_SETEXEC, which makes posix_spawn() exec
+        // this very process rather than create a new one. In that mode the
+        // exec-time close-on-exec sweep happens before the file actions are
+        // applied, so any close-on-exec descriptor they name is already gone
+        // by the time it is dup2'd/closed and the whole spawn fails with
+        // EBADF. (Verified on macOS 27; happens with or without
+        // POSIX_SPAWN_CLOEXEC_DEFAULT.) The plain posix_spawn() path below
+        // is unaffected, since there the actions are applied in a freshly
+        // forked child before it execs.
+        //
+        // Doing this here rather than in the parent keeps the descriptors
+        // close-on-exec for the parent's lifetime, so a fork() racing on
+        // another thread still cannot leak them; this child is a private
+        // copy that is about to exec. It also does not leak anything into
+        // the exec'd image: POSIX_SPAWN_CLOEXEC_DEFAULT closes every
+        // descriptor the file actions do not explicitly install, and the
+        // parent-side ends are closed outright by addclose actions.
+        for (int i = 0; i < number_of_file_action_fds; i++) {
+            int fd = file_action_fds[i];
+            int fd_flags = fcntl(fd, F_GETFD);
+            if (fd_flags == -1) {
+                write_error_and_exit;
+            }
+            if ((fd_flags & FD_CLOEXEC) != 0
+                && fcntl(fd, F_SETFD, fd_flags & ~FD_CLOEXEC) == -1) {
+                write_error_and_exit;
+            }
         }
 
         // Use posix_spawnas exec
@@ -322,7 +427,8 @@ int _subprocess_spawn(
     uid_t * _Nullable uid,
     gid_t * _Nullable gid,
     int number_of_sgroups, const gid_t * _Nullable sgroups,
-    int create_session
+    int create_session,
+    int number_of_file_action_fds, const int * _Nullable file_action_fds
 ) {
     int require_pre_fork = uid != NULL ||
         gid != NULL ||
@@ -335,7 +441,8 @@ int _subprocess_spawn(
             exec_path,
             file_actions, spawn_attrs,
             args, env,
-            uid, gid, number_of_sgroups, sgroups, create_session
+            uid, gid, number_of_sgroups, sgroups, create_session,
+            number_of_file_action_fds, file_action_fds
         );
         return rc;
     }
@@ -586,6 +693,32 @@ static int _highest_possibly_open_fd(void) {
     return sysconf(_SC_OPEN_MAX);
 }
 
+// Binds `fd` to the standard descriptor `target` in a child that is about to
+// exec, returning a negative value on failure.
+//
+// Normally this is just dup2(), which is what we want: it clears
+// close-on-exec on the descriptor it creates, regardless of whether `fd`
+// itself is close-on-exec, so the bound stream survives the exec. The one
+// case it does not cover is fd == target, where dup2() is a no-op that
+// leaves the existing flags untouched. That can happen when the parent had
+// this standard descriptor closed and the pipe was allocated over it, and
+// since these pipes are created close-on-exec it would otherwise leave the
+// child's standard stream closed after exec. Clear the flag explicitly
+// there. Both dup2() and fcntl() are async-signal-safe.
+static int _subprocess_bind_standard_fd(int fd, int target) {
+    if (fd != target) {
+        return dup2(fd, target);
+    }
+    int flags = fcntl(target, F_GETFD);
+    if (flags == -1) {
+        return -1;
+    }
+    if ((flags & FD_CLOEXEC) != 0 && fcntl(target, F_SETFD, flags & ~FD_CLOEXEC) == -1) {
+        return -1;
+    }
+    return target;
+}
+
 int _subprocess_fork_exec(
     pid_t * _Nonnull pid,
     int * _Nonnull pidfd,
@@ -605,35 +738,11 @@ int _subprocess_fork_exec(
     close(pipefd[1]); \
     _exit(EXIT_FAILURE)
 
-    // Setup pipe to catch exec failures from child
+    // Setup pipe to catch exec failures from child. Both ends are marked
+    // close-on-exec atomically (where possible) so a fork() racing on
+    // another thread cannot inherit them into an unrelated child.
     int pipefd[2];
-    if (pipe(pipefd) != 0) {
-        return errno;
-    }
-    // Set FD_CLOEXEC so the pipe is automatically closed when exec succeeds
-    short flags = fcntl(pipefd[0], F_GETFD);
-    if (flags == -1) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        return errno;
-    }
-    flags |= FD_CLOEXEC;
-    if (fcntl(pipefd[0], F_SETFD, flags) == -1) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        return errno;
-    }
-
-    flags = fcntl(pipefd[1], F_GETFD);
-    if (flags == -1) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        return errno;
-    }
-    flags |= FD_CLOEXEC;
-    if (fcntl(pipefd[1], F_SETFD, flags) == -1) {
-        close(pipefd[0]);
-        close(pipefd[1]);
+    if (_subprocess_pipe_cloexec(pipefd) != 0) {
         return errno;
     }
 
@@ -746,9 +855,11 @@ int _subprocess_fork_exec(
             (void)setpgid(0, *process_group_id);
         }
 
-        // Bind stdin, stdout, and stderr
+        // Bind stdin, stdout, and stderr. See _subprocess_bind_standard_fd
+        // for why this is dup2-based rather than _subprocess_dup3_cloexec:
+        // these descriptors must survive the execve() below.
         if (file_descriptors[0] >= 0) {
-            rc = dup2(file_descriptors[0], STDIN_FILENO);
+            rc = _subprocess_bind_standard_fd(file_descriptors[0], STDIN_FILENO);
         } else {
             rc = close(STDIN_FILENO);
         }
@@ -757,7 +868,7 @@ int _subprocess_fork_exec(
         }
 
         if (file_descriptors[2] >= 0) {
-            rc = dup2(file_descriptors[2], STDOUT_FILENO);
+            rc = _subprocess_bind_standard_fd(file_descriptors[2], STDOUT_FILENO);
         } else {
             rc = close(STDOUT_FILENO);
         }
@@ -766,7 +877,7 @@ int _subprocess_fork_exec(
         }
 
         if (file_descriptors[4] >= 0) {
-            rc = dup2(file_descriptors[4], STDERR_FILENO);
+            rc = _subprocess_bind_standard_fd(file_descriptors[4], STDERR_FILENO);
         } else {
             rc = close(STDERR_FILENO);
         }
