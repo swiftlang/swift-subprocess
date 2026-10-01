@@ -406,11 +406,26 @@ extension Configuration {
             guard result == 0 else { throw spawnFailure(result) }
         }
 
-        // 4. Close everything else, last: this must run after the dup2 and
-        //    fchdir actions, or it would close the descriptors they need.
-        if capabilities.closeAllViaSpawn == .closefromAction {
+        // 4. Close everything else. Exactly one of the two mechanisms applies;
+        //    `requiresFallbackSpawnPath` (rule 2) guarantees there is one, since
+        //    without it no spawn reaches here.
+        //
+        //    A close-from file action must come last: it must run after the
+        //    dup2 and fchdir actions, or it would close the descriptors they
+        //    need. The attribute flag is set with the others below.
+        let closeAllFlag: Int16
+        switch capabilities.closeAllViaSpawn {
+        case .cloexecDefault:
+            closeAllFlag = _subprocess_spawn_flag_cloexec_default()
+        case .closefromAction:
             let result = _subprocess_spawn_addclosefrom(fileActions, 3)
             guard result == 0 else { throw spawnFailure(result) }
+            closeAllFlag = 0
+        case .unavailable:
+            // Spawning without closing inherited descriptors would leak every
+            // one of them into the child, so refuse rather than continue.
+            assertionFailure("posix_spawn reached without a close-all mechanism")
+            throw spawnFailure(ENOTSUP)
         }
 
         // Reset the child's signal disposition, matching the fallback path.
@@ -421,10 +436,7 @@ extension Configuration {
         // `short` the libc takes happens where the macro is defined rather than
         // in a Swift `Int16(_:)` that would trap on a platform defining one
         // above `Int16.max`.
-        var flags: Int16 = _subprocess_spawn_flags_reset_signals()
-        if capabilities.closeAllViaSpawn == .cloexecDefault {
-            flags |= _subprocess_spawn_flag_cloexec_default()
-        }
+        var flags: Int16 = _subprocess_spawn_flags_reset_signals() | closeAllFlag
         if let processGroupID = self.platformOptions.processGroupID {
             flags |= _subprocess_spawn_flag_setpgroup()
             let result = _subprocess_spawnattr_setpgroup(spawnAttributes, pid_t(processGroupID))
