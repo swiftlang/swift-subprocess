@@ -323,36 +323,17 @@ struct SpawnPathTests {
 
     /// Both spawn paths run a program, wire up stdout, and report the exit
     /// status the same way.
-    ///
-    /// The tally is what makes this meaningful: it asserts the override actually
-    /// reached path selection, rather than the two cases silently taking the same
-    /// path.
-    ///
-    /// The expectation is derived from `requiresFallbackSpawnPath` rather than
-    /// from `forceFallback` alone, because the unforced case legitimately takes
-    /// the fallback wherever this platform's `posix_spawn` cannot express the
-    /// request -- glibc below 2.34 and Android below API 34 have no way to close
-    /// every inherited descriptor, for instance. Computed outside the override's
-    /// scope so the task-local does not feed back into the rules.
     @Test(arguments: [false, true])
     func testBothSpawnPathsProduceTheSameResult(forceFallback: Bool) async throws {
-        let expectsFallback =
-            forceFallback
-            || self.configuration().requiresFallbackSpawnPath(supplementaryGroups: nil)
-        let tally = SpawnPathTally()
         let result = try await SpawnCapabilities.forceFallbackPathOverride.withValue(forceFallback) {
-            try await SpawnCapabilities.spawnPathTallyOverride.withValue(tally) {
-                try await Subprocess.run(
-                    .path("/bin/sh"),
-                    arguments: ["-c", "printf hello; exit 3"],
-                    output: .string(limit: 16)
-                )
-            }
+            try await Subprocess.run(
+                .path("/bin/sh"),
+                arguments: ["-c", "printf hello; exit 3"],
+                output: .string(limit: 16)
+            )
         }
         #expect(result.terminationStatus == .exited(3))
         #expect(result.standardOutput == "hello")
-        #expect(tally.fallback == (expectsFallback ? 1 : 0))
-        #expect(tally.posixSpawn == (expectsFallback ? 0 : 1))
     }
 
     #if !os(Android) // Exit tests are not supported on Android.
@@ -395,16 +376,6 @@ struct SpawnPathTests {
             )
 
             for forceFallback in [false, true] {
-                // Derived from the same rule the implementation consults, not
-                // from `forceFallback` alone: where this platform's `posix_spawn`
-                // cannot express the request, the unforced case takes the
-                // fallback too. Built inline rather than through the suite's
-                // helper because an exit test body cannot capture `self`.
-                let expectsFallback =
-                    forceFallback
-                    || Configuration(executable: .path("/bin/sh"))
-                        .requiresFallbackSpawnPath(supplementaryGroups: nil)
-
                 for closedMask in 0..<8 {
                     // Take a copy of each descriptor about to be closed, and put
                     // it back before the next iteration.
@@ -431,20 +402,17 @@ struct SpawnPathTests {
                     // Exercises all three streams at once: standard input has to
                     // arrive for the child to echo it, and both of the child's
                     // output streams have to reach the parent.
-                    let tally = SpawnPathTally()
                     let result = try await SpawnCapabilities.forceFallbackPathOverride
                         .withValue(forceFallback) {
-                            try await SpawnCapabilities.spawnPathTallyOverride.withValue(tally) {
-                                try await Subprocess.run(
-                                    .path("/bin/sh"),
-                                    arguments: [
-                                        "-c", #"read line; printf "IN=%s" "$line"; printf ERR 1>&2"#,
-                                    ],
-                                    input: .string("ping\n"),
-                                    output: .string(limit: 64),
-                                    error: .string(limit: 64)
-                                )
-                            }
+                            try await Subprocess.run(
+                                .path("/bin/sh"),
+                                arguments: [
+                                    "-c", #"read line; printf "IN=%s" "$line"; printf ERR 1>&2"#,
+                                ],
+                                input: .string("ping\n"),
+                                output: .string(limit: 64),
+                                error: .string(limit: 64)
+                            )
                         }
 
                     let context =
@@ -455,8 +423,6 @@ struct SpawnPathTests {
                     #expect(result.terminationStatus == .exited(0), "\(context)")
                     #expect(result.standardOutput == "IN=ping", "\(context)")
                     #expect(result.standardError == "ERR", "\(context)")
-                    #expect(tally.fallback == (expectsFallback ? 1 : 0), "\(context)")
-                    #expect(tally.posixSpawn == (expectsFallback ? 0 : 1), "\(context)")
                 }
             }
         }

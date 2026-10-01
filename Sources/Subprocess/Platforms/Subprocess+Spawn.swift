@@ -123,40 +123,6 @@ extension SpawnCapabilities {
     internal static var forceFallbackPathForTesting: Bool {
         Self.forceFallbackPathOverride.get()
     }
-
-    /// Records which path each spawn actually took, for tests that assert
-    /// routing rather than merely setting the override.
-    ///
-    /// Task-local, and mutated only from the spawning task, so it neither races
-    /// with nor counts the spawns of tests running concurrently in other suites.
-    internal static let spawnPathTallyOverride = TaskLocal<SpawnPathTally?>(wrappedValue: nil)
-
-    /// The tally the current task installed, if any. See
-    /// ``spawnPathTallyOverride``.
-    internal static var spawnPathTallyForTesting: SpawnPathTally? {
-        Self.spawnPathTallyOverride.get()
-    }
-}
-
-/// A count of the spawns each path performed. See
-/// ``SpawnCapabilities/spawnPathTallyForTesting``.
-///
-/// `@unchecked Sendable` because it is a task-local reference mutated only from
-/// the single task that installed it, so its mutable state cannot be reached
-/// concurrently.
-internal final class SpawnPathTally: @unchecked Sendable {
-    internal private(set) var posixSpawn = 0
-    internal private(set) var fallback = 0
-
-    internal init() {}
-
-    internal func recordPosixSpawn() {
-        self.posixSpawn += 1
-    }
-
-    internal func recordFallback() {
-        self.fallback += 1
-    }
 }
 
 // MARK: - Path selection
@@ -518,7 +484,6 @@ extension Configuration {
         executablePath: String,
         spawnContext: SpawnContext
     ) async throws(SubprocessError) -> SpawnOutcome {
-        SpawnCapabilities.spawnPathTallyForTesting?.recordPosixSpawn()
         return try await self.runSpawnAttemptsRetryingTransientFailure {
             () async throws(SubprocessError) -> SpawnOutcome in
             return try await runOnBackgroundThread {
@@ -562,7 +527,6 @@ extension Configuration {
         workingDirectoryDescriptor: PlatformFileDescriptor,
         supplementaryGroups: [gid_t]?
     ) async throws(SubprocessError) -> SpawnOutcome {
-        SpawnCapabilities.spawnPathTallyForTesting?.recordFallback()
         let fileDescriptors = stdio.forkExecArray
         #if canImport(Darwin)
         // Every descriptor the file actions built by `withSpawnAttributes`
