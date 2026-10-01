@@ -17,20 +17,11 @@ import System
 import SystemPackage
 #endif
 
-#if canImport(Darwin)
-// Internal is enough here: Darwin declares no `PlatformSpawnAttributes` or
-// `PlatformSpawnFileActions` -- its `preSpawnProcessConfigurator` predates them
-// and keeps its own signature -- so nothing public in this file names a type
-// this module owns.
-import _SubprocessCShims
-#else
-// `public` because the `PlatformSpawnAttributes` and `PlatformSpawnFileActions`
-// typealiases below are public, and on every platform whose C library declares
-// `posix_spawnattr_t` and `posix_spawn_file_actions_t` as structs, Swift resolves
-// those types through this module rather than through the libc overlay -- even
-// where that overlay is itself imported publicly. An internal import would make
-// them internal types, and a public typealias may not name one.
+#if os(OpenBSD)
+// FIXME: Why is this necessary only on OpenBSD?
 public import _SubprocessCShims
+#else
+import _SubprocessCShims
 #endif
 
 #if canImport(Darwin)
@@ -673,98 +664,6 @@ public typealias uid_t = Musl.uid_t
 public typealias gid_t = Musl.gid_t
 #endif
 
-// MARK: - Platform spawn attribute pointers
-
-// Swift imports `posix_spawnattr_init` and `posix_spawn_file_actions_init` as
-// taking a pointer to an *optional* on FreeBSD and OpenBSD, and a pointer to a
-// non-optional everywhere else, so the two spellings below are not
-// interchangeable and there is no single one that works.
-//
-// The discriminator is not the typedef shape. glibc and musl typedef a struct,
-// which is never imported as optional. Bionic, FreeBSD and OpenBSD all typedef a
-// pointer — but Bionic's `<spawn.h>` is nullability-audited
-// (`posix_spawn_file_actions_t _Nonnull * _Nonnull`), so its pointee imports as
-// non-optional too, while the two BSDs leave theirs unannotated and so get the
-// implicitly-optional import. That leaves exactly FreeBSD and OpenBSD on one
-// side. `_assertPlatformSpawnTypesMatchLibc` below turns a mistake here into a
-// compile error rather than a broken public API.
-#if os(FreeBSD) || os(OpenBSD)
-
-/// A pointer to the platform's `posix_spawn` attributes, in the form this
-/// platform's C library accepts.
-///
-/// The exact type varies by platform, because the C libraries do not agree on
-/// how `posix_spawnattr_t` is declared and Swift imports the differences: it is
-/// `UnsafeMutablePointer<posix_spawnattr_t?>` on FreeBSD and OpenBSD, whose
-/// headers leave the pointee's nullability unannotated, and
-/// `UnsafeMutablePointer<posix_spawnattr_t>` everywhere else. Naming this
-/// typealias rather than either spelling compiles on every platform that
-/// declares it.
-///
-/// Darwin does not. Its ``PlatformOptions/preSpawnProcessConfigurator`` predates
-/// these typealiases and keeps its original signature, which takes the attributes
-/// and file actions `inout` rather than as pointers, so code that configures the
-/// spawn on Darwin *and* elsewhere still needs to branch on
-/// `#if canImport(Darwin)` -- in the closure's body as well as its signature.
-public typealias PlatformSpawnAttributes = UnsafeMutablePointer<posix_spawnattr_t?>
-/// A pointer to the platform's `posix_spawn` file actions, in the form this
-/// platform's C library accepts.
-///
-/// The exact type varies by platform, for the reason given on
-/// ``PlatformSpawnAttributes``: it is
-/// `UnsafeMutablePointer<posix_spawn_file_actions_t?>` on FreeBSD and OpenBSD
-/// and `UnsafeMutablePointer<posix_spawn_file_actions_t>` everywhere else.
-public typealias PlatformSpawnFileActions = UnsafeMutablePointer<posix_spawn_file_actions_t?>
-
-#else
-
-/// A pointer to the platform's `posix_spawn` attributes, in the form this
-/// platform's C library accepts.
-///
-/// The exact type varies by platform, because the C libraries do not agree on
-/// how `posix_spawnattr_t` is declared and Swift imports the differences: it is
-/// `UnsafeMutablePointer<posix_spawnattr_t?>` on FreeBSD and OpenBSD, whose
-/// headers leave the pointee's nullability unannotated, and
-/// `UnsafeMutablePointer<posix_spawnattr_t>` everywhere else. Naming this
-/// typealias rather than either spelling compiles on every platform that
-/// declares it.
-///
-/// Darwin does not. Its ``PlatformOptions/preSpawnProcessConfigurator`` predates
-/// these typealiases and keeps its original signature, which takes the attributes
-/// and file actions `inout` rather than as pointers, so code that configures the
-/// spawn on Darwin *and* elsewhere still needs to branch on
-/// `#if canImport(Darwin)` -- in the closure's body as well as its signature.
-public typealias PlatformSpawnAttributes = UnsafeMutablePointer<posix_spawnattr_t>
-/// A pointer to the platform's `posix_spawn` file actions, in the form this
-/// platform's C library accepts.
-///
-/// The exact type varies by platform, for the reason given on
-/// ``PlatformSpawnAttributes``: it is
-/// `UnsafeMutablePointer<posix_spawn_file_actions_t?>` on FreeBSD and OpenBSD
-/// and `UnsafeMutablePointer<posix_spawn_file_actions_t>` everywhere else.
-public typealias PlatformSpawnFileActions = UnsafeMutablePointer<posix_spawn_file_actions_t>
-
-#endif
-
-/// Compile-time proof that the two typealiases above name exactly the types this
-/// platform's C library takes.
-///
-/// Never called; it exists so that getting the condition above wrong is a build
-/// failure on the affected platform instead of a public API nobody can use.
-///
-/// It deliberately probes mutating entry points rather than the `init`s. Bionic
-/// annotates only its `init`s `_Nullable` — they are out-parameters — and
-/// everything else `_Nonnull`, so the two import differently there and `init` is
-/// the unrepresentative one. These are the calls a configurator actually makes.
-@available(*, unavailable)
-private func _assertPlatformSpawnTypesMatchLibc(
-    _ fileActions: PlatformSpawnFileActions,
-    _ spawnAttributes: PlatformSpawnAttributes
-) {
-    _ = posix_spawn_file_actions_adddup2(fileActions, 0, 0)
-    _ = posix_spawnattr_setflags(spawnAttributes, 0)
-}
-
 // MARK: - Platform Specific Options
 
 /// The collection of platform-specific settings
@@ -802,32 +701,6 @@ public struct PlatformOptions: Sendable {
     ///
     /// The sequence always ends by sending a `.kill` signal.
     public var teardownSequence: [TeardownStep] = []
-    /// A closure that configures platform-specific
-    /// process-launching constructs.
-    ///
-    /// Use this closure to directly configure or override
-    /// the underlying platform-specific launch settings that the
-    /// library uses internally, when higher-level APIs aren't
-    /// available for such modifications.
-    ///
-    /// This closure allows modification of the `posix_spawnattr_t` attribute
-    /// and file actions `posix_spawn_file_actions_t` before they are sent to
-    /// `posix_spawn()`.
-    ///
-    /// This is best-effort: it may not be called when a configuration cannot be
-    /// expressed with `posix_spawn` and must be launched with `fork` and `exec`
-    /// instead. That happens when ``userID``, ``groupID`` or
-    /// ``supplementaryGroups`` is set, when ``createSession`` is combined with
-    /// ``processGroupID``, or when this platform's C library cannot close
-    /// inherited file descriptors, change directory, or create a session
-    /// through `posix_spawn`.
-    public var preSpawnProcessConfigurator:
-        (
-            @Sendable (
-                PlatformSpawnAttributes,
-                PlatformSpawnFileActions
-            ) throws -> Void
-        )? = nil
     /// Creates platform options with default values.
     public init() {}
 }
@@ -841,8 +714,7 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
             \(indent)    groupID: \(String(describing: groupID)),
             \(indent)    supplementaryGroups: \(String(describing: supplementaryGroups)),
             \(indent)    processGroupID: \(String(describing: processGroupID)),
-            \(indent)    createSession: \(createSession),
-            \(indent)    preSpawnProcessConfigurator: \(self.preSpawnProcessConfigurator == nil ? "not set" : "set")
+            \(indent)    createSession: \(createSession)
             \(indent))
             """
     }

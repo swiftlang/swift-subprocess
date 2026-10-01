@@ -486,12 +486,15 @@ extension Configuration {
         }
         #endif
 
-        // Last, so a caller can override anything set above. The handles are
-        // rebound to the platform's own spelling here, at the single point where
-        // the public API needs a typed pointer.
+        #if canImport(Darwin)
+        // Last, so a caller can override anything set above. The opaque handles
+        // are rebound to Darwin's own spelling here, the single point where the
+        // public API needs a typed pointer.
+        //
+        // Darwin only: no other platform offers this API. It is always reached
+        // there, because Darwin's fallback path applies these same attributes
+        // through `posix_spawn(POSIX_SPAWN_SETEXEC)`.
         if let configurator = self.platformOptions.preSpawnProcessConfigurator {
-            #if canImport(Darwin)
-            // Darwin's signature predates this refactor and is unchanged.
             let attributesPointer = spawnAttributes.assumingMemoryBound(
                 to: posix_spawnattr_t?.self
             )
@@ -499,13 +502,8 @@ extension Configuration {
                 to: posix_spawn_file_actions_t?.self
             )
             try configurator(&attributesPointer.pointee, &actionsPointer.pointee)
-            #else
-            try configurator(
-                spawnAttributes.assumingMemoryBound(to: PlatformSpawnAttributes.Pointee.self),
-                fileActions.assumingMemoryBound(to: PlatformSpawnFileActions.Pointee.self)
-            )
-            #endif
         }
+        #endif
 
         return try await body(fileActions, spawnAttributes)
     }
