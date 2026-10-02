@@ -153,21 +153,18 @@ extension SubprocessUnixTests {
             {
                 (try? await Executable.name("ps").resolveExecutablePath(in: .inherit)) != nil
             }
-        ),
-        arguments: [false, true]
+        )
     )
-    func testSubprocessPlatformOptionsProcessGroupID(forceFallback: Bool) async throws {
+    func testSubprocessPlatformOptionsProcessGroupID() async throws {
         var platformOptions = PlatformOptions()
         // Sets the process group ID to 0, which creates a new session
         platformOptions.processGroupID = 0
-        let psResult = try await self.withSpawnPath(forceFallback: forceFallback) {
-            try await Subprocess.run(
-                .path("/bin/sh"),
-                arguments: ["-c", "ps -o pid,pgid -p $$"],
-                platformOptions: platformOptions,
-                output: .string(limit: .max)
-            )
-        }
+        let psResult = try await Subprocess.run(
+            .path("/bin/sh"),
+            arguments: ["-c", "ps -o pid,pgid -p $$"],
+            platformOptions: platformOptions,
+            output: .string(limit: .max)
+        )
         #expect(psResult.terminationStatus.isSuccess)
         let resultValue = psResult.standardOutput
         let match = try #require(try #/\s*PID\s*PGID\s*(?<pid>[\-]?[0-9]+)\s*(?<pgid>[\-]?[0-9]+)\s*/#.wholeMatch(in: resultValue), "ps output was in an unexpected format:\n\n\(resultValue)")
@@ -181,10 +178,9 @@ extension SubprocessUnixTests {
             {
                 (try? await Executable.name("ps").resolveExecutablePath(in: .inherit)) != nil
             }
-        ),
-        arguments: [false, true]
+        )
     )
-    func testSubprocessPlatformOptionsCreateSession(forceFallback: Bool) async throws {
+    func testSubprocessPlatformOptionsCreateSession() async throws {
         // platformOptions.createSession implies calls to setsid
         var platformOptions = PlatformOptions()
         platformOptions.createSession = true
@@ -193,26 +189,22 @@ extension SubprocessUnixTests {
         // session fields directly from /proc instead. `$$` is the shell's own
         // pid, which is the session and group leader after setsid; reading
         // /proc/self/stat would observe `cat`, which is not the leader.
-        let statResult = try await self.withSpawnPath(forceFallback: forceFallback) {
-            try await Subprocess.run(
-                .path("/bin/sh"),
-                arguments: ["-c", "cat /proc/$$/stat"],
-                platformOptions: platformOptions,
-                output: .string(limit: .max)
-            )
-        }
+        let statResult = try await Subprocess.run(
+            .path("/bin/sh"),
+            arguments: ["-c", "cat /proc/$$/stat"],
+            platformOptions: platformOptions,
+            output: .string(limit: .max)
+        )
         try assertNewSessionCreated(fromProcStat: statResult)
         #else
         // Check the process ID (pid), process group ID (pgid), and
         // controlling terminal's process group ID (tpgid)
-        let psResult = try await self.withSpawnPath(forceFallback: forceFallback) {
-            try await Subprocess.run(
-                .path("/bin/sh"),
-                arguments: ["-c", "ps -o pid,pgid,tpgid -p $$"],
-                platformOptions: platformOptions,
-                output: .string(limit: .max)
-            )
-        }
+        let psResult = try await Subprocess.run(
+            .path("/bin/sh"),
+            arguments: ["-c", "ps -o pid,pgid,tpgid -p $$"],
+            platformOptions: platformOptions,
+            output: .string(limit: .max)
+        )
         try assertNewSessionCreated(with: psResult)
         #endif
     }
@@ -1059,8 +1051,7 @@ extension SubprocessUnixTests {
         }
     }
 
-    @Test(arguments: [false, true])
-    func testSubprocessDoesNotInheritVeryHighFileDescriptors(forceFallback: Bool) async throws {
+    @Test func testSubprocessDoesNotInheritVeryHighFileDescriptors() async throws {
         var openedFileDescriptors: [CInt] = []
         // Open /dev/null to use as source for duplication
         let devnull: FileDescriptor = try .openDevNull(withAccessMode: .readOnly)
@@ -1125,14 +1116,12 @@ extension SubprocessUnixTests {
         var arguments = ["-c", shellScript, "subprocess-fd-test"]
         arguments.append(contentsOf: openedFileDescriptors.map { "\($0)" })
 
-        let result = try await self.withSpawnPath(forceFallback: forceFallback) {
-            try await Subprocess.run(
-                .path("/bin/sh"),
-                arguments: .init(arguments),
-                output: .string(limit: .max),
-                error: .string(limit: .max)
-            )
-        }
+        let result = try await Subprocess.run(
+            .path("/bin/sh"),
+            arguments: .init(arguments),
+            output: .string(limit: .max),
+            error: .string(limit: .max)
+        )
         #expect(result.terminationStatus.isSuccess)
         #expect(result.standardError.trimmingNewLineAndQuotes().isEmpty == true)
         var checklist = Set(openedFileDescriptors)
@@ -1277,7 +1266,7 @@ extension SubprocessUnixTests {
 
 // MARK: - Spawn Path Tests
 extension SubprocessUnixTests {
-    /// Standard input reaches the child on both spawn paths, and a stream
+    /// Standard input reaches the child, and a stream
     /// requested as `.none` yields end of file rather than the parent's own
     /// input.
     ///
@@ -1286,27 +1275,22 @@ extension SubprocessUnixTests {
     /// probe alone would not, because `/bin/sh` opens a descriptor of its own
     /// when it starts with 0 closed, so "the child could read nothing" is true
     /// whether the stream was wired to the null device or lost entirely.
-    @Test(arguments: [false, true])
-    func testStandardInputIsWiredOnBothSpawnPaths(forceFallback: Bool) async throws {
+    @Test func testStandardInputIsWired() async throws {
         let content = "spawn-path-stdin-\(randomString(length: 16, lettersOnly: true))"
 
-        let written = try await withSpawnPath(forceFallback: forceFallback) {
-            try await Subprocess.run(
-                .path("/bin/cat"),
-                input: .string(content),
-                output: .string(limit: 128)
-            )
-        }
+        let written = try await Subprocess.run(
+            .path("/bin/cat"),
+            input: .string(content),
+            output: .string(limit: 128)
+        )
         #expect(written.terminationStatus.isSuccess)
         #expect(written.standardOutput == content)
 
-        let none = try await withSpawnPath(forceFallback: forceFallback) {
-            try await Subprocess.run(
-                .path("/bin/cat"),
-                input: .none,
-                output: .string(limit: 128)
-            )
-        }
+        let none = try await Subprocess.run(
+            .path("/bin/cat"),
+            input: .none,
+            output: .string(limit: 128)
+        )
         #expect(none.terminationStatus.isSuccess)
         #expect(none.standardOutput == "")
     }
@@ -1315,20 +1299,17 @@ extension SubprocessUnixTests {
     /// the `errno` that explains why, rather than as a spawn failure or a
     /// missing executable.
     ///
-    /// Both paths resolve the directory in the parent, so both report the same
-    /// error: the fallback path would otherwise be unable to tell a child's
-    /// failed `chdir` from a failed `exec`.
-    @Test(arguments: [false, true])
-    func testWorkingDirectoryErrorIsPrecise(forceFallback: Bool) async throws {
+    /// The directory is validated in the parent, so this is reported the same
+    /// way on every path: the fallback path would otherwise be unable to tell a
+    /// child's failed `chdir` from a failed `exec`.
+    @Test func testWorkingDirectoryErrorIsPrecise() async throws {
         let missingError = await #expect(throws: SubprocessError.self) {
-            try await withSpawnPath(forceFallback: forceFallback) {
-                try await Subprocess.run(
-                    .path("/bin/sh"),
-                    arguments: ["-c", "exit 0"],
-                    workingDirectory: "/definitely/does/not/exist",
-                    output: .discarded
-                )
-            }
+            try await Subprocess.run(
+                .path("/bin/sh"),
+                arguments: ["-c", "exit 0"],
+                workingDirectory: "/definitely/does/not/exist",
+                output: .discarded
+            )
         }
         #expect(missingError?.code == .failedToChangeWorkingDirectory)
         #expect(missingError?.underlyingError == Errno(rawValue: ENOENT))
@@ -1337,24 +1318,21 @@ extension SubprocessUnixTests {
         // ENOENT: the distinction is exactly what the old "does the directory
         // exist?" guess could not make.
         let notDirectoryError = await #expect(throws: SubprocessError.self) {
-            try await withSpawnPath(forceFallback: forceFallback) {
-                try await Subprocess.run(
-                    .path("/bin/sh"),
-                    arguments: ["-c", "exit 0"],
-                    workingDirectory: "/bin/sh/nope",
-                    output: .discarded
-                )
-            }
+            try await Subprocess.run(
+                .path("/bin/sh"),
+                arguments: ["-c", "exit 0"],
+                workingDirectory: "/bin/sh/nope",
+                output: .discarded
+            )
         }
         #expect(notDirectoryError?.code == .failedToChangeWorkingDirectory)
         #expect(notDirectoryError?.underlyingError == Errno(rawValue: ENOTDIR))
     }
 
-    /// A valid working directory is honored identically by both paths: the
+    /// A valid working directory is honored: the
     /// `posix_spawn` path applies it as an `fchdir` file action against a
     /// descriptor the parent opened, the fallback path `chdir`s in the child.
-    @Test(arguments: [false, true])
-    func testWorkingDirectoryIsAppliedOnBothPaths(forceFallback: Bool) async throws {
+    @Test func testWorkingDirectoryIsApplied() async throws {
         let directoryPath = FileManager.default.temporaryDirectory
             .appendingPathComponent("subprocess-spawn-path-\(randomString(length: 12, lettersOnly: true))")
             ._fileSystemPath
@@ -1364,17 +1342,15 @@ extension SubprocessUnixTests {
         )
         defer { try? FileManager.default.removeItem(atPath: directoryPath) }
 
-        let result = try await withSpawnPath(forceFallback: forceFallback) {
-            try await Subprocess.run(
-                .path("/bin/sh"),
-                // `pwd -P` rather than `$PWD`: the latter is inherited from the
-                // environment and would report the parent's directory even if
-                // the child never moved.
-                arguments: ["-c", "pwd -P"],
-                workingDirectory: FilePath(directoryPath),
-                output: .string(limit: 4096)
-            )
-        }
+        let result = try await Subprocess.run(
+            .path("/bin/sh"),
+            // `pwd -P` rather than `$PWD`: the latter is inherited from the
+            // environment and would report the parent's directory even if
+            // the child never moved.
+            arguments: ["-c", "pwd -P"],
+            workingDirectory: FilePath(directoryPath),
+            output: .string(limit: 4096)
+        )
         #expect(result.terminationStatus.isSuccess)
         let reported = result.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
         // `pwd -P` reports the physical path, so the expected value has to be
@@ -1431,56 +1407,36 @@ extension SubprocessUnixTests {
 
     #if os(FreeBSD)
     /// FreeBSD has no way to obtain a process descriptor from `posix_spawn`
-    /// before 15.1, so the descriptor is present only on the fallback path,
-    /// which uses `pdfork`.
+    /// before 15.1, so a plain spawn has one only where this host's
+    /// `posix_spawn` cannot express it and the fallback path's `pdfork` is used.
     ///
     /// Linux is excluded because `pidfd_open` gives the `posix_spawn` path a
-    /// descriptor too, so there is no difference between the paths to assert.
+    /// descriptor too.
     ///
     /// This asserts the *absence* of a descriptor on the `posix_spawn` path, so
     /// it inverts into a failure the moment that stops being true. When the
-    /// `posix_spawnattr_setprocdescp_np` FIXME in `process_shims.c` lands and
-    /// FreeBSD gains a descriptor on both paths, this test should assert a
-    /// descriptor on both rather than be read as a regression.
-    @Test(arguments: [false, true])
-    func testProcessDescriptorAvailabilityByPath(forceFallback: Bool) async throws {
-        let result = try await withSpawnPath(forceFallback: forceFallback) {
-            try await Subprocess.run(
-                .path("/bin/sh"),
-                arguments: ["-c", "exit 0"],
-                input: .none,
-                output: .discarded,
-                error: .discarded
-            ) { execution in
-                return execution.processIdentifier.processDescriptor
-            }
+    /// `posix_spawnattr_setprocdescp_np` FIXME in `process_shims.c` lands, this
+    /// test should assert a descriptor unconditionally rather than be read as a
+    /// regression.
+    @Test func testProcessDescriptorAvailability() async throws {
+        let usesFallbackPath = Configuration(executable: .path("/bin/sh"))
+            .requiresFallbackSpawnPath(supplementaryGroups: nil)
+        let result = try await Subprocess.run(
+            .path("/bin/sh"),
+            arguments: ["-c", "exit 0"],
+            input: .none,
+            output: .discarded,
+            error: .discarded
+        ) { execution in
+            return execution.processIdentifier.processDescriptor
         }
-        if forceFallback {
+        if usesFallbackPath {
             #expect(result.closureResult != -1)
         } else {
             #expect(result.closureResult == -1)
         }
     }
     #endif // os(FreeBSD)
-}
-
-// MARK: - Utils
-extension SubprocessUnixTests {
-    /// Runs `body` with every spawn inside it forced onto the fallback path, if
-    /// `forceFallback`.
-    ///
-    /// The override is a task-local rather than a global, so this must wrap the
-    /// spawning work rather than being set before it: Swift Testing runs other
-    /// suites concurrently with this one, and a global would steer their spawns
-    /// too.
-    fileprivate func withSpawnPath<Result>(
-        forceFallback: Bool,
-        _ body: () async throws -> Result
-    ) async rethrows -> Result {
-        return try await SpawnCapabilities.forceFallbackPathOverride.withValue(forceFallback) {
-            try await body()
-        }
-    }
 }
 
 extension SubprocessUnixTests {

@@ -301,41 +301,6 @@ struct SpawnPathTests {
         )
     }
 
-    /// The test override forces the fallback path even when posix_spawn could
-    /// express everything, and is scoped to the task that set it.
-    @Test func testForceFallbackPathOverride() {
-        #expect(
-            SpawnCapabilities.forceFallbackPathOverride.withValue(true) {
-                self.configuration().requiresFallbackSpawnPath(
-                    supplementaryGroups: nil,
-                    capabilities: Self.fullyCapable
-                )
-            }
-        )
-        // Outside the scope the override is gone again.
-        #expect(
-            !self.configuration().requiresFallbackSpawnPath(
-                supplementaryGroups: nil,
-                capabilities: Self.fullyCapable
-            )
-        )
-    }
-
-    /// Both spawn paths run a program, wire up stdout, and report the exit
-    /// status the same way.
-    @Test(arguments: [false, true])
-    func testBothSpawnPathsProduceTheSameResult(forceFallback: Bool) async throws {
-        let result = try await SpawnCapabilities.forceFallbackPathOverride.withValue(forceFallback) {
-            try await Subprocess.run(
-                .path("/bin/sh"),
-                arguments: ["-c", "printf hello; exit 3"],
-                output: .string(limit: 16)
-            )
-        }
-        #expect(result.terminationStatus == .exited(3))
-        #expect(result.standardOutput == "hello")
-    }
-
     #if !os(Android) // Exit tests are not supported on Android.
     /// A child's standard streams survive even when the parent's ends of the
     /// pipes land on descriptors 0, 1 and 2.
@@ -358,10 +323,6 @@ struct SpawnPathTests {
     /// let a sibling suite's pipe be allocated onto the closed number and then
     /// be clobbered by the restoring `dup2`. Isolation also means a mistake here
     /// cannot leave the rest of the suite running with a closed stderr.
-    ///
-    /// Both spawn paths are covered by a loop *inside* the exit test rather than
-    /// by `@Test(arguments:)`: passing a value into the body would need a capture
-    /// clause, which `#expect(processExitsWith:)` rejects on Swift 6.2.
     @Test func testStandardStreamsSurviveLowParentDescriptors() async {
         await #expect(processExitsWith: .success) {
             // Spawn once before closing anything, so that any descriptor the
@@ -375,55 +336,49 @@ struct SpawnPathTests {
                 error: .discarded
             )
 
-            for forceFallback in [false, true] {
-                for closedMask in 0..<8 {
-                    // Take a copy of each descriptor about to be closed, and put
-                    // it back before the next iteration.
-                    var saved: [(target: CInt, copy: CInt)] = []
-                    for target in CInt(0)...CInt(2) where closedMask & (1 << Int(target)) != 0 {
-                        let copy = dup(target)
-                        // A standard descriptor the test runner did not give us is
-                        // nothing this test can close and restore; skip it rather
-                        // than closing a descriptor it cannot put back.
-                        guard copy >= 0 else { continue }
-                        guard close(target) == 0 else {
-                            close(copy)
-                            continue
-                        }
-                        saved.append((target, copy))
+            for closedMask in 0..<8 {
+                // Take a copy of each descriptor about to be closed, and put
+                // it back before the next iteration.
+                var saved: [(target: CInt, copy: CInt)] = []
+                for target in CInt(0)...CInt(2) where closedMask & (1 << Int(target)) != 0 {
+                    let copy = dup(target)
+                    // A standard descriptor the test runner did not give us is
+                    // nothing this test can close and restore; skip it rather
+                    // than closing a descriptor it cannot put back.
+                    guard copy >= 0 else { continue }
+                    guard close(target) == 0 else {
+                        close(copy)
+                        continue
                     }
-                    defer {
-                        for (target, copy) in saved {
-                            _ = dup2(copy, target)
-                            _ = close(copy)
-                        }
-                    }
-
-                    // Exercises all three streams at once: standard input has to
-                    // arrive for the child to echo it, and both of the child's
-                    // output streams have to reach the parent.
-                    let result = try await SpawnCapabilities.forceFallbackPathOverride
-                        .withValue(forceFallback) {
-                            try await Subprocess.run(
-                                .path("/bin/sh"),
-                                arguments: [
-                                    "-c", #"read line; printf "IN=%s" "$line"; printf ERR 1>&2"#,
-                                ],
-                                input: .string("ping\n"),
-                                output: .string(limit: 64),
-                                error: .string(limit: 64)
-                            )
-                        }
-
-                    let context =
-                        "with descriptors \(saved.map(\.target)) closed, forceFallback \(forceFallback)"
-                    // A child that lost a standard stream fails on the
-                    // redirection rather than exiting cleanly, so the status is
-                    // as much a symptom as the missing output.
-                    #expect(result.terminationStatus == .exited(0), "\(context)")
-                    #expect(result.standardOutput == "IN=ping", "\(context)")
-                    #expect(result.standardError == "ERR", "\(context)")
+                    saved.append((target, copy))
                 }
+                defer {
+                    for (target, copy) in saved {
+                        _ = dup2(copy, target)
+                        _ = close(copy)
+                    }
+                }
+
+                // Exercises all three streams at once: standard input has to
+                // arrive for the child to echo it, and both of the child's
+                // output streams have to reach the parent.
+                let result = try await Subprocess.run(
+                    .path("/bin/sh"),
+                    arguments: [
+                        "-c", #"read line; printf "IN=%s" "$line"; printf ERR 1>&2"#,
+                    ],
+                    input: .string("ping\n"),
+                    output: .string(limit: 64),
+                    error: .string(limit: 64)
+                )
+
+                let context = "with descriptors \(saved.map(\.target)) closed"
+                // A child that lost a standard stream fails on the
+                // redirection rather than exiting cleanly, so the status is
+                // as much a symptom as the missing output.
+                #expect(result.terminationStatus == .exited(0), "\(context)")
+                #expect(result.standardOutput == "IN=ping", "\(context)")
+                #expect(result.standardError == "ERR", "\(context)")
             }
         }
     }

@@ -93,38 +93,6 @@ internal struct SpawnCapabilities: Sendable {
     )
 }
 
-extension SpawnCapabilities {
-    /// Forces every spawn onto the fallback path, for tests.
-    ///
-    /// The fallback path can express everything `posix_spawn` can — the rules in
-    /// ``Configuration/requiresFallbackSpawnPath(supplementaryGroups:capabilities:)``
-    /// only ever move work *towards* it — so forcing it is always safe. That is
-    /// what lets every disinheritance, stdio, working-directory and signal test
-    /// run under both paths on every platform, instead of macOS never
-    /// exercising `fork` and modern glibc never exercising `fork`/`exec`.
-    ///
-    /// There is deliberately no switch forcing `posix_spawn`: it cannot express
-    /// the configurations the rules route away from it.
-    ///
-    /// A task-local, not a global: `.serialized` serializes a suite's own tests
-    /// but Swift Testing still runs other suites concurrently, so a global would
-    /// steer their spawns too. The value is read from spawn setup, which runs in
-    /// the caller's task tree, so a task-local confines the override to the test
-    /// that set it. Never set outside tests.
-    ///
-    /// Spelled as an explicit `TaskLocal` rather than with the `@TaskLocal` macro
-    /// because the CMake build passes no macro plugin flags and so cannot expand
-    /// it. Tests use
-    /// `SpawnCapabilities.forceFallbackPathOverride.withValue(true) { … }`.
-    internal static let forceFallbackPathOverride = TaskLocal<Bool>(wrappedValue: false)
-
-    /// Whether the current task has forced the fallback path. See
-    /// ``forceFallbackPathOverride``.
-    internal static var forceFallbackPathForTesting: Bool {
-        Self.forceFallbackPathOverride.get()
-    }
-}
-
 // MARK: - Path selection
 
 extension Configuration {
@@ -141,10 +109,6 @@ extension Configuration {
         supplementaryGroups: [gid_t]?,
         capabilities: SpawnCapabilities = .current
     ) -> Bool {
-        if SpawnCapabilities.forceFallbackPathForTesting {
-            return true
-        }
-
         // 1. setuid, setgid and setgroups have no posix_spawn attribute on any
         //    platform.
         if self.platformOptions.userID != nil
