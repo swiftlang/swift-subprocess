@@ -302,15 +302,8 @@ static void _subprocess_spawn_caps_init(void) {
     // posix_spawn_file_actions_addfchdir_np (10.15).
     caps |= _SUBPROCESS_SPAWN_CAP_CLOEXEC_DEFAULT;
     caps |= _SUBPROCESS_SPAWN_CAP_SETSID_FLAG;
+    caps |= _SUBPROCESS_SPAWN_CAP_CHDIR_ACTION;
 
-    // TARGET_OS_OSX, not TARGET_OS_MAC: the latter is every Apple platform, and
-    // the SDK marks posix_spawn_file_actions_addfchdir_np
-    // __API_UNAVAILABLE(ios, tvos, watchos, visionos). Referring to it at all on
-    // those platforms is a hard error, not a deprecation warning, and that
-    // includes Mac Catalyst, which reports as iOS even though it runs on macOS.
-    // Leaving the capability unset there routes a working directory to the
-    // fallback path via rule 5, where the child chdirs itself.
-    //
     // The _np spelling is deprecated as of macOS 26 in favour of
     // posix_spawn_file_actions_addfchdir, but that replacement is macOS 26+
     // only, so with a macOS 13 deployment target the _np name is the one that
@@ -318,13 +311,10 @@ static void _subprocess_spawn_caps_init(void) {
     //
     // FIXME: use posix_spawn_file_actions_addfchdir and drop this pragma once
     // the deployment target can be raised to macOS 26.
-#if TARGET_OS_OSX
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     _subprocess_addfchdir_impl = posix_spawn_file_actions_addfchdir_np;
 #pragma clang diagnostic pop
-    caps |= _SUBPROCESS_SPAWN_CAP_CHDIR_ACTION;
-#endif
 #else
     // dlsym rather than a weak symbol reference. glibc versions these symbols
     // (addclosefrom_np is GLIBC_2.34), and a weak reference to a symbol that
