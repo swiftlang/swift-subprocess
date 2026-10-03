@@ -54,3 +54,20 @@ extension Array where Element: BitwiseCopyable {
     }
 }
 
+extension Span where Element: BitwiseCopyable {
+    // swift-format-ignore
+    // View the elements of this span as raw bytes
+    internal var _bytes: RawSpan {
+        // `Span.bytes` is gated to macOS 26 in the Swift 6.2 standard library
+        // (it is back-deployed in later SDKs), but Subprocess deploys to
+        // macOS 13, so hand-roll the `RawSpan`. Replace with `self.bytes` once
+        // the minimum supported compiler back-deploys it or the deployment
+        // floor reaches macOS 26.
+        @_lifetime(copy self)
+        get {
+            let ptr = self.withUnsafeBytes { $0 }
+            let bytes = RawSpan(_unsafeBytes: ptr)
+            return _overrideLifetime(of: bytes, copyingFrom: self)
+        }
+    }
+}
