@@ -800,18 +800,40 @@ extension ProcessIdentifier {
 /// Reaps the zombie for `pid`, returning its termination status along with the
 /// resource usage the kernel accounted to it.
 ///
-/// `wait4` is used on every platform rather than `waitid`: it is the only
-/// interface exposed by every supported libc that reports `rusage` alongside
-/// the wait status. It's reached through the `_subprocess_wait4` shim; see that
-/// declaration for why the libc entry point is wrapped rather than called
-/// directly or replaced by a raw `waitid` syscall.
+/// This takes two calls because no interface available on every supported
+/// platform reports both completely:
+///
+/// - The termination status comes from `waitid` with `WNOWAIT`, which leaves
+///   the zombie in place. `waitid` reports the full `int` passed to `_exit`
+///   where the kernel preserves it (Darwin, FreeBSD), whereas the wait status
+///   `wait4` produces holds only its low 8 bits.
+/// - The resource usage comes from `wait4`, which then reaps the zombie. It is
+///   the only interface every supported libc exposes that reports `rusage`
+///   for a specific child. It's reached through the `_subprocess_wait4` shim;
+///   see that declaration for why the libc entry point is wrapped rather than
+///   called directly or replaced by a raw `waitid` syscall.
+///
+/// Nothing else reaps this child, so the zombie `waitid` observed is the one
+/// `wait4` consumes.
 @available(*, noasync)
 internal func _blockingReap(pid: pid_t) throws(Errno) -> (TerminationStatus, ResourceUsage) {
+    let siginfo = try _waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED | WNOWAIT)
+    let usage = try _wait4(pid: pid)
+    return (TerminationStatus(siginfo), ResourceUsage(usage))
+}
+
+/// Reaps the zombie for `pid` and returns the resource usage accounted to it.
+///
+/// The wait status `wait4` also produces is discarded: it carries only the low
+/// 8 bits of the exit code, so the termination status is read with `waitid`
+/// instead.
+@available(*, noasync)
+private func _wait4(pid: pid_t) throws(Errno) -> rusage {
     while true {
         var usage = rusage()
         var status: CInt = 0
         if _subprocess_wait4(pid, &status, 0, &usage) >= 0 {
-            return (TerminationStatus(waitStatus: status), ResourceUsage(usage))
+            return usage
         } else if errno != EINTR {
             throw Errno(rawValue: errno)
         }
@@ -869,14 +891,14 @@ internal func _waitid(idtype: idtype_t, id: id_t, flags: Int32) throws(Errno) ->
 }
 
 internal extension TerminationStatus {
-    init(waitStatus: CInt) {
-        switch (_was_process_exited(waitStatus) != 0, _was_process_signaled(waitStatus) != 0) {
-        case (true, false):
-            self = .exited(CInt(_get_exit_code(waitStatus)))
-        case (false, true):
-            self = .signaled(CInt(_get_signal_code(waitStatus)))
-        case (true, true), (false, false):
-            fatalError("Unexpected wait status: \(waitStatus)")
+    init(_ siginfo: siginfo_t) {
+        switch siginfo.si_code {
+        case .init(CLD_EXITED):
+            self = .exited(siginfo.si_status)
+        case .init(CLD_KILLED), .init(CLD_DUMPED):
+            self = .signaled(siginfo.si_status)
+        default:
+            fatalError("Unexpected exit status: \(siginfo.si_code)")
         }
     }
 }

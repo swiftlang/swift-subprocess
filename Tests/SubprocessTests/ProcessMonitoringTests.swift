@@ -143,6 +143,25 @@ extension SubprocessProcessMonitoringTests {
         }
     }
 
+    #if canImport(Darwin) || os(FreeBSD)
+    /// Darwin and FreeBSD preserve the full `int` a child passes to `exit` and
+    /// report it through `waitid`, whereas a `wait`-family wait status holds
+    /// only its low 8 bits. Reading the termination status from the latter
+    /// would report `.exited(0x34)` here.
+    @Test(.enabled(if: perlPath != nil))
+    func testExitCodeWiderThanEightBits() async throws {
+        // A shell truncates its own exit status to 8 bits, so this needs an
+        // interpreter that hands a wider value to `exit(3)`. Perl keeps the low
+        // 16 bits.
+        let result = try await run(
+            .path(FilePath(try #require(perlPath))),
+            arguments: ["-e", "exit 0x1234"],
+            output: .discarded
+        )
+        #expect(result.terminationStatus == .exited(0x1234))
+    }
+    #endif
+
     #if !os(Windows)
     @Test func testExitViaSignal() async throws {
         let config = Configuration(
@@ -480,3 +499,11 @@ internal func monitorProcessTermination(for processIdentifier: ProcessIdentifier
     try await waitForProcessTermination(for: processIdentifier)
     return try reapProcess(with: processIdentifier)
 }
+
+#if canImport(Darwin) || os(FreeBSD)
+/// The path to a Perl interpreter, or `nil` if none is installed. Darwin ships
+/// one in `/usr/bin`; on FreeBSD it comes from ports, in `/usr/local/bin`.
+private let perlPath: String? = ["/usr/bin/perl", "/usr/local/bin/perl"].first {
+    FileManager.default.isExecutableFile(atPath: $0)
+}
+#endif
