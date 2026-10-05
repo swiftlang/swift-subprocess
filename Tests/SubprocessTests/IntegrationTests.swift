@@ -78,7 +78,7 @@ extension SubprocessIntegrationTests {
 
     @Test func testExecutableNamedCannotResolve() async throws {
         #if os(Windows)
-        let underlying = SubprocessError.WindowsError(win32Error: DWORD(ERROR_FILE_NOT_FOUND))
+        let underlying = SubprocessError.WindowsError(win32Error: ERROR_FILE_NOT_FOUND)
         #else
         let underlying = Errno(rawValue: ENOENT)
         #endif
@@ -156,7 +156,7 @@ extension SubprocessIntegrationTests {
         #if os(Windows)
         let fakePath = FilePath("D:\\does\\not\\exist")
         let underlying = SubprocessError.WindowsError(
-            win32Error: DWORD(ERROR_FILE_NOT_FOUND)
+            win32Error: ERROR_FILE_NOT_FOUND
         )
         #else
         let fakePath = FilePath("/usr/bin/do-not-exist")
@@ -752,7 +752,7 @@ extension SubprocessIntegrationTests {
             arguments: ["/c", "cd"],
             workingDirectory: invalidPath
         )
-        let underlying = SubprocessError.WindowsError(win32Error: DWORD(ERROR_DIRECTORY))
+        let underlying = SubprocessError.WindowsError(win32Error: ERROR_DIRECTORY)
         let expectedError: SubprocessError = .failedToChangeWorkingDirectory(
             #"X:\Does\Not\Exist"#, underlyingError: underlying
         )
@@ -2586,7 +2586,7 @@ extension SubprocessIntegrationTests {
 
     private static func killGrandchild(_ pid: DWORD) {
         guard pid != 0 else { return }
-        guard let handle = OpenProcess(DWORD(PROCESS_TERMINATE), false, pid) else {
+        guard let handle = OpenProcess(PROCESS_TERMINATE, false, pid) else {
             return
         }
         _ = TerminateProcess(handle, 1)
@@ -3223,7 +3223,7 @@ extension SubprocessIntegrationTests {
                         pipe.writeEnd,
                         GetCurrentProcess(),
                         &writeEndHandle,
-                        0, true, DWORD(DUPLICATE_SAME_ACCESS)
+                        0, true, DUPLICATE_SAME_ACCESS
                     )
                 else {
                     throw SubprocessError.asyncIOFailed(
@@ -3276,7 +3276,7 @@ extension SubprocessIntegrationTests {
                         pipe.readEnd,
                         GetCurrentProcess(),
                         &readEndHandle,
-                        0, true, DWORD(DUPLICATE_SAME_ACCESS)
+                        0, true, DUPLICATE_SAME_ACCESS
                     )
                 else {
                     throw SubprocessError.asyncIOFailed(

@@ -157,13 +157,13 @@ extension Configuration {
                     // explicitly opted into managing the child's initial
                     // resume themselves. Otherwise, Subprocess resumes the
                     // child after assigning it to the Job Object.
-                    let userManagesResume = (createProcessFlags & DWORD(CREATE_SUSPENDED)) != 0
+                    let userManagesResume = (createProcessFlags & CREATE_SUSPENDED) != 0
 
                     // Subprocess assigns every spawned child to a Job Object
                     // before any user code runs in the child. `CREATE_SUSPENDED`
                     // makes the assignment atomic, so it is always set
                     // regardless of what the configurator did.
-                    createProcessFlags |= DWORD(CREATE_SUSPENDED)
+                    createProcessFlags |= CREATE_SUSPENDED
 
                     let spawnContext = SpawnContext(
                         startupInfo: startupInfo,
@@ -196,7 +196,7 @@ extension Configuration {
                                                             usernameW,
                                                             domainW,
                                                             passwordW,
-                                                            DWORD(LOGON_WITH_PROFILE),
+                                                            LOGON_WITH_PROFILE,
                                                             applicationNameW,
                                                             UnsafeMutablePointer<WCHAR>(mutating: commandAndArgsW),
                                                             spawnContext.createProcessFlags,
@@ -255,7 +255,7 @@ extension Configuration {
                 // falling through to the remaining candidates. A directory is
                 // never runnable, so treat it as a miss. Genuine permission
                 // failures on a real file still throw below.
-                if windowsError == DWORD(ERROR_ACCESS_DENIED),
+                if windowsError == ERROR_ACCESS_DENIED,
                     Configuration.isDirectory(executablePath)
                 {
                     continue
@@ -356,13 +356,13 @@ extension Configuration {
         {
             throw SubprocessError.failedToChangeWorkingDirectory(
                 workingDirectory,
-                underlyingError: SubprocessError.WindowsError(win32Error: DWORD(ERROR_DIRECTORY))
+                underlyingError: SubprocessError.WindowsError(win32Error: ERROR_DIRECTORY)
             )
         }
 
         throw SubprocessError.executableNotFound(
             self.executable.description,
-            underlyingError: SubprocessError.WindowsError(win32Error: DWORD(ERROR_FILE_NOT_FOUND))
+            underlyingError: SubprocessError.WindowsError(win32Error: ERROR_FILE_NOT_FOUND)
         )
     }
 }
@@ -752,7 +752,7 @@ extension Executable {
 
         // 1. The directory from which the application loaded.
         let applicationPath = try? fillNullTerminatedWideStringBuffer(
-            initialSize: DWORD(MAX_PATH),
+            initialSize: MAX_PATH,
             maxSize: DWORD(Int16.max)
         ) {
             return GetModuleFileNameW(nil, $0.baseAddress, DWORD($0.count))
@@ -805,7 +805,7 @@ extension Executable {
             }
             throw SubprocessError.executableNotFound(
                 executableName,
-                underlyingError: SubprocessError.WindowsError(win32Error: DWORD(ERROR_FILE_NOT_FOUND))
+                underlyingError: SubprocessError.WindowsError(win32Error: ERROR_FILE_NOT_FOUND)
             )
         case .path(let executablePath):
             // Use path directly
@@ -1100,11 +1100,11 @@ extension Configuration {
     ) async throws(SubprocessError) -> Result {
         var info: STARTUPINFOEXW = STARTUPINFOEXW()
         info.StartupInfo.cb = DWORD(MemoryLayout.size(ofValue: info))
-        info.StartupInfo.dwFlags |= DWORD(STARTF_USESTDHANDLES)
+        info.StartupInfo.dwFlags |= STARTF_USESTDHANDLES
 
         if self.platformOptions.windowStyle.storage != .normal {
             info.StartupInfo.wShowWindow = self.platformOptions.windowStyle.platformStyle
-            info.StartupInfo.dwFlags |= DWORD(STARTF_USESHOWWINDOW)
+            info.StartupInfo.dwFlags |= STARTF_USESHOWWINDOW
         }
         // Bind IOs
         // Keep track of the explicitly list HANDLE to be inherited by the child process
@@ -1113,7 +1113,7 @@ extension Configuration {
         // Input
         if inputReadFileDescriptor != nil {
             let inputHandle = inputReadFileDescriptor!.platformDescriptor()
-            SetHandleInformation(inputHandle, DWORD(HANDLE_FLAG_INHERIT), DWORD(HANDLE_FLAG_INHERIT))
+            SetHandleInformation(inputHandle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)
             info.StartupInfo.hStdInput = inputHandle
             inheritedHandles.insert(inputHandle)
         }
@@ -1121,14 +1121,14 @@ extension Configuration {
             // Set parent side to be uninheritable
             SetHandleInformation(
                 inputWriteFileDescriptor!.platformDescriptor(),
-                DWORD(HANDLE_FLAG_INHERIT),
+                HANDLE_FLAG_INHERIT,
                 0
             )
         }
         // Output
         if outputWriteFileDescriptor != nil {
             let outputHandle = outputWriteFileDescriptor!.platformDescriptor()
-            SetHandleInformation(outputHandle, DWORD(HANDLE_FLAG_INHERIT), DWORD(HANDLE_FLAG_INHERIT))
+            SetHandleInformation(outputHandle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)
             info.StartupInfo.hStdOutput = outputHandle
             inheritedHandles.insert(outputHandle)
         }
@@ -1136,14 +1136,14 @@ extension Configuration {
             // Set parent side to be uninheritable
             SetHandleInformation(
                 outputReadFileDescriptor!.platformDescriptor(),
-                DWORD(HANDLE_FLAG_INHERIT),
+                HANDLE_FLAG_INHERIT,
                 0
             )
         }
         // Error
         if errorWriteFileDescriptor != nil {
             let errorHandle = errorWriteFileDescriptor!.platformDescriptor()
-            SetHandleInformation(errorHandle, DWORD(HANDLE_FLAG_INHERIT), DWORD(HANDLE_FLAG_INHERIT))
+            SetHandleInformation(errorHandle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)
             info.StartupInfo.hStdError = errorHandle
             inheritedHandles.insert(errorHandle)
         }
@@ -1151,7 +1151,7 @@ extension Configuration {
             // Set parent side to be uninheritable
             SetHandleInformation(
                 errorReadFileDescriptor!.platformDescriptor(),
-                DWORD(HANDLE_FLAG_INHERIT),
+                HANDLE_FLAG_INHERIT,
                 0
             )
         }
@@ -1538,7 +1538,7 @@ extension Configuration {
         return path.withCString(encodedAs: UTF16.self) {
             let attrs = GetFileAttributesW($0)
             return attrs != INVALID_FILE_ATTRIBUTES
-                && (attrs & DWORD(FILE_ATTRIBUTE_DIRECTORY)) == 0
+                && (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0
         }
     }
 
@@ -1547,7 +1547,7 @@ extension Configuration {
         return path.withCString(encodedAs: UTF16.self) {
             let attrs = GetFileAttributesW($0)
             return attrs != INVALID_FILE_ATTRIBUTES
-                && (attrs & DWORD(FILE_ATTRIBUTE_DIRECTORY)) != 0
+                && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0
         }
     }
 }
@@ -1740,7 +1740,7 @@ fileprivate func SUCCEEDED(_ hr: HRESULT) -> Bool {
 // HRESULT to a Win32 error code.
 @inline(__always)
 fileprivate func WIN32_FROM_HRESULT(_ hr: HRESULT) -> DWORD {
-    if SUCCEEDED(hr) { return DWORD(ERROR_SUCCESS) }
+    if SUCCEEDED(hr) { return ERROR_SUCCESS }
     if HRESULT_FACILITY(hr) == FACILITY_WIN32 {
         return HRESULT_CODE(hr)
     }
@@ -1807,7 +1807,7 @@ internal func fillNullTerminatedWideStringBuffer(
             bufferCount *= 2
         }
     }
-    throw SubprocessError.WindowsError(win32Error: DWORD(ERROR_INSUFFICIENT_BUFFER))
+    throw SubprocessError.WindowsError(win32Error: ERROR_INSUFFICIENT_BUFFER)
 }
 
 #endif // canImport(WinSDK)
