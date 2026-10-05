@@ -1216,7 +1216,7 @@ internal struct CreatedPipe: ~Copyable, Sendable {
                 encodedAs: UTF16.self
             ) { pipeNameW in
                 // Use OVERLAPPED for async IO
-                var openMode: DWORD = DWORD(FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE)
+                var openMode: DWORD = DWORD(FILE_FLAG_OVERLAPPED) | DWORD(FILE_FLAG_FIRST_PIPE_INSTANCE)
                 switch purpose {
                 case .input:
                     openMode |= DWORD(PIPE_ACCESS_OUTBOUND)
@@ -1227,7 +1227,7 @@ internal struct CreatedPipe: ~Copyable, Sendable {
                 return CreateNamedPipeW(
                     pipeNameW,
                     openMode,
-                    DWORD(PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS),
+                    DWORD(PIPE_TYPE_BYTE) | DWORD(PIPE_READMODE_BYTE) | DWORD(PIPE_WAIT) | DWORD(PIPE_REJECT_REMOTE_CLIENTS),
                     1, // Max instance,
                     // Both libuv (Node) and Rust std::process use this value
                     DWORD(64 * 1024),
@@ -1269,7 +1269,7 @@ internal struct CreatedPipe: ~Copyable, Sendable {
                     0,
                     &saAttributes,
                     DWORD(OPEN_EXISTING),
-                    DWORD(FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED),
+                    DWORD(FILE_ATTRIBUTE_NORMAL) | DWORD(FILE_FLAG_OVERLAPPED),
                     nil
                 )
             }

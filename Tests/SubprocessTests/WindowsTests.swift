@@ -315,7 +315,7 @@ extension SubprocessWindowsTests {
             )
             let grandchildHandle = try #require(
                 OpenProcess(
-                    DWORD(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION),
+                    DWORD(SYNCHRONIZE) | DWORD(PROCESS_QUERY_LIMITED_INFORMATION),
                     false,
                     grandchildPid
                 ),
@@ -361,7 +361,7 @@ extension SubprocessWindowsTests {
             )
             let grandchildHandle = try #require(
                 OpenProcess(
-                    DWORD(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE),
+                    DWORD(SYNCHRONIZE) | DWORD(PROCESS_QUERY_LIMITED_INFORMATION) | DWORD(PROCESS_TERMINATE),
                     false,
                     grandchildPid
                 ),
@@ -1010,7 +1010,7 @@ extension SubprocessWindowsTests {
                     userInfo.usri1_priv = DWORD(USER_PRIV_USER)
                     userInfo.usri1_home_dir = nil
                     userInfo.usri1_comment = nil
-                    userInfo.usri1_flags = DWORD(UF_SCRIPT | UF_DONT_EXPIRE_PASSWD)
+                    userInfo.usri1_flags = DWORD(UF_SCRIPT) | DWORD(UF_DONT_EXPIRE_PASSWD)
                     userInfo.usri1_script_path = nil
 
                     var error: DWORD = 0
