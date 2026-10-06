@@ -9,6 +9,9 @@
 ##
 ##===----------------------------------------------------------------------===##
 
+set(SwiftSubprocess_TARGETS_FILE
+  ${CMAKE_CURRENT_BINARY_DIR}/../SwiftSubprocess/SwiftSubprocessTargets.cmake)
 configure_file(SwiftSubprocessConfig.cmake.in
-  ${CMAKE_CURRENT_BINARY_DIR}/SwiftSubprocessConfig.cmake)
+  ${CMAKE_CURRENT_BINARY_DIR}/SwiftSubprocessConfig.cmake
+  @ONLY)
 

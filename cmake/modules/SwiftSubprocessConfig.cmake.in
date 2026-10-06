@@ -9,4 +9,24 @@
 ##
 ##===----------------------------------------------------------------------===##
 
-include(${CMAKE_CURRENT_BINARY_DIR}/../SwiftSubprocess/SwiftSubprocessTargets.cmake)
+include(CMakeFindDependencyMacro)
+
+# SystemPackage (swift-system) is part of Subprocess's public interface on
+# non-Apple platforms. Locate it unless the client already provides it; a
+# client-provided SwiftSystem_DIR takes precedence over the hint below, which
+# is the swift-system that Subprocess was built against.
+if(NOT APPLE AND NOT TARGET SwiftSystem::SystemPackage)
+  find_dependency(SwiftSystem CONFIG
+    HINTS "@Subprocess_SwiftSystem_DIR@")
+endif()
+
+# Subprocess was built against an explicitly provided Foundation package;
+# make its FoundationEssentials target available to clients as well.
+if(NOT APPLE AND NOT TARGET FoundationEssentials AND NOT "@Subprocess_Foundation_DIR@" STREQUAL "")
+  find_dependency(Foundation CONFIG
+    HINTS "@Subprocess_Foundation_DIR@")
+endif()
+
+if(NOT TARGET SwiftSubprocess::Subprocess)
+  include("@SwiftSubprocess_TARGETS_FILE@")
+endif()

@@ -19,6 +19,13 @@ project(Subprocess
 list(APPEND CMAKE_MODULE_PATH
   "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules")
 
+option(${PROJECT_NAME}_ENABLE_FOUNDATION
+  "Enable the SubprocessFoundation trait (Foundation integration, e.g. Data input/output), matching SwiftPM's default traits"
+  ON)
+option(${PROJECT_NAME}_VENDOR_DEPENDENCIES
+  "Fetch dependencies that are not found via find_package() (and have no explicit <Pkg>_DIR) from the network"
+  ON)
+
 include(EmitSwiftInterface)
 include(GNUInstallDirs)
 include(InstallExternalDependencies)

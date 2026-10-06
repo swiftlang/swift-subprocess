@@ -10,6 +10,14 @@ var dep: [Package.Dependency] = [
     )
 ]
 
+// SystemPackage is only used on non-Apple platforms; Apple platforms use the
+// System framework from the SDK (see `#if canImport(System)` in the sources).
+let systemPackageDependency: Target.Dependency = .product(
+    name: "SystemPackage",
+    package: "swift-system",
+    condition: .when(platforms: [.linux, .windows, .android, .wasi, .openbsd, .custom("freebsd")])
+)
+
 // Enable SubprocessFoundation by default
 let defaultTraits: Set<String> = ["SubprocessFoundation"]
 
@@ -42,7 +50,7 @@ let package = Package(
             name: "Subprocess",
             dependencies: [
                 "_SubprocessCShims",
-                .product(name: "SystemPackage", package: "swift-system"),
+                systemPackageDependency,
             ],
             path: "Sources/Subprocess",
             exclude: ["CMakeLists.txt"],
@@ -58,7 +66,7 @@ let package = Package(
                 "_SubprocessCShims",
                 "Subprocess",
                 "TestResources",
-                .product(name: "SystemPackage", package: "swift-system"),
+                systemPackageDependency,
             ],
             swiftSettings: packageSwiftSettings,
             linkerSettings: [
@@ -69,7 +77,7 @@ let package = Package(
         .target(
             name: "TestResources",
             dependencies: [
-                .product(name: "SystemPackage", package: "swift-system")
+                systemPackageDependency
             ],
             path: "Tests/TestResources",
             resources: [
