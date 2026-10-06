@@ -31,16 +31,41 @@ function(emit_swift_interface target)
     file(REMOVE "${CMAKE_CURRENT_BINARY_DIR}/${module_name}.swiftmodule")
   endif()
 
-  target_compile_options(${target} PRIVATE
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-emit-module-path ${CMAKE_CURRENT_BINARY_DIR}/${module_name}.swiftmodule/${${PROJECT_NAME}_MODULE_TRIPLE}.swiftmodule>")
-  add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${module_name}.swiftmodule/${${PROJECT_NAME}_MODULE_TRIPLE}.swiftmodule"
-    DEPENDS ${target})
+  set(module_path "${CMAKE_CURRENT_BINARY_DIR}/${module_name}.swiftmodule/${${PROJECT_NAME}_MODULE_TRIPLE}.swiftmodule")
+
+  # Have CMake itself emit the module at the nested path, rather than passing a
+  # second `-emit-module-path` alongside the one CMake always adds. With two
+  # module paths, the compiler honors whichever comes last, which depends on
+  # where CMake places its own flag relative to the target's compile options
+  # (CMake's development branch, for example, now appends it afterwards). If
+  # CMake's path wins, a regular `<module>.swiftmodule` file is written where
+  # the nested directory is expected, and clients fail with "Cannot find source
+  # file" for the path below. Setting the module path properties makes both
+  # agree, and also makes CMake create the parent directory and track the
+  # module as a build output.
+  set_target_properties(${target} PROPERTIES
+    Swift_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+  set(cmp0195 OLD)
+  if(POLICY CMP0195)
+    cmake_policy(GET CMP0195 cmp0195)
+  endif()
+  if(cmp0195 STREQUAL "NEW")
+    # CMake nests the module under the triple itself.
+    set_target_properties(${target} PROPERTIES
+      Swift_MODULE "${module_name}.swiftmodule")
+    set(CMAKE_Swift_MODULE_TRIPLE "${${PROJECT_NAME}_MODULE_TRIPLE}" PARENT_SCOPE)
+  else()
+    set_target_properties(${target} PROPERTIES
+      Swift_MODULE "${module_name}.swiftmodule/${${PROJECT_NAME}_MODULE_TRIPLE}.swiftmodule")
+  endif()
+
+  set_source_files_properties("${module_path}" PROPERTIES GENERATED TRUE)
   target_sources(${target}
     INTERFACE
-      $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/${module_name}.swiftmodule/${${PROJECT_NAME}_MODULE_TRIPLE}.swiftmodule>)
-      
-set_target_properties(${target} PROPERTIES
-  INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_CURRENT_BINARY_DIR})
+      $<BUILD_INTERFACE:${module_path}>)
+
+  set_target_properties(${target} PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_CURRENT_BINARY_DIR})
 
   # Generate textual swift interfaces is library-evolution is enabled
   if(${PROJECT_NAME}_ENABLE_LIBRARY_EVOLUTION)
