@@ -224,9 +224,12 @@ extension SubprocessProcessMonitoringTests {
 
         let expectedError: SubprocessError = .failedToMonitor(withUnderlyingError: underlying)
 
-        await #expect(throws: expectedError) {
+        let error = try await #require(throws: SubprocessError.self) {
             _ = try await monitorProcessTermination(for: processIdentifier)
         }
+
+        #expect(error == expectedError)
+        #expect(error.executionContext == nil)
     }
 
     @Test(.timeLimit(.minutes(1)))

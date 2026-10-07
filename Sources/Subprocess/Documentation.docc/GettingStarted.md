@@ -171,6 +171,8 @@ The `signaled` case exists only on platforms that report signals; on Windows, ev
 - It throws a ``SubprocessError`` for a problem with the setup or environment — for example, when ``Executable/name(_:)`` finds nothing in `PATH`, or when the collected output exceeds the `limit` you specified.
 - It rethrows any error your own body closure throws, in the streaming form described in <doc:StreamingAndInput>.
 
+When `run` throws a ``SubprocessError``, ``SubprocessError/executionContext`` holds a snapshot of what was being run: the executable, arguments, environment, and working directory you configured, alongside the values Subprocess resolved when it launched the process. Use it to report which command failed without threading that information through your own error handling.
+
 Because a command failure isn't a Swift error, you handle the two concerns in different places — `do`/`catch` for a process that couldn't run, and ``TerminationStatus/isSuccess`` for one that ran and failed:
 
 ```swift
