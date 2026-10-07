@@ -15,3 +15,8 @@
 ### Accessing environment keys
 
 - ``Key``
+
+### Inspecting an environment
+
+- ``representation``
+- ``Representation``

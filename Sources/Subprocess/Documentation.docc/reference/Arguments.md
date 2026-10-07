@@ -12,3 +12,8 @@
 
 - ``init(executablePathOverride:remainingValues:)-(String?,_)``
 - ``init(executablePathOverride:remainingValues:)-([UInt8]?,_)``
+- ``executablePathOverride``
+
+### Inspecting arguments
+
+- ``Value``
