@@ -189,8 +189,10 @@ extension SubprocessUnixTests {
         var platformOptions = PlatformOptions()
         platformOptions.supplementaryGroups = []
         let error = await #expect(throws: SubprocessError.self) {
+            // /bin/sh rather than /usr/bin/true, which Android doesn't have.
             _ = try await Subprocess.run(
-                .path("/usr/bin/true"),
+                .path("/bin/sh"),
+                arguments: ["-c", "exit 0"],
                 platformOptions: platformOptions,
                 output: .discarded
             )
@@ -204,8 +206,10 @@ extension SubprocessUnixTests {
         // call is made and this succeeds regardless of privileges.
         var platformOptions = PlatformOptions()
         platformOptions.supplementaryGroups = nil
+        // /bin/sh rather than /usr/bin/true, which Android doesn't have.
         let result = try await Subprocess.run(
-            .path("/usr/bin/true"),
+            .path("/bin/sh"),
+            arguments: ["-c", "exit 0"],
             platformOptions: platformOptions,
             output: .discarded
         )
