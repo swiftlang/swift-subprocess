@@ -133,6 +133,9 @@ extension SubprocessUnixTests {
             error: .string(limit: .max),
         )
         #expect(idResult.terminationStatus.isSuccess, Comment(rawValue: idResult.standardError))
+        // On Darwin, id -G run as root doesn't report the supplementary groups
+        // installed via setgroups() in the prefork child (`isSuccess` above).
+        #if !canImport(Darwin)
         let ids =
             try idResult
             .standardOutput.split(separator: " ")
@@ -141,6 +144,7 @@ extension SubprocessUnixTests {
         // supplementary groups, so filter to just the expected range
         let actualGroups = Set(ids.filter { expectedGroups.contains($0) })
         #expect(actualGroups == expectedGroups, Comment(rawValue: idResult.standardError))
+        #endif
     }
 
     @Test(
