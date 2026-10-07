@@ -110,10 +110,11 @@ extension Configuration {
         capabilities: SpawnCapabilities = .current
     ) -> Bool {
         // 1. setuid, setgid and setgroups have no posix_spawn attribute on any
-        //    platform.
+        //    platform. A non-nil supplementary group list, including an empty
+        //    one, is a request to call setgroups(); only nil inherits.
         if self.platformOptions.userID != nil
             || self.platformOptions.groupID != nil
-            || (supplementaryGroups?.count ?? 0) > 0
+            || supplementaryGroups != nil
         {
             return true
         }
@@ -548,7 +549,8 @@ extension Configuration {
                                 spawnContext.env,
                                 spawnContext.uidPtr,
                                 spawnContext.gidPtr,
-                                CInt(supplementaryGroups?.count ?? 0),
+                                // -1 tells the shim to inherit (skip `setgroups()`).
+                                CInt(supplementaryGroups?.count ?? -1),
                                 sgroups?.baseAddress,
                                 self.platformOptions.createSession ? 1 : 0,
                                 CInt(fileActionFDs.count),
@@ -582,7 +584,8 @@ extension Configuration {
                                     spawnContext.uidPtr,
                                     spawnContext.gidPtr,
                                     spawnContext.processGroupIDPtr,
-                                    CInt(supplementaryGroups?.count ?? 0),
+                                    // -1 tells the shim to inherit (skip `setgroups()`).
+                                    CInt(supplementaryGroups?.count ?? -1),
                                     sgroups?.baseAddress,
                                     self.platformOptions.createSession ? 1 : 0
                                 )

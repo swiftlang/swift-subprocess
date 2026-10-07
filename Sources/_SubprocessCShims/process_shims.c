@@ -661,7 +661,10 @@ int _subprocess_spawn_prefork(
         close(pipefd[0]);  // Close unused read end
 
         // Perform setups
-        if (number_of_sgroups > 0 && sgroups != NULL) {
+        // A negative count means "inherit the parent's supplementary groups"
+        // (no setgroups call). Zero is a deliberate request to drop them all
+        // via setgroups(0, NULL).
+        if (number_of_sgroups >= 0) {
             // POSIX doesn't define setgroups (only getgroups) and therefore makes no guarantee of async-signal-safety,
             // but we'll assume in practice it should be async-signal-safe on any reasonable platform based on the fact
             // that getgroups is async-signal-safe.
@@ -1147,7 +1150,10 @@ int _subprocess_fork_exec(
             }
         }
 
-        if (number_of_sgroups > 0 && sgroups != NULL) {
+        // A negative count means "inherit the parent's supplementary groups"
+        // (no setgroups call). Zero is a deliberate request to drop them all
+        // via setgroups(0, NULL).
+        if (number_of_sgroups >= 0) {
             // POSIX doesn't define setgroups (only getgroups) and therefore makes no guarantee of async-signal-safety,
             // but we'll assume in practice it should be async-signal-safe on any reasonable platform based on the fact
             // that getgroups is async-signal-safe.
