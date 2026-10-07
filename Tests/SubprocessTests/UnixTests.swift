@@ -1264,7 +1264,181 @@ extension SubprocessUnixTests {
     }
 }
 
-// MARK: - Utils
+// MARK: - Spawn Path Tests
+extension SubprocessUnixTests {
+    /// Standard input reaches the child, and a stream
+    /// requested as `.none` yields end of file rather than the parent's own
+    /// input.
+    ///
+    /// The written-input case is what makes this sensitive: it fails outright
+    /// if the descriptor never reaches the child's file descriptor 0. A `.none`
+    /// probe alone would not, because `/bin/sh` opens a descriptor of its own
+    /// when it starts with 0 closed, so "the child could read nothing" is true
+    /// whether the stream was wired to the null device or lost entirely.
+    @Test func testStandardInputIsWired() async throws {
+        let content = "spawn-path-stdin-\(randomString(length: 16, lettersOnly: true))"
+
+        let written = try await Subprocess.run(
+            .path("/bin/cat"),
+            input: .string(content),
+            output: .string(limit: 128)
+        )
+        #expect(written.terminationStatus.isSuccess)
+        #expect(written.standardOutput == content)
+
+        let none = try await Subprocess.run(
+            .path("/bin/cat"),
+            input: .none,
+            output: .string(limit: 128)
+        )
+        #expect(none.terminationStatus.isSuccess)
+        #expect(none.standardOutput == "")
+    }
+
+    /// A working directory that cannot be changed to is reported as such, with
+    /// the `errno` that explains why, rather than as a spawn failure or a
+    /// missing executable.
+    ///
+    /// The directory is validated in the parent, so this is reported the same
+    /// way on every path: the fallback path would otherwise be unable to tell a
+    /// child's failed `chdir` from a failed `exec`.
+    @Test func testWorkingDirectoryErrorIsPrecise() async throws {
+        let missingError = await #expect(throws: SubprocessError.self) {
+            try await Subprocess.run(
+                .path("/bin/sh"),
+                arguments: ["-c", "exit 0"],
+                workingDirectory: "/definitely/does/not/exist",
+                output: .discarded
+            )
+        }
+        #expect(missingError?.code == .failedToChangeWorkingDirectory)
+        #expect(missingError?.underlyingError == Errno(rawValue: ENOENT))
+
+        // A path whose parent component is a regular file is ENOTDIR, not
+        // ENOENT: the distinction is exactly what the old "does the directory
+        // exist?" guess could not make.
+        let notDirectoryError = await #expect(throws: SubprocessError.self) {
+            try await Subprocess.run(
+                .path("/bin/sh"),
+                arguments: ["-c", "exit 0"],
+                workingDirectory: "/bin/sh/nope",
+                output: .discarded
+            )
+        }
+        #expect(notDirectoryError?.code == .failedToChangeWorkingDirectory)
+        #expect(notDirectoryError?.underlyingError == Errno(rawValue: ENOTDIR))
+    }
+
+    /// A valid working directory is honored: the
+    /// `posix_spawn` path applies it as an `fchdir` file action against a
+    /// descriptor the parent opened, the fallback path `chdir`s in the child.
+    @Test func testWorkingDirectoryIsApplied() async throws {
+        let directoryPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("subprocess-spawn-path-\(randomString(length: 12, lettersOnly: true))")
+            ._fileSystemPath
+        try FileManager.default.createDirectory(
+            atPath: directoryPath,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(atPath: directoryPath) }
+
+        let result = try await Subprocess.run(
+            .path("/bin/sh"),
+            // `pwd -P` rather than `$PWD`: the latter is inherited from the
+            // environment and would report the parent's directory even if
+            // the child never moved.
+            arguments: ["-c", "pwd -P"],
+            workingDirectory: FilePath(directoryPath),
+            output: .string(limit: 4096)
+        )
+        #expect(result.terminationStatus.isSuccess)
+        let reported = result.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        // `pwd -P` reports the physical path, so the expected value has to be
+        // resolved too: on Darwin the temporary directory lives under a
+        // `/var` -> `/private/var` symlink.
+        let resolvedPath = try #require(
+            directoryPath.withCString { path in
+                realpath(path, nil).map { resolved -> String in
+                    defer { free(resolved) }
+                    return String(cString: resolved)
+                }
+            }
+        )
+        #expect(reported == resolvedPath)
+    }
+
+    /// `createSession` combined with `processGroupID` must take the fallback
+    /// path, which controls the order of `setsid` and `setpgid` itself: glibc
+    /// and Bionic order them differently, and setpgid-then-setsid makes setsid
+    /// fail with EPERM.
+    @Test func testCreateSessionWithProcessGroupUsesTheFallbackPath() throws {
+        var platformOptions = PlatformOptions()
+        platformOptions.createSession = true
+        platformOptions.processGroupID = 0
+        let configuration = Configuration(
+            executable: .path("/bin/sh"),
+            platformOptions: platformOptions
+        )
+        #expect(configuration.requiresFallbackSpawnPath(supplementaryGroups: nil))
+    }
+
+    /// Changing the user or group has no `posix_spawn` attribute anywhere, so
+    /// such a configuration routes to the fallback path even when nothing is
+    /// forcing it.
+    ///
+    /// Rule-level only: actually spawning with a different user needs root,
+    /// which `testSubprocessPlatformOptionsUserID` already covers where it is
+    /// available.
+    @Test func testPrivilegeChangesUseTheFallbackPath() throws {
+        var platformOptions = PlatformOptions()
+        platformOptions.userID = 501
+        let configuration = Configuration(
+            executable: .path("/bin/sh"),
+            platformOptions: platformOptions
+        )
+        #expect(configuration.requiresFallbackSpawnPath(supplementaryGroups: nil))
+        // Supplementary groups are resolved separately from the options, so
+        // they are passed in rather than read from the configuration.
+        #expect(
+            Configuration(executable: .path("/bin/sh"))
+                .requiresFallbackSpawnPath(supplementaryGroups: [20])
+        )
+    }
+
+    #if os(FreeBSD)
+    /// FreeBSD has no way to obtain a process descriptor from `posix_spawn`
+    /// before 15.1, so a plain spawn has one only where this host's
+    /// `posix_spawn` cannot express it and the fallback path's `pdfork` is used.
+    ///
+    /// Linux is excluded because `pidfd_open` gives the `posix_spawn` path a
+    /// descriptor too.
+    ///
+    /// This asserts the *absence* of a descriptor on the `posix_spawn` path, so
+    /// it inverts into a failure the moment that stops being true. When the
+    /// `posix_spawnattr_setprocdescp_np` FIXME in `process_shims.c` lands, this
+    /// test should assert a descriptor unconditionally rather than be read as a
+    /// regression.
+    @Test func testProcessDescriptorAvailability() async throws {
+        let usesFallbackPath = Configuration(executable: .path("/bin/sh"))
+            .requiresFallbackSpawnPath(supplementaryGroups: nil)
+        let result = try await Subprocess.run(
+            .path("/bin/sh"),
+            arguments: ["-c", "exit 0"],
+            input: .none,
+            output: .discarded,
+            error: .discarded
+        ) { execution in
+            return execution.processIdentifier.processDescriptor
+        }
+        if usesFallbackPath {
+            #expect(result.closureResult != -1)
+        } else {
+            #expect(result.closureResult == -1)
+        }
+    }
+    #endif // os(FreeBSD)
+}
+
 extension SubprocessUnixTests {
     private func assertID(
         withArgument argument: String,
