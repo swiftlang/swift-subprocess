@@ -313,6 +313,11 @@ int _subprocess_spawn(
 /// This is the Darwin fallback path, so Darwin never reaches a raw `execve`. The
 /// child's `errno` is relayed to the parent over a `CLOEXEC` pipe, and the child
 /// is reaped here if it fails before exec.
+///
+/// `number_of_sgroups` selects how supplementary groups are handled: a
+/// negative value inherits the parent's groups (no `setgroups()` call), while
+/// zero or more calls `setgroups(number_of_sgroups, sgroups)`, so `0` drops
+/// every supplementary group.
 int _subprocess_spawn_prefork(
     pid_t * _Nonnull pid,
     const char * _Nonnull exec_path,
@@ -328,6 +333,10 @@ int _subprocess_spawn_prefork(
 );
 #endif // TARGET_OS_MAC
 
+/// `number_of_sgroups` selects how supplementary groups are handled: a
+/// negative value inherits the parent's groups (no `setgroups()` call), while
+/// zero or more calls `setgroups(number_of_sgroups, sgroups)`, so `0` drops
+/// every supplementary group.
 int _subprocess_fork_exec(
     pid_t * _Nonnull pid,
     int * _Nonnull pidfd,

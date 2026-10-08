@@ -143,6 +143,79 @@ extension SubprocessUnixTests {
         #expect(actualGroups == expectedGroups, Comment(rawValue: idResult.standardError))
     }
 
+    // Run this test with sudo
+    // https://github.com/swiftlang/swift-subprocess/issues/381
+    @Test(
+        .enabled(
+            if: getgid() == 0,
+            "This test requires root privileges"
+        )
+    )
+    func testSubprocessPlatformOptionsEmptySupplementaryGroupsDropsInherited() async throws {
+        // An empty array must drop the parent's supplementary groups rather
+        // than inherit them. Pair it with a non-root groupID so that, once
+        // the inherited groups (which for root include gid 0) are dropped,
+        // the only group left for `id -G` to report is that effective GID.
+        let expectedGroupID = gid_t(Int.random(in: 1000...2000))
+        var platformOptions = PlatformOptions()
+        platformOptions.groupID = expectedGroupID
+        platformOptions.supplementaryGroups = []
+        let idResult = try await Subprocess.run(
+            .path("/usr/bin/id"),
+            arguments: ["-G"],
+            platformOptions: platformOptions,
+            output: .string(limit: .max),
+            error: .string(limit: .max),
+        )
+        #expect(idResult.terminationStatus.isSuccess, Comment(rawValue: idResult.standardError))
+        let ids =
+            try idResult
+            .standardOutput.split(separator: " ")
+            .map { try #require(gid_t($0.trimmingCharacters(in: .whitespacesAndNewlines))) }
+        #expect(Set(ids) == [expectedGroupID], Comment(rawValue: idResult.standardOutput))
+    }
+
+    // https://github.com/swiftlang/swift-subprocess/issues/381
+    @Test(
+        .enabled(
+            if: getuid() != 0 && geteuid() != 0,
+            "This test requires running without root privileges"
+        )
+    )
+    func testSubprocessPlatformOptionsEmptySupplementaryGroupsCallsSetgroups() async throws {
+        // An empty array is a request to call setgroups(0, NULL), not a
+        // no-op. Without root, that call fails with EPERM, so the spawn must
+        // fail rather than silently run with the inherited groups.
+        var platformOptions = PlatformOptions()
+        platformOptions.supplementaryGroups = []
+        let error = await #expect(throws: SubprocessError.self) {
+            // /bin/sh rather than /usr/bin/true, which Android doesn't have.
+            _ = try await Subprocess.run(
+                .path("/bin/sh"),
+                arguments: ["-c", "exit 0"],
+                platformOptions: platformOptions,
+                output: .discarded
+            )
+        }
+        #expect(error?.code == .spawnFailed)
+        #expect(error?.underlyingError == Errno(rawValue: EPERM))
+    }
+
+    @Test func testSubprocessPlatformOptionsNilSupplementaryGroupsInherits() async throws {
+        // nil inherits the parent's supplementary groups, so no setgroups()
+        // call is made and this succeeds regardless of privileges.
+        var platformOptions = PlatformOptions()
+        platformOptions.supplementaryGroups = nil
+        // /bin/sh rather than /usr/bin/true, which Android doesn't have.
+        let result = try await Subprocess.run(
+            .path("/bin/sh"),
+            arguments: ["-c", "exit 0"],
+            platformOptions: platformOptions,
+            output: .discarded
+        )
+        #expect(result.terminationStatus.isSuccess)
+    }
+
     @Test(
         .enabled(
             if: getgid() == 0,

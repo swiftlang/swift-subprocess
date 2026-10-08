@@ -677,6 +677,26 @@ public struct PlatformOptions: Sendable {
     /// The group ID controls permissions, particularly for file access.
     public var groupID: gid_t? = nil
     /// The list of supplementary group IDs for the subprocess.
+    ///
+    /// The subprocess either inherits the parent's supplementary groups or
+    /// has them replaced, depending on whether this value is `nil` or an array:
+    ///
+    /// - term `nil`: The subprocess inherits the parent process's
+    ///   supplementary groups unchanged; `setgroups()` isn't called.
+    ///   This is the default.
+    /// - term An empty array (`[]`): The subprocess drops all of the parent's
+    ///   supplementary groups, leaving it with none. This is equivalent to
+    ///   calling `setgroups(0, NULL)` on the subprocess.
+    /// - term A non-empty array: The subprocess's supplementary groups are
+    ///   replaced with exactly the groups in the array; none of the parent's
+    ///   supplementary groups are kept unless they're listed. This is
+    ///   equivalent to calling `setgroups()` with the array's contents on the
+    ///   subprocess.
+    ///
+    /// Any non-`nil` value, including an empty array, requires the privilege
+    /// to call `setgroups()` (typically root); without it, spawning the
+    /// subprocess fails. The supplementary groups are set before ``groupID``
+    /// and ``userID`` are applied.
     public var supplementaryGroups: [gid_t]? = nil
     /// The process group for the subprocess.
     ///

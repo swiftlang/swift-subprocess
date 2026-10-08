@@ -215,10 +215,19 @@ struct SpawnPathTests {
                 capabilities: Self.fullyCapable
             )
         )
-        // An empty array is not a request to change anything.
+        // An empty array is a request to drop every inherited supplementary
+        // group via setgroups(0, NULL), so it needs the fallback path too.
+        // https://github.com/swiftlang/swift-subprocess/issues/381
+        #expect(
+            self.configuration().requiresFallbackSpawnPath(
+                supplementaryGroups: [],
+                capabilities: Self.fullyCapable
+            )
+        )
+        // Only nil inherits the parent's groups.
         #expect(
             !self.configuration().requiresFallbackSpawnPath(
-                supplementaryGroups: [],
+                supplementaryGroups: nil,
                 capabilities: Self.fullyCapable
             )
         )
