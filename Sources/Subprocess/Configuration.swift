@@ -1216,18 +1216,18 @@ internal struct CreatedPipe: ~Copyable, Sendable {
                 encodedAs: UTF16.self
             ) { pipeNameW in
                 // Use OVERLAPPED for async IO
-                var openMode: DWORD = DWORD(FILE_FLAG_OVERLAPPED) | DWORD(FILE_FLAG_FIRST_PIPE_INSTANCE)
+                var openMode: DWORD = FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE
                 switch purpose {
                 case .input:
-                    openMode |= DWORD(PIPE_ACCESS_OUTBOUND)
+                    openMode |= PIPE_ACCESS_OUTBOUND
                 case .output:
-                    openMode |= DWORD(PIPE_ACCESS_INBOUND)
+                    openMode |= PIPE_ACCESS_INBOUND
                 }
 
                 return CreateNamedPipeW(
                     pipeNameW,
                     openMode,
-                    DWORD(PIPE_TYPE_BYTE) | DWORD(PIPE_READMODE_BYTE) | DWORD(PIPE_WAIT) | DWORD(PIPE_REJECT_REMOTE_CLIENTS),
+                    PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
                     1, // Max instance,
                     // Both libuv (Node) and Rust std::process use this value
                     DWORD(64 * 1024),
@@ -1258,9 +1258,9 @@ internal struct CreatedPipe: ~Copyable, Sendable {
                 var targetAccess: DWORD = 0
                 switch purpose {
                 case .input:
-                    targetAccess = DWORD(GENERIC_READ)
+                    targetAccess = GENERIC_READ
                 case .output:
-                    targetAccess = DWORD(GENERIC_WRITE)
+                    targetAccess = GENERIC_WRITE
                 }
 
                 return CreateFileW(
@@ -1268,8 +1268,8 @@ internal struct CreatedPipe: ~Copyable, Sendable {
                     targetAccess,
                     0,
                     &saAttributes,
-                    DWORD(OPEN_EXISTING),
-                    DWORD(FILE_ATTRIBUTE_NORMAL) | DWORD(FILE_FLAG_OVERLAPPED),
+                    OPEN_EXISTING,
+                    FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED,
                     nil
                 )
             }
@@ -1468,7 +1468,7 @@ extension HANDLE {
                 self,
                 GetCurrentProcess(),
                 &handle,
-                0, true, DWORD(DUPLICATE_SAME_ACCESS)
+                0, true, DUPLICATE_SAME_ACCESS
             )
         else {
             throw .asyncIOFailed(

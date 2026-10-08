@@ -152,7 +152,7 @@ extension SubprocessWindowsTests {
         // Manually set the create new console flag
         var platformOptions: Subprocess.PlatformOptions = .init()
         platformOptions.preSpawnProcessConfigurator = { creationFlags, _ in
-            creationFlags |= DWORD(CREATE_NEW_CONSOLE)
+            creationFlags |= CREATE_NEW_CONSOLE
         }
         let parentConsole = GetConsoleWindow()
         let newConsoleResult = try await Subprocess.run(
@@ -178,7 +178,7 @@ extension SubprocessWindowsTests {
         // Change the console title
         let title = "My Awesome Process"
         platformOptions.preSpawnProcessConfigurator = { creationFlags, startupInfo in
-            creationFlags |= DWORD(CREATE_NEW_CONSOLE)
+            creationFlags |= CREATE_NEW_CONSOLE
             title.withCString(
                 encodedAs: UTF16.self
             ) { titleW in
@@ -279,7 +279,7 @@ extension SubprocessWindowsTests {
         let hJob = CreateJobObjectW(nil, nil)
         defer { #expect(CloseHandle(hJob)) }
         var info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
-        info.BasicLimitInformation.LimitFlags = DWORD(JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
         #expect(SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &info, DWORD(MemoryLayout<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>.size)))
 
         let result = try await Subprocess.run(
@@ -315,7 +315,7 @@ extension SubprocessWindowsTests {
             )
             let grandchildHandle = try #require(
                 OpenProcess(
-                    DWORD(SYNCHRONIZE) | DWORD(PROCESS_QUERY_LIMITED_INFORMATION),
+                    SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
                     false,
                     grandchildPid
                 ),
@@ -361,7 +361,7 @@ extension SubprocessWindowsTests {
             )
             let grandchildHandle = try #require(
                 OpenProcess(
-                    DWORD(SYNCHRONIZE) | DWORD(PROCESS_QUERY_LIMITED_INFORMATION) | DWORD(PROCESS_TERMINATE),
+                    SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE,
                     false,
                     grandchildPid
                 ),
@@ -409,7 +409,7 @@ extension SubprocessWindowsTests {
         // resumed it (incorrect).
         var platformOptions = PlatformOptions()
         platformOptions.preSpawnProcessConfigurator = { creationFlags, _ in
-            creationFlags |= DWORD(CREATE_SUSPENDED)
+            creationFlags |= CREATE_SUSPENDED
         }
 
         let result = try await Subprocess.run(
@@ -662,7 +662,7 @@ extension SubprocessWindowsTests {
         // Neither the current directory nor the system directory is a
         // candidate, whatever they happen to be.
         let systemDirectory = try fillNullTerminatedWideStringBuffer(
-            initialSize: DWORD(MAX_PATH),
+            initialSize: MAX_PATH,
             maxSize: DWORD(Int16.max)
         ) {
             GetSystemDirectoryW($0.baseAddress, DWORD($0.count))
@@ -832,7 +832,7 @@ extension SubprocessWindowsTests {
         }
 
         let systemDirectory = try fillNullTerminatedWideStringBuffer(
-            initialSize: DWORD(MAX_PATH),
+            initialSize: MAX_PATH,
             maxSize: DWORD(Int16.max)
         ) {
             GetSystemDirectoryW($0.baseAddress, DWORD($0.count))
@@ -977,7 +977,7 @@ extension SubprocessWindowsTests {
     /// executable that the tests can both resolve and run.
     private static func copyCmdExe(to destination: URL) throws {
         let systemDirectory = try fillNullTerminatedWideStringBuffer(
-            initialSize: DWORD(MAX_PATH),
+            initialSize: MAX_PATH,
             maxSize: DWORD(Int16.max)
         ) {
             GetSystemDirectoryW($0.baseAddress, DWORD($0.count))
@@ -1007,10 +1007,10 @@ extension SubprocessWindowsTests {
                     var userInfo: USER_INFO_1 = USER_INFO_1()
                     userInfo.usri1_name = UnsafeMutablePointer<WCHAR>(mutating: usernameW)
                     userInfo.usri1_password = UnsafeMutablePointer<WCHAR>(mutating: passwordW)
-                    userInfo.usri1_priv = DWORD(USER_PRIV_USER)
+                    userInfo.usri1_priv = USER_PRIV_USER
                     userInfo.usri1_home_dir = nil
                     userInfo.usri1_comment = nil
-                    userInfo.usri1_flags = DWORD(UF_SCRIPT) | DWORD(UF_DONT_EXPIRE_PASSWD)
+                    userInfo.usri1_flags = UF_SCRIPT | UF_DONT_EXPIRE_PASSWD
                     userInfo.usri1_script_path = nil
 
                     var error: DWORD = 0
@@ -1057,8 +1057,8 @@ extension SubprocessWindowsTests {
             AllocateAndInitializeSid(
                 &netAuthority,
                 2, // nSubAuthorityCount
-                DWORD(SECURITY_BUILTIN_DOMAIN_RID),
-                DWORD(DOMAIN_ALIAS_RID_ADMINS),
+                SECURITY_BUILTIN_DOMAIN_RID,
+                DOMAIN_ALIAS_RID_ADMINS,
                 0,
                 0,
                 0,
@@ -1095,7 +1095,7 @@ extension SubprocessWindowsTests {
         of parentPid: DWORD,
         named name: String? = nil
     ) throws -> DWORD? {
-        guard let snapshot = CreateToolhelp32Snapshot(DWORD(TH32CS_SNAPPROCESS), 0),
+        guard let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0),
             snapshot != INVALID_HANDLE_VALUE
         else {
             throw SubprocessError.WindowsError(win32Error: GetLastError())

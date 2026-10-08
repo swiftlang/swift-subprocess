@@ -156,7 +156,7 @@ extension Execution {
         if AttachConsole(processIdentifier.value) {
             // Disable Ctrl-C handling in this process
             if SetConsoleCtrlHandler(nil, true) {
-                if GenerateConsoleCtrlEvent(DWORD(CTRL_C_EVENT), 0) {
+                if GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0) {
                     // We successfully sent the event. wait for the process to exit
                     try? await Task.sleep(for: duration)
                 }
@@ -168,7 +168,7 @@ extension Execution {
         }
 
         // 3. Attempt to send CTRL_BREAK_EVENT to the process group
-        if GenerateConsoleCtrlEvent(DWORD(CTRL_BREAK_EVENT), processIdentifier.value) {
+        if GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, processIdentifier.value) {
             // Wait for process to exit
             try? await Task.sleep(for: duration)
         }
