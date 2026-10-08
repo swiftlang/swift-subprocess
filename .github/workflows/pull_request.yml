@@ -43,6 +43,8 @@ jobs:
       enable_macos_checks: true
       macos_xcode_versions: '["swift_6.3", "swift_6.4"]'
       macos_build_command: "xcrun swift test && xcrun swift test -c release && xcrun swift test --disable-default-traits"
+      enable_macos_swiftly_checks: true
+      macos_swiftly_build_command: "swiftly run swift test && swiftly run swift test -c release && swiftly run swift test --disable-default-traits"
       enable_linux_static_sdk_build: true
       enable_android_sdk_build: true
       enable_android_sdk_checks: true
@@ -80,7 +82,7 @@ jobs:
       docs_check_enabled: false
       format_check_enabled: true
       unacceptable_language_check_enabled: false
-      api_breakage_check_enabled: false
+      api_breakage_check_enabled: true
 
   cmake_build:
     name: CMake Build
