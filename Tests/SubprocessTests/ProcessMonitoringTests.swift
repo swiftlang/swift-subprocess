@@ -272,6 +272,76 @@ extension SubprocessProcessMonitoringTests {
     }
 }
 
+#if !os(Windows)
+extension SubprocessProcessMonitoringTests {
+    @Test(.timeLimit(.minutes(1)))
+    func testStoppedChildIsNotReportedAsExited() async throws {
+        var config = self.longRunningProcess(withTimeOutSeconds: 30)
+        config.platformOptions.createSession = true
+        try await withSpawnedExecution(config: config) { execution in
+            let pid = execution.processIdentifier.value
+            defer {
+                // This fixture owns the unreaped child until this scope ends.
+                _ = kill(pid, SIGKILL)
+                var status: Int32 = 0
+                while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
+            }
+            try execution.send(signal: .suspend)
+            try await self.waitUntilStopped(pid)
+            #expect(try !execution.processIdentifier.peekIfExited(),
+                    "A stop notification is not a terminal exit")
+            // Observing an exit must not consume another observer's stop event.
+            var pending = siginfo_t()
+            try #require(waitid(P_PID, id_t(pid), &pending, WSTOPPED | WNOHANG | WNOWAIT) == 0)
+            #expect(pending.si_code == CLD_STOPPED)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func testMonitoringStoppedChildWaitsForItsFinalExit() async throws {
+        var config = Configuration(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "kill -STOP $$; exit 42"]
+        )
+        config.platformOptions.createSession = true
+        try await withSpawnedExecution(config: config) { execution in
+            let pid = execution.processIdentifier.value
+            var reaped = false
+            defer {
+                if !reaped {
+                    _ = kill(pid, SIGKILL)
+                    var status: Int32 = 0
+                    while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
+                }
+            }
+            try await self.waitUntilStopped(pid)
+            // The monitor must stay pending until the explicit resume allows exit.
+            let resume = Task {
+                try await Task.sleep(for: .milliseconds(100))
+                try execution.send(signal: .resume)
+            }
+            defer { resume.cancel() }
+            let result = try await monitorProcessTermination(for: execution.processIdentifier)
+            reaped = true
+            try await resume.value
+            #expect(result == .exited(42))
+        }
+    }
+
+    private func waitUntilStopped(_ pid: pid_t) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while ContinuousClock.now < deadline {
+            var info = siginfo_t()
+            try #require(waitid(P_PID, id_t(pid), &info, WSTOPPED | WNOHANG | WNOWAIT) == 0)
+            if info.si_code == CLD_STOPPED { return }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        Issue.record("The fixture did not stop before testing exit observation")
+        throw Errno.timedOut
+    }
+}
+#endif
+
 // MARK: Concurrency Tests
 extension SubprocessProcessMonitoringTests {
     @Test func testCanMonitorProcessConcurrently() async throws {
