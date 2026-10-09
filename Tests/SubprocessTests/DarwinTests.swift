@@ -13,7 +13,9 @@
 
 import Foundation
 
+#if !SUBPROCESS_SINGLE_MODULE
 import _SubprocessCShims
+#endif
 import Testing
 
 #if canImport(System)

@@ -21,7 +21,9 @@ import Musl
 #endif
 
 import Testing
+#if !SUBPROCESS_SINGLE_MODULE
 import _SubprocessCShims
+#endif
 
 @testable import Subprocess
 
