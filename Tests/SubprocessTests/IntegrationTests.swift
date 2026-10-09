@@ -31,8 +31,10 @@ import WinSDK
 
 import Testing
 import Foundation
+#if !SUBPROCESS_SINGLE_MODULE
 import TestResources
 import _SubprocessCShims
+#endif
 @testable import Subprocess
 
 #if os(Android)
