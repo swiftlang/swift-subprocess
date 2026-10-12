@@ -777,7 +777,8 @@ extension ProcessIdentifier {
         try _blockingReap(pid: value)
     }
 
-    /// Reaps the zombie for the exited process, or returns `nil` if the process is still running.
+    /// Reaps the zombie for the exited process, or returns `nil` if the process is still running
+    /// (including when it is stopped).
     ///
     /// This function does not block.
     internal func reap() throws(Errno) -> TerminationStatus? {
@@ -805,17 +806,22 @@ extension ProcessIdentifier {
 // present in stable/15, absent from releng/15.0.
 @available(*, noasync)
 internal func _blockingReap(pid: pid_t) throws(Errno) -> TerminationStatus {
-    let siginfo = try _waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED)
+    // Darwin can report a stop notification here, even after NOTE_EXIT
+    // when a stop signal races the child's exit. Without WNOWAIT, waitid
+    // consumes the stop it reports, so the next call blocks until the child
+    // terminates or stops again.
+    var siginfo: siginfo_t
+    repeat {
+        siginfo = try _waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED)
+    } while siginfo.si_code == CLD_STOPPED
     return TerminationStatus(siginfo)
 }
 
 internal func _reap(pid: pid_t) throws(Errno) -> TerminationStatus? {
     let siginfo = try _waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED | WNOHANG)
-    // If si_pid and si_signo are both 0, the child is still running since we used WNOHANG
-    if siginfo.si_pid == 0 && siginfo.si_signo == 0 {
-        return nil
-    }
-    return TerminationStatus(siginfo)
+    // An empty result means the child is still running since we used WNOHANG.
+    // Without WNOWAIT, Darwin consumes a stop notification it reports here.
+    return TerminationStatus(ifTerminated: siginfo)
 }
 
 internal func _peekIfExited(pid: pid_t) throws(Errno) -> Bool {
@@ -823,14 +829,9 @@ internal func _peekIfExited(pid: pid_t) throws(Errno) -> Bool {
     // `_blockingReap` (or `_reap`) can still consume it.
     let siginfo = try _waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED | WNOHANG | WNOWAIT)
     // Darwin can report a pending stop notification even with WEXITED.
-    // Treating every nonempty result as an exit bypasses monitoring and sends
-    // CLD_STOPPED into the terminal-status decoder, which traps.
-    switch siginfo.si_code {
-    case .init(CLD_EXITED), .init(CLD_KILLED), .init(CLD_DUMPED):
-        return true
-    default:
-        return false
-    }
+    // Treating every nonempty result as an exit would skip monitoring a child
+    // that is only stopped.
+    return TerminationStatus(ifTerminated: siginfo) != nil
 }
 
 internal func _waitid(idtype: idtype_t, id: id_t, flags: Int32) throws(Errno) -> siginfo_t {
@@ -846,13 +847,25 @@ internal func _waitid(idtype: idtype_t, id: id_t, flags: Int32) throws(Errno) ->
 
 internal extension TerminationStatus {
     init(_ siginfo: siginfo_t) {
+        guard let status = TerminationStatus(ifTerminated: siginfo) else {
+            fatalError("Unexpected exit status: \(siginfo.si_code)")
+        }
+        self = status
+    }
+
+    /// Decodes `siginfo` if it reports that the child terminated.
+    ///
+    /// Returns `nil` for an empty `WNOHANG` result and for any other result
+    /// that isn't a termination, such as a stop notification. Darwin reports
+    /// an un-waited stopped child even when only `WEXITED` is requested.
+    init?(ifTerminated siginfo: siginfo_t) {
         switch siginfo.si_code {
         case .init(CLD_EXITED):
             self = .exited(siginfo.si_status)
         case .init(CLD_KILLED), .init(CLD_DUMPED):
             self = .signaled(siginfo.si_status)
         default:
-            fatalError("Unexpected exit status: \(siginfo.si_code)")
+            return nil
         }
     }
 }
