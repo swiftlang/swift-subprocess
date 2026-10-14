@@ -702,8 +702,10 @@ extension Configuration {
                 return errno
             }
             // 2. Present, but not a directory. An executable-permission check
-            //    alone would accept an executable regular file.
-            guard (status.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR) else {
+            //    alone would accept an executable regular file. The constants are
+            //    converted to `st_mode`'s own type rather than `mode_t`, since on
+            //    32-bit Android `st_mode` is `UInt32` but `mode_t` is `UInt16`.
+            guard (status.st_mode & numericCast(S_IFMT)) == numericCast(S_IFDIR) else {
                 return ENOTDIR
             }
             // 3. A directory, but not searchable. `faccessat` with the
