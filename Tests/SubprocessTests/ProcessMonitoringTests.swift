@@ -414,16 +414,30 @@ extension SubprocessProcessMonitoringTests {
     @Test func testResourceUsageReportsCPUTime() async throws {
         let result = try await run(self.cpuBoundProcess(), output: .discarded)
         #expect(result.terminationStatus.isSuccess)
+        let usage = result.resourceUsage
         // A few hundred thousand shell loop iterations cannot cost zero.
-        #expect(result.resourceUsage.userTime > .zero)
-        #expect(result.resourceUsage.systemTime >= .zero)
-        #expect(result.resourceUsage.maxRSS > 0)
+        #expect(try #require(usage.userTime) > .zero)
+        #expect(try #require(usage.systemTime) >= .zero)
+        #expect(try #require(usage.peakMemoryUsage) > 0)
+        #if os(Windows)
+        #expect(usage.minorPageFaults == nil)
+        #expect(usage.majorPageFaults == nil)
+        #expect(usage.voluntaryContextSwitches == nil)
+        #expect(usage.involuntaryContextSwitches == nil)
+        #else
+        // Loading and running any executable faults pages in. Context switches
+        // and major faults may legitimately be zero for a short-lived child.
+        #expect(try #require(usage.minorPageFaults) > 0)
+        #expect(usage.majorPageFaults != nil)
+        #expect(usage.voluntaryContextSwitches != nil)
+        #expect(usage.involuntaryContextSwitches != nil)
+        #endif
     }
 
     @Test func testResourceUsageChargesOnlyCPUTimeNotWallTime() async throws {
         let result = try await run(self.longRunningProcess(withTimeOutSeconds: 1), output: .discarded)
         #expect(result.terminationStatus.isSuccess)
-        #expect(result.resourceUsage.maxRSS > 0)
+        #expect(try #require(result.resourceUsage.peakMemoryUsage) > 0)
         #if !os(Windows)
         // The child slept for a second; almost none of that is its own CPU.
         //
@@ -432,22 +446,24 @@ extension SubprocessProcessMonitoringTests {
         // seconds of CPU on its own -- measured at 2.75s against a 1s sleep --
         // so the quantity this is checking isn't observable through it.
         // `testResourceUsageReportsCPUTime` still covers Windows CPU accounting.
-        let cpuTime = result.resourceUsage.userTime + result.resourceUsage.systemTime
+        let cpuTime = try #require(result.resourceUsage.userTime) + #require(result.resourceUsage.systemTime)
         #expect(cpuTime < .milliseconds(500))
         #endif
     }
 
     #if !os(Windows)
-    @Test func testResourceUsageMaxRSSScalesWithAllocation() async throws {
+    @Test func testResourceUsagePeakMemoryUsageScalesWithAllocation() async throws {
         let allocation = 32 * 1024 * 1024
         let small = try await run(self.allocatingProcess(bytes: 1024), output: .discarded)
         let large = try await run(self.allocatingProcess(bytes: allocation), output: .discarded)
         #expect(small.terminationStatus.isSuccess)
         #expect(large.terminationStatus.isSuccess)
-        // `maxRSS` is documented in bytes on every platform. If a platform's
-        // KiB-to-bytes scaling were wrong, this would be off by 1024x.
-        #expect(large.resourceUsage.maxRSS > allocation / 2)
-        #expect(large.resourceUsage.maxRSS > small.resourceUsage.maxRSS)
+        // `peakMemoryUsage` is documented in bytes on every platform. If a
+        // platform's KiB-to-bytes scaling were wrong, this would be off by 1024x.
+        let smallPeak = try #require(small.resourceUsage.peakMemoryUsage)
+        let largePeak = try #require(large.resourceUsage.peakMemoryUsage)
+        #expect(largePeak > allocation / 2)
+        #expect(largePeak > smallPeak)
     }
 
     @Test func testResourceUsageIsReportedForSignaledProcess() async throws {
@@ -469,29 +485,66 @@ extension SubprocessProcessMonitoringTests {
         let result = try await run(config, output: .discarded)
         #expect(result.terminationStatus == .signaled(SIGKILL))
         // A child that died on a signal is still accounted for.
-        #expect(result.resourceUsage.userTime > .zero)
-        #expect(result.resourceUsage.maxRSS > 0)
+        #expect(try #require(result.resourceUsage.userTime) > .zero)
+        #expect(try #require(result.resourceUsage.peakMemoryUsage) > 0)
     }
 
-    @Test func testResourceUsageMatchesUnderlyingRusage() async throws {
-        let result = try await run(self.cpuBoundProcess(), output: .discarded)
-        let usage = result.resourceUsage
-        let expectedUserTime =
-            Duration.seconds(usage.rusage.ru_utime.tv_sec) + .microseconds(usage.rusage.ru_utime.tv_usec)
-        let expectedSystemTime =
-            Duration.seconds(usage.rusage.ru_stime.tv_sec) + .microseconds(usage.rusage.ru_stime.tv_usec)
-        #expect(usage.userTime == expectedUserTime)
-        #expect(usage.systemTime == expectedSystemTime)
+    @Test func testResourceUsageInterpretsRusage() throws {
+        var raw = rusage()
+        raw.ru_utime.tv_sec = 2
+        raw.ru_utime.tv_usec = 250_000
+        raw.ru_stime.tv_sec = 0
+        raw.ru_stime.tv_usec = 1
+        raw.ru_maxrss = 4096
+        raw.ru_minflt = 11
+        raw.ru_majflt = 12
+        raw.ru_nvcsw = 13
+        raw.ru_nivcsw = 14
+        let usage = ResourceUsage(raw)
+        #expect(usage.userTime == .seconds(2) + .milliseconds(250))
+        #expect(usage.systemTime == .microseconds(1))
+        #if canImport(Darwin)
+        #expect(usage.peakMemoryUsage == 4096)
+        #else
+        // Everywhere but Darwin, the kernel reports `ru_maxrss` in KiB.
+        #expect(usage.peakMemoryUsage == 4096 * 1024)
+        #endif
+        #expect(usage.minorPageFaults == 11)
+        #expect(usage.majorPageFaults == 12)
+        #expect(usage.voluntaryContextSwitches == 13)
+        #expect(usage.involuntaryContextSwitches == 14)
     }
     #endif
 
-    @Test func testResourceUsageEqualityIgnoresRawRusagePadding() async throws {
-        let result = try await run(self.immediateExitProcess(withExitCode: 0), output: .discarded)
-        let usage = result.resourceUsage
-        // Equality and hashing are defined over the interpreted fields, so a
-        // value always matches itself regardless of the raw C struct's bytes.
-        #expect(usage == usage)
-        #expect(Set([usage, usage]).count == 1)
+    @Test func testResourceUsageInitializerDefaultsToNotReported() {
+        let usage = ResourceUsage()
+        #expect(usage.userTime == nil)
+        #expect(usage.systemTime == nil)
+        #expect(usage.peakMemoryUsage == nil)
+        #expect(usage.minorPageFaults == nil)
+        #expect(usage.majorPageFaults == nil)
+        #expect(usage.voluntaryContextSwitches == nil)
+        #expect(usage.involuntaryContextSwitches == nil)
+    }
+
+    @Test func testExecutionResultEqualityIgnoresResourceUsage() throws {
+        func makeResult(_ usage: ResourceUsage) -> ExecutionResult<Int, BytesOutput, BytesOutput> {
+            ExecutionResult(
+                processIdentifier: currentProcessIdentifier,
+                terminationStatus: .exited(0),
+                resourceUsage: usage,
+                closureResult: 7,
+                standardOutput: [1, 2, 3],
+                standardError: []
+            )
+        }
+        let fast = makeResult(ResourceUsage(userTime: .milliseconds(1), peakMemoryUsage: 1024))
+        let slow = makeResult(ResourceUsage(userTime: .seconds(9), peakMemoryUsage: 1 << 30))
+        // Two runs that produced the same results are equal, however
+        // differently they performed.
+        #expect(fast == slow)
+        #expect(Set([fast, slow]).count == 1)
+        #expect(slow.resourceUsage.userTime == .seconds(9))
     }
 }
 
@@ -507,3 +560,20 @@ private let perlPath: String? = ["/usr/bin/perl", "/usr/local/bin/perl"].first {
     FileManager.default.isExecutableFile(atPath: $0)
 }
 #endif
+
+/// A `ProcessIdentifier` for the test process itself, for building values that
+/// require one without spawning a child. Never monitored, signaled, or reaped.
+private var currentProcessIdentifier: ProcessIdentifier {
+    #if os(Windows)
+    return ProcessIdentifier(
+        value: GetCurrentProcessId(),
+        processDescriptor: GetCurrentProcess(),
+        threadHandle: GetCurrentThread(),
+        jobHandle: INVALID_HANDLE_VALUE
+    )
+    #elseif canImport(Darwin)
+    return ProcessIdentifier(value: getpid())
+    #else
+    return ProcessIdentifier(value: getpid(), processDescriptor: -1)
+    #endif
+}

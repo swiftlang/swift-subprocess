@@ -656,13 +656,15 @@ internal func reapProcess(
 extension ResourceUsage {
     /// Reads CPU time and peak memory for a process that has already exited.
     ///
-    /// The handle must still be open. Windows has no single call that reports
-    /// both, so a failure of either one leaves its fields zeroed rather than
-    /// failing the reap: the exit status is the caller's primary result, and
-    /// losing it because an accounting query failed would be the worse outcome.
+    /// The handle must still be open. Windows reports the two through separate
+    /// calls, so a failure of either one leaves its properties `nil` rather
+    /// than failing the reap: the exit status is the caller's primary result,
+    /// and losing it because an accounting query failed would be the worse
+    /// outcome. Windows has no direct equivalent of the page fault split or the
+    /// context switch counts, so those are always `nil`.
     internal init(processHandle: HANDLE) {
-        var userTime = Duration.zero
-        var systemTime = Duration.zero
+        self.init()
+
         var creationFileTime = FILETIME()
         var exitFileTime = FILETIME()
         var kernelFileTime = FILETIME()
@@ -674,11 +676,10 @@ extension ResourceUsage {
             &kernelFileTime,
             &userFileTime
         ) {
-            userTime = Duration(userFileTime)
-            systemTime = Duration(kernelFileTime)
+            self.userTime = Duration(userFileTime)
+            self.systemTime = Duration(kernelFileTime)
         }
 
-        var maxRSS = 0
         var memInfo = PROCESS_MEMORY_COUNTERS()
         memInfo.cb = DWORD(MemoryLayout<PROCESS_MEMORY_COUNTERS>.size)
         if K32GetProcessMemoryInfo(
@@ -686,10 +687,8 @@ extension ResourceUsage {
             &memInfo,
             DWORD(MemoryLayout<PROCESS_MEMORY_COUNTERS>.size)
         ) {
-            maxRSS = Int(memInfo.PeakWorkingSetSize)
+            self.peakMemoryUsage = Int(memInfo.PeakWorkingSetSize)
         }
-
-        self.init(userTime: userTime, systemTime: systemTime, maxRSS: maxRSS)
     }
 }
 

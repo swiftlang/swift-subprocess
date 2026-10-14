@@ -842,32 +842,35 @@ private func _wait4(pid: pid_t) throws(Errno) -> rusage {
 
 internal extension ResourceUsage {
     /// Interprets the `rusage` the kernel accounted to a reaped child.
-    ///
-    /// This lives here rather than beside `ResourceUsage` because reading
-    /// `timeval`'s members needs `_SubprocessCShims` in scope, which the file
-    /// declaring that type deliberately avoids importing.
     init(_ usage: rusage) {
         #if canImport(Darwin)
-        let maxRSS = Int(usage.ru_maxrss) // bytes on Darwin
+        let peakMemoryUsage = Int(usage.ru_maxrss) // bytes on Darwin
         #elseif os(Linux) || os(Android) || os(FreeBSD) || os(OpenBSD)
-        // KiB to bytes (Linux, FreeBSD, OpenBSD, NetBSD). The multiplication is
-        // performed in `Int64` and clamped so that a peak above 2 GiB reported
-        // on a 32-bit platform saturates instead of trapping on overflow.
-        let maxRSS = Int(clamping: Int64(usage.ru_maxrss) * 1024)
+        // KiB to bytes. The multiplication is performed in `Int64` and clamped
+        // so that a peak above 2 GiB reported on a 32-bit platform saturates
+        // instead of trapping on overflow.
+        let peakMemoryUsage = Int(clamping: Int64(usage.ru_maxrss) * 1024)
         #else
         #error("ru_maxrss unit scaling not defined for this platform")
         #endif
         self.init(
-            userTime: Duration(
-                secondsComponent: Int64(usage.ru_utime.tv_sec),
-                attosecondsComponent: Int64(usage.ru_utime.tv_usec) * 1_000_000_000_000
-            ),
-            systemTime: Duration(
-                secondsComponent: Int64(usage.ru_stime.tv_sec),
-                attosecondsComponent: Int64(usage.ru_stime.tv_usec) * 1_000_000_000_000
-            ),
-            maxRSS: maxRSS,
-            rusage: usage
+            userTime: Duration(usage.ru_utime),
+            systemTime: Duration(usage.ru_stime),
+            peakMemoryUsage: peakMemoryUsage,
+            minorPageFaults: Int(usage.ru_minflt),
+            majorPageFaults: Int(usage.ru_majflt),
+            voluntaryContextSwitches: Int(usage.ru_nvcsw),
+            involuntaryContextSwitches: Int(usage.ru_nivcsw)
+        )
+    }
+}
+
+extension Duration {
+    /// Converts a `timeval`, which counts seconds and microseconds.
+    fileprivate init(_ time: timeval) {
+        self.init(
+            secondsComponent: Int64(time.tv_sec),
+            attosecondsComponent: Int64(time.tv_usec) * 1_000_000_000_000
         )
     }
 }
