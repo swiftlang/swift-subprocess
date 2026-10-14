@@ -126,10 +126,9 @@ extension SubprocessProcessMonitoringTests {
     @Test func testNormalExit() async throws {
         let config = self.immediateExitProcess(withExitCode: 0)
         try await withSpawnedExecution(config: config) { execution in
-            let monitorResult = try await monitorProcessTermination(
+            let (monitorResult, _) = try await monitorProcessTermination(
                 for: execution.processIdentifier
             )
-
             #expect(monitorResult.isSuccess)
         }
     }
@@ -137,13 +136,31 @@ extension SubprocessProcessMonitoringTests {
     @Test func testExitCode() async throws {
         let config = self.immediateExitProcess(withExitCode: 42)
         try await withSpawnedExecution(config: config) { execution in
-            let monitorResult = try await monitorProcessTermination(
+            let (monitorResult, _) = try await monitorProcessTermination(
                 for: execution.processIdentifier
             )
-
             #expect(monitorResult == .exited(42))
         }
     }
+
+    #if canImport(Darwin) || os(FreeBSD)
+    /// Darwin and FreeBSD preserve the full `int` a child passes to `exit` and
+    /// report it through `waitid`, whereas a `wait`-family wait status holds
+    /// only its low 8 bits. Reading the termination status from the latter
+    /// would report `.exited(0x34)` here.
+    @Test(.enabled(if: perlPath != nil))
+    func testExitCodeWiderThanEightBits() async throws {
+        // A shell truncates its own exit status to 8 bits, so this needs an
+        // interpreter that hands a wider value to `exit(3)`. Perl keeps the low
+        // 16 bits.
+        let result = try await run(
+            .path(FilePath(try #require(perlPath))),
+            arguments: ["-e", "exit 0x1234"],
+            output: .discarded
+        )
+        #expect(result.terminationStatus == .exited(0x1234))
+    }
+    #endif
 
     #if !os(Windows)
     @Test func testExitViaSignal() async throws {
@@ -155,7 +172,7 @@ extension SubprocessProcessMonitoringTests {
             // Send signal to process
             try execution.send(signal: .terminate)
 
-            let result = try await monitorProcessTermination(
+            let (result, _) = try await monitorProcessTermination(
                 for: execution.processIdentifier
             )
             #expect(result == .signaled(SIGTERM))
@@ -185,7 +202,7 @@ extension SubprocessProcessMonitoringTests {
             )
             #endif
             // Now make sure monitorProcessTermination() can still get the correct result
-            let monitorResult = try await monitorProcessTermination(
+            let (monitorResult, _) = try await monitorProcessTermination(
                 for: execution.processIdentifier
             )
             #expect(monitorResult == TerminationStatus.exited(0))
@@ -195,10 +212,9 @@ extension SubprocessProcessMonitoringTests {
     @Test func testCanMonitorLongRunningProcess() async throws {
         let config = self.longRunningProcess(withTimeOutSeconds: 1)
         try await withSpawnedExecution(config: config) { execution in
-            let monitorResult = try await monitorProcessTermination(
+            let (monitorResult, _) = try await monitorProcessTermination(
                 for: execution.processIdentifier
             )
-
             #expect(monitorResult.isSuccess)
         }
     }
@@ -237,7 +253,7 @@ extension SubprocessProcessMonitoringTests {
         try await withSpawnedExecution(config: child1) { child1Execution in
             try await withSpawnedExecution(config: child2) { child2Execution in
                 // Monitor child2, but make sure we don't reap child1's status
-                let status = try await monitorProcessTermination(
+                let (status, _) = try await monitorProcessTermination(
                     for: child2Execution.processIdentifier
                 )
                 #expect(status.isSuccess)
@@ -285,7 +301,7 @@ extension SubprocessProcessMonitoringTests {
                     )
 
                     try await withSpawnedExecution(config: config) { execution in
-                        let monitorResult = try await monitorProcessTermination(
+                        let (monitorResult, _) = try await monitorProcessTermination(
                             for: execution.processIdentifier
                         )
                         #expect(monitorResult.isSuccess)
@@ -325,7 +341,7 @@ extension SubprocessProcessMonitoringTests {
                 try await group.waitForAll()
             }
             // Every waiter resumed without error; reap the process once.
-            let status = try reapProcess(with: execution.processIdentifier)
+            let (status, _) = try reapProcess(with: execution.processIdentifier)
             #expect(status.isSuccess)
         }
     }
@@ -355,7 +371,7 @@ extension SubprocessProcessMonitoringTests {
         try await withThrowingTaskGroup { group in
             for pid in spawnedProcesses {
                 group.addTask {
-                    let status = try await monitorProcessTermination(for: pid)
+                    let (status, _) = try await monitorProcessTermination(for: pid)
                     #expect(status.isSuccess)
                 }
             }
@@ -365,7 +381,199 @@ extension SubprocessProcessMonitoringTests {
     }
 }
 
-internal func monitorProcessTermination(for processIdentifier: ProcessIdentifier) async throws -> TerminationStatus {
+// MARK: - Resource Usage Tests
+
+/// Bounds here are deliberately loose. The failure mode worth catching is a
+/// platform that wires `ResourceUsage` up structurally but reports zeros, so
+/// these assert orders of magnitude rather than values.
+extension SubprocessProcessMonitoringTests {
+    /// Burns CPU in-process so `userTime` has something to report.
+    private func cpuBoundProcess() -> Configuration {
+        #if os(Windows)
+        return Configuration(
+            executable: .name("powershell.exe"),
+            arguments: ["-Command", "$i = 0; while ($i -lt 3000000) { $i++ }"]
+        )
+        #else
+        return Configuration(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "i=0; while [ $i -lt 300000 ]; do i=$((i+1)); done"]
+        )
+        #endif
+    }
+
+    /// Allocates a buffer of `bytes` by asking `dd` for it as a single block.
+    /// The byte count is spelled out because `dd` suffix syntax isn't portable.
+    private func allocatingProcess(bytes: Int) -> Configuration {
+        return Configuration(
+            executable: .path("/bin/dd"),
+            arguments: ["if=/dev/zero", "of=/dev/null", "bs=\(bytes)", "count=1"]
+        )
+    }
+
+    @Test func testResourceUsageReportsCPUTime() async throws {
+        let result = try await run(self.cpuBoundProcess(), output: .discarded)
+        #expect(result.terminationStatus.isSuccess)
+        let usage = result.resourceUsage
+        // A few hundred thousand shell loop iterations cannot cost zero.
+        #expect(try #require(usage.userTime) > .zero)
+        #expect(try #require(usage.systemTime) >= .zero)
+        #expect(try #require(usage.peakMemoryUsage) > 0)
+        #if os(Windows)
+        #expect(usage.minorPageFaults == nil)
+        #expect(usage.majorPageFaults == nil)
+        #expect(usage.voluntaryContextSwitches == nil)
+        #expect(usage.involuntaryContextSwitches == nil)
+        #else
+        // Loading and running any executable faults pages in. Context switches
+        // and major faults may legitimately be zero for a short-lived child.
+        #expect(try #require(usage.minorPageFaults) > 0)
+        #expect(usage.majorPageFaults != nil)
+        #expect(usage.voluntaryContextSwitches != nil)
+        #expect(usage.involuntaryContextSwitches != nil)
+        #endif
+    }
+
+    @Test func testResourceUsageChargesOnlyCPUTimeNotWallTime() async throws {
+        let result = try await run(self.longRunningProcess(withTimeOutSeconds: 1), output: .discarded)
+        #expect(result.terminationStatus.isSuccess)
+        #expect(try #require(result.resourceUsage.peakMemoryUsage) > 0)
+        #if !os(Windows)
+        // The child slept for a second; almost none of that is its own CPU.
+        //
+        // Not asserted on Windows, where the only sleeper available without
+        // adding a test helper is powershell.exe. Its interpreter startup costs
+        // seconds of CPU on its own -- measured at 2.75s against a 1s sleep --
+        // so the quantity this is checking isn't observable through it.
+        // `testResourceUsageReportsCPUTime` still covers Windows CPU accounting.
+        let cpuTime = try #require(result.resourceUsage.userTime) + #require(result.resourceUsage.systemTime)
+        #expect(cpuTime < .milliseconds(500))
+        #endif
+    }
+
+    #if !os(Windows)
+    @Test func testResourceUsagePeakMemoryUsageScalesWithAllocation() async throws {
+        let allocation = 32 * 1024 * 1024
+        let small = try await run(self.allocatingProcess(bytes: 1024), output: .discarded)
+        let large = try await run(self.allocatingProcess(bytes: allocation), output: .discarded)
+        #expect(small.terminationStatus.isSuccess)
+        #expect(large.terminationStatus.isSuccess)
+        // `peakMemoryUsage` is documented in bytes on every platform. If a
+        // platform's KiB-to-bytes scaling were wrong, this would be off by 1024x.
+        let smallPeak = try #require(small.resourceUsage.peakMemoryUsage)
+        let largePeak = try #require(large.resourceUsage.peakMemoryUsage)
+        #expect(largePeak > allocation / 2)
+        #expect(largePeak > smallPeak)
+    }
+
+    @Test func testResourceUsageIsReportedForSignaledProcess() async throws {
+        // The child busies itself first and then kills itself, rather than being
+        // spawned idle and signaled from here, for two independent reasons:
+        //
+        // FreeBSD samples RSS on statclock ticks instead of tracking a
+        // high-water mark on every fault, so a child killed the instant it
+        // spawns reports ru_maxrss == 0. It has to run long enough to be
+        // sampled at least once.
+        //
+        // SIGKILL cannot be trapped, so the child is guaranteed to die *from*
+        // the signal. A shell sent SIGTERM may trap it and exit 128+signum
+        // instead, which is what Android's mksh does.
+        let config = Configuration(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "i=0; while [ $i -lt 200000 ]; do i=$((i+1)); done; kill -s KILL $$"]
+        )
+        let result = try await run(config, output: .discarded)
+        #expect(result.terminationStatus == .signaled(SIGKILL))
+        // A child that died on a signal is still accounted for.
+        #expect(try #require(result.resourceUsage.userTime) > .zero)
+        #expect(try #require(result.resourceUsage.peakMemoryUsage) > 0)
+    }
+
+    @Test func testResourceUsageInterpretsRusage() throws {
+        var raw = rusage()
+        raw.ru_utime.tv_sec = 2
+        raw.ru_utime.tv_usec = 250_000
+        raw.ru_stime.tv_sec = 0
+        raw.ru_stime.tv_usec = 1
+        raw.ru_maxrss = 4096
+        raw.ru_minflt = 11
+        raw.ru_majflt = 12
+        raw.ru_nvcsw = 13
+        raw.ru_nivcsw = 14
+        let usage = ResourceUsage(raw)
+        #expect(usage.userTime == .seconds(2) + .milliseconds(250))
+        #expect(usage.systemTime == .microseconds(1))
+        #if canImport(Darwin)
+        #expect(usage.peakMemoryUsage == 4096)
+        #else
+        // Everywhere but Darwin, the kernel reports `ru_maxrss` in KiB.
+        #expect(usage.peakMemoryUsage == 4096 * 1024)
+        #endif
+        #expect(usage.minorPageFaults == 11)
+        #expect(usage.majorPageFaults == 12)
+        #expect(usage.voluntaryContextSwitches == 13)
+        #expect(usage.involuntaryContextSwitches == 14)
+    }
+    #endif
+
+    @Test func testResourceUsageInitializerDefaultsToNotReported() {
+        let usage = ResourceUsage()
+        #expect(usage.userTime == nil)
+        #expect(usage.systemTime == nil)
+        #expect(usage.peakMemoryUsage == nil)
+        #expect(usage.minorPageFaults == nil)
+        #expect(usage.majorPageFaults == nil)
+        #expect(usage.voluntaryContextSwitches == nil)
+        #expect(usage.involuntaryContextSwitches == nil)
+    }
+
+    @Test func testExecutionResultEqualityIgnoresResourceUsage() throws {
+        func makeResult(_ usage: ResourceUsage) -> ExecutionResult<Int, BytesOutput, BytesOutput> {
+            ExecutionResult(
+                processIdentifier: currentProcessIdentifier,
+                terminationStatus: .exited(0),
+                resourceUsage: usage,
+                closureResult: 7,
+                standardOutput: [1, 2, 3],
+                standardError: []
+            )
+        }
+        let fast = makeResult(ResourceUsage(userTime: .milliseconds(1), peakMemoryUsage: 1024))
+        let slow = makeResult(ResourceUsage(userTime: .seconds(9), peakMemoryUsage: 1 << 30))
+        // Two runs that produced the same results are equal, however
+        // differently they performed.
+        #expect(fast == slow)
+        #expect(Set([fast, slow]).count == 1)
+        #expect(slow.resourceUsage.userTime == .seconds(9))
+    }
+}
+
+internal func monitorProcessTermination(for processIdentifier: ProcessIdentifier) async throws -> (TerminationStatus, ResourceUsage) {
     try await waitForProcessTermination(for: processIdentifier)
     return try reapProcess(with: processIdentifier)
+}
+
+#if canImport(Darwin) || os(FreeBSD)
+/// The path to a Perl interpreter, or `nil` if none is installed. Darwin ships
+/// one in `/usr/bin`; on FreeBSD it comes from ports, in `/usr/local/bin`.
+private let perlPath: String? = ["/usr/bin/perl", "/usr/local/bin/perl"].first {
+    FileManager.default.isExecutableFile(atPath: $0)
+}
+#endif
+
+/// A `ProcessIdentifier` for the test process itself, for building values that
+/// require one without spawning a child. Never monitored, signaled, or reaped.
+private var currentProcessIdentifier: ProcessIdentifier {
+    #if os(Windows)
+    return ProcessIdentifier(
+        value: GetCurrentProcessId(),
+        processDescriptor: GetCurrentProcess(),
+        threadHandle: GetCurrentThread(),
+        jobHandle: INVALID_HANDLE_VALUE
+    )
+    #elseif canImport(Darwin)
+    return ProcessIdentifier(value: getpid())
+    #else
+    return ProcessIdentifier(value: getpid(), processDescriptor: -1)
+    #endif
 }

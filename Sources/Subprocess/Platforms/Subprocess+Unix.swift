@@ -754,14 +754,13 @@ extension PlatformOptions: CustomStringConvertible, CustomDebugStringConvertible
 @Sendable
 internal func reapProcess(
     with processIdentifier: ProcessIdentifier
-) throws(SubprocessError) -> TerminationStatus {
+) throws(SubprocessError) -> (TerminationStatus, ResourceUsage) {
     do throws(Errno) {
         // On some platforms, the process exit notification (in particular NOTE_EXIT from kqueue)
         // may be delivered slightly before the process becomes reapable,
-        // so we must call waitid without WNOHANG to avoid a narrow possibility of a race condition.
-        // If waitid does block, it won't do so for very long at all.
-        let status = try processIdentifier.blockingReap()
-        return status
+        // so we must reap without WNOHANG to avoid a narrow possibility of a race condition.
+        // If the reap does block, it won't do so for very long at all.
+        return try processIdentifier.blockingReap()
     } catch {
         let subprocessError: SubprocessError = .failedToMonitor(withUnderlyingError: error)
         throw subprocessError
@@ -773,15 +772,8 @@ extension ProcessIdentifier {
     ///
     /// This function may block.
     @available(*, noasync)
-    internal func blockingReap() throws(Errno) -> TerminationStatus {
+    internal func blockingReap() throws(Errno) -> (TerminationStatus, ResourceUsage) {
         try _blockingReap(pid: value)
-    }
-
-    /// Reaps the zombie for the exited process, or returns `nil` if the process is still running.
-    ///
-    /// This function does not block.
-    internal func reap() throws(Errno) -> TerminationStatus? {
-        try _reap(pid: value)
     }
 
     /// Checks whether the process has already exited without consuming the
@@ -799,28 +791,93 @@ extension ProcessIdentifier {
 // pdwait(2) rather than waitid(P_PID, ...), so the child is reaped through its
 // process descriptor instead of by pid. pdwait fills in a `struct __siginfo`,
 // which is what `TerminationStatus.init(_ siginfo:)` already consumes, so the
-// change is confined to `_blockingReap`, `_reap` and `_peekIfExited`. Added to
-// FreeBSD as syscall 601 in January 2026, with a pdwait.2 manual page and an
-// entry in lib/libsys/Makefile.sys, so it is a first-class userspace wrapper:
-// present in stable/15, absent from releng/15.0.
+// change is confined to `_blockingReap` and `_peekIfExited`, though the former
+// must still obtain the child's resource usage. Added to FreeBSD as syscall 601
+// in January 2026, with a pdwait.2 manual page and an entry in
+// lib/libsys/Makefile.sys, so it is a first-class userspace wrapper: present in
+// stable/15, absent from releng/15.0.
+
+/// Reaps the zombie for `pid`, returning its termination status along with the
+/// resource usage the kernel accounted to it.
+///
+/// This takes two calls because no interface available on every supported
+/// platform reports both completely:
+///
+/// - The termination status comes from `waitid` with `WNOWAIT`, which leaves
+///   the zombie in place. `waitid` reports the full `int` passed to `_exit`
+///   where the kernel preserves it (Darwin, FreeBSD), whereas the wait status
+///   `wait4` produces holds only its low 8 bits.
+/// - The resource usage comes from `wait4`, which then reaps the zombie. It is
+///   the only interface every supported libc exposes that reports `rusage`
+///   for a specific child. It's reached through the `_subprocess_wait4` shim;
+///   see that declaration for why the libc entry point is wrapped rather than
+///   called directly or replaced by a raw `waitid` syscall.
+///
+/// Nothing else reaps this child, so the zombie `waitid` observed is the one
+/// `wait4` consumes.
 @available(*, noasync)
-internal func _blockingReap(pid: pid_t) throws(Errno) -> TerminationStatus {
-    let siginfo = try _waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED)
-    return TerminationStatus(siginfo)
+internal func _blockingReap(pid: pid_t) throws(Errno) -> (TerminationStatus, ResourceUsage) {
+    let siginfo = try _waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED | WNOWAIT)
+    let usage = try _wait4(pid: pid)
+    return (TerminationStatus(siginfo), ResourceUsage(usage))
 }
 
-internal func _reap(pid: pid_t) throws(Errno) -> TerminationStatus? {
-    let siginfo = try _waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED | WNOHANG)
-    // If si_pid and si_signo are both 0, the child is still running since we used WNOHANG
-    if siginfo.si_pid == 0 && siginfo.si_signo == 0 {
-        return nil
+/// Reaps the zombie for `pid` and returns the resource usage accounted to it.
+///
+/// The wait status `wait4` also produces is discarded: it carries only the low
+/// 8 bits of the exit code, so the termination status is read with `waitid`
+/// instead.
+@available(*, noasync)
+private func _wait4(pid: pid_t) throws(Errno) -> rusage {
+    while true {
+        var usage = rusage()
+        var status: CInt = 0
+        if _subprocess_wait4(pid, &status, 0, &usage) >= 0 {
+            return usage
+        } else if errno != EINTR {
+            throw Errno(rawValue: errno)
+        }
     }
-    return TerminationStatus(siginfo)
+}
+
+internal extension ResourceUsage {
+    /// Interprets the `rusage` the kernel accounted to a reaped child.
+    init(_ usage: rusage) {
+        #if canImport(Darwin)
+        let peakMemoryUsage = Int(usage.ru_maxrss) // bytes on Darwin
+        #elseif os(Linux) || os(Android) || os(FreeBSD) || os(OpenBSD)
+        // KiB to bytes. The multiplication is performed in `Int64` and clamped
+        // so that a peak above 2 GiB reported on a 32-bit platform saturates
+        // instead of trapping on overflow.
+        let peakMemoryUsage = Int(clamping: Int64(usage.ru_maxrss) * 1024)
+        #else
+        #error("ru_maxrss unit scaling not defined for this platform")
+        #endif
+        self.init(
+            userTime: Duration(usage.ru_utime),
+            systemTime: Duration(usage.ru_stime),
+            peakMemoryUsage: peakMemoryUsage,
+            minorPageFaults: Int(usage.ru_minflt),
+            majorPageFaults: Int(usage.ru_majflt),
+            voluntaryContextSwitches: Int(usage.ru_nvcsw),
+            involuntaryContextSwitches: Int(usage.ru_nivcsw)
+        )
+    }
+}
+
+extension Duration {
+    /// Converts a `timeval`, which counts seconds and microseconds.
+    fileprivate init(_ time: timeval) {
+        self.init(
+            secondsComponent: Int64(time.tv_sec),
+            attosecondsComponent: Int64(time.tv_usec) * 1_000_000_000_000
+        )
+    }
 }
 
 internal func _peekIfExited(pid: pid_t) throws(Errno) -> Bool {
     // WNOWAIT leaves the zombie in the process table so a subsequent
-    // `_blockingReap` (or `_reap`) can still consume it.
+    // `_blockingReap` can still consume it.
     let siginfo = try _waitid(idtype: P_PID, id: id_t(pid), flags: WEXITED | WNOHANG | WNOWAIT)
     return !(siginfo.si_pid == 0 && siginfo.si_signo == 0)
 }
