@@ -523,7 +523,10 @@ extension Configuration {
         guard path.withCString({ stat($0, &status) == 0 }) else {
             return false
         }
-        return (status.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG)
+        // Convert the constants to `st_mode`'s own type rather than assuming it
+        // is `mode_t`: on 32-bit Android `st_mode` is `UInt32` but `mode_t` is
+        // `UInt16`.
+        return (status.st_mode & numericCast(S_IFMT)) == numericCast(S_IFREG)
     }
 }
 

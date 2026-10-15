@@ -48,6 +48,8 @@ jobs:
       enable_linux_static_sdk_build: true
       enable_android_sdk_build: true
       enable_android_sdk_checks: true
+      # The final triple is used for emulator testing and must match the host architecture (x86_64).
+      android_sdk_triples: '["aarch64-unknown-linux-android28", "armv7-unknown-linux-android28", "x86_64-unknown-linux-android28"]'
       android_ndk_versions: '["r27d", "r29"]'
       linux_static_sdk_versions: '["6.2", "nightly-main"]'
       linux_static_sdk_build_command: |
