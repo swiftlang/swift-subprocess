@@ -272,6 +272,231 @@ extension SubprocessProcessMonitoringTests {
     }
 }
 
+#if !os(Windows)
+// MARK: - Stopped Child Tests
+//
+// Darwin's `waitid` reports a stopped child even to queries that only ask for
+// `WEXITED`. A stop notification must never be mistaken for the child's
+// termination.
+extension SubprocessProcessMonitoringTests {
+    @Test(.timeLimit(.minutes(1)))
+    func testStoppedChildIsNotReportedAsExited() async throws {
+        var config = self.longRunningProcess(withTimeOutSeconds: 30)
+        config.platformOptions.createSession = true
+        try await withSpawnedExecution(config: config) { execution in
+            let pid = execution.processIdentifier.value
+            // This fixture owns the unreaped child until this scope ends.
+            defer { self.killAndReap(pid) }
+            try execution.send(signal: .suspend)
+            try await self.waitUntilStopped(pid)
+            #expect(
+                try !execution.processIdentifier.peekIfExited(),
+                "A stop notification is not a terminal exit")
+            // Observing an exit must not consume another observer's stop event.
+            var pending = siginfo_t()
+            try #require(waitid(P_PID, id_t(pid), &pending, WSTOPPED | WNOHANG | WNOWAIT) == 0)
+            #expect(pending.si_code == CLD_STOPPED)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func testMonitoringStoppedChildWaitsForItsFinalExit() async throws {
+        let config = self.selfStoppingProcess(thenRun: "exit 42")
+        try await withSpawnedExecution(config: config) { execution in
+            let pid = execution.processIdentifier.value
+            var reaped = false
+            defer { if !reaped { self.killAndReap(pid) } }
+            try await self.waitUntilStopped(pid)
+            // The monitor must stay pending until the explicit resume allows exit.
+            let start = ContinuousClock.now
+            let resume = Task {
+                try await Task.sleep(for: .milliseconds(100))
+                try execution.send(signal: .resume)
+            }
+            defer { resume.cancel() }
+            try await waitForProcessTermination(for: execution.processIdentifier)
+            #expect(ContinuousClock.now - start >= .milliseconds(100), "Monitoring ended before the resume")
+            let result = try reapProcess(with: execution.processIdentifier)
+            reaped = true
+            try await resume.value
+            #expect(result == .exited(42))
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func testTeardownKillsStoppedChild() async throws {
+        // A stopped child can't run its SIGTERM handler, so only the final
+        // SIGKILL ends it. Teardown must not mistake the stop for an exit and
+        // skip that step.
+        let config = self.selfStoppingProcess(setup: "trap 'exit 0' TERM", thenRun: "exit 42")
+        try await withSpawnedExecution(config: config) { execution in
+            let pid = execution.processIdentifier.value
+            var reaped = false
+            defer { if !reaped { self.killAndReap(pid) } }
+            try await self.waitUntilStopped(pid)
+            await execution.teardown(using: [
+                .gracefulShutDown(allowedDurationToNextStep: .milliseconds(200))
+            ])
+            // Poll with a deadline: if teardown skipped the SIGKILL, a blocking
+            // reap would hang on the stopped child.
+            let status = try await self.reapUntilTerminated(execution.processIdentifier)
+            reaped = true
+            #expect(status == .signaled(SIGKILL))
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func testReapWaitsForStoppedChildToExit() async throws {
+        let config = self.selfStoppingProcess(thenRun: "exit 42")
+        try await withSpawnedExecution(config: config) { execution in
+            let pid = execution.processIdentifier.value
+            var reaped = false
+            defer { if !reaped { self.killAndReap(pid) } }
+            try await self.waitUntilStopped(pid)
+            #expect(
+                try execution.processIdentifier.reap() == nil,
+                "A stop notification is not a terminal exit")
+            // Darwin can lose a SIGCONT sent right as the child stops.
+            try await Task.sleep(for: .milliseconds(10))
+            try execution.send(signal: .resume)
+            let status = try await self.reapUntilTerminated(execution.processIdentifier)
+            reaped = true
+            #expect(status == .exited(42))
+            // The zombie was consumed, so the status is reported only once.
+            #expect(throws: Errno(rawValue: ECHILD)) {
+                _ = try execution.processIdentifier.reap()
+            }
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func testBlockingReapWaitsForStoppedChildToTerminate() async throws {
+        var config = self.longRunningProcess(withTimeOutSeconds: 30)
+        config.platformOptions.createSession = true
+        try await withSpawnedExecution(config: config) { execution in
+            let pid = execution.processIdentifier.value
+            var reaped = false
+            defer { if !reaped { self.killAndReap(pid) } }
+            try execution.send(signal: .suspend)
+            try await self.waitUntilStopped(pid)
+            // The blocking reap must skip the pending stop notification and
+            // wait until the kill terminates the child.
+            let killer = self.onSeparateThread {
+                usleep(100_000)
+                if !Thread.current.isCancelled { try? execution.send(signal: .kill) }
+            }
+            defer { self.cancelAndJoin(killer) }
+            let status = try reapProcess(with: execution.processIdentifier)
+            reaped = true
+            #expect(status == .signaled(SIGKILL))
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func testBlockingReapDoesNotSpinOnRepeatedStops() async throws {
+        var config = self.longRunningProcess(withTimeOutSeconds: 30)
+        config.platformOptions.createSession = true
+        try await withSpawnedExecution(config: config) { execution in
+            let pid = execution.processIdentifier.value
+            var reaped = false
+            defer { if !reaped { self.killAndReap(pid) } }
+            // On Darwin, each stop is reported and consumed once, so the reap
+            // loop runs once per stop and otherwise blocks in the kernel.
+            let signaler = self.onSeparateThread {
+                for _ in 0..<10 where !Thread.current.isCancelled {
+                    try? execution.send(signal: .suspend)
+                    usleep(20_000)
+                    try? execution.send(signal: .resume)
+                    usleep(20_000)
+                }
+                if !Thread.current.isCancelled { try? execution.send(signal: .kill) }
+            }
+            defer { self.cancelAndJoin(signaler) }
+            let start = ContinuousClock.now
+            let cpuStart = self.currentThreadCPUTime()
+            let status = try reapProcess(with: execution.processIdentifier)
+            let cpuUsed = self.currentThreadCPUTime() - cpuStart
+            let elapsed = ContinuousClock.now - start
+            reaped = true
+            #expect(status == .signaled(SIGKILL))
+            // A loop that kept seeing the same stop would spin for the whole wait.
+            #expect(cpuUsed < elapsed / 4, "Used \(cpuUsed) of CPU while waiting \(elapsed)")
+        }
+    }
+
+    /// A child that runs `setup`, stops itself with SIGSTOP, and runs
+    /// `command` once resumed.
+    private func selfStoppingProcess(setup: String? = nil, thenRun command: String) -> Configuration {
+        let script = [setup, "kill -STOP $$", command].compactMap { $0 }.joined(separator: "; ")
+        var config = Configuration(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", script]
+        )
+        // A stopped process left in the test runner's process group would get
+        // SIGHUP+SIGCONT, along with this test process, if that group were
+        // orphaned. Isolate the child in its own session.
+        config.platformOptions.createSession = true
+        return config
+    }
+
+    private func killAndReap(_ pid: pid_t) {
+        _ = kill(pid, SIGKILL)
+        var status: Int32 = 0
+        while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
+    }
+
+    private func waitUntilStopped(_ pid: pid_t) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while ContinuousClock.now < deadline {
+            var info = siginfo_t()
+            try #require(waitid(P_PID, id_t(pid), &info, WSTOPPED | WNOHANG | WNOWAIT) == 0)
+            if info.si_code == CLD_STOPPED { return }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        Issue.record("The fixture did not stop before testing exit observation")
+        throw Errno.timedOut
+    }
+
+    /// Polls the non-blocking `reap()` until the child terminates.
+    private func reapUntilTerminated(
+        _ processIdentifier: ProcessIdentifier
+    ) async throws -> TerminationStatus {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while ContinuousClock.now < deadline {
+            if let status = try processIdentifier.reap() {
+                return status
+            }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        Issue.record("The fixture did not terminate before the deadline")
+        throw Errno.timedOut
+    }
+
+    /// Runs `body` on its own thread. A test blocked in `reapProcess` holds a
+    /// concurrency thread, so a task meant to signal the child might never run.
+    private func onSeparateThread(_ body: @escaping @Sendable () -> Void) -> Thread {
+        let thread = Thread(block: body)
+        thread.start()
+        return thread
+    }
+
+    /// Stops `thread` and waits for it to finish, so it can't signal a child
+    /// that was already reaped.
+    private func cancelAndJoin(_ thread: Thread) {
+        thread.cancel()
+        while !thread.isFinished {
+            usleep(1_000)
+        }
+    }
+
+    private func currentThreadCPUTime() -> Duration {
+        var time = timespec()
+        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &time)
+        return .seconds(time.tv_sec) + .nanoseconds(time.tv_nsec)
+    }
+}
+#endif
+
 // MARK: Concurrency Tests
 extension SubprocessProcessMonitoringTests {
     @Test func testCanMonitorProcessConcurrently() async throws {
