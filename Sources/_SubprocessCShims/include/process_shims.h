@@ -333,6 +333,7 @@ int _subprocess_spawn_prefork(
 );
 #endif // TARGET_OS_MAC
 
+#if TARGET_OS_UNIX && !TARGET_OS_MAC
 /// `number_of_sgroups` selects how supplementary groups are handled: a
 /// negative value inherits the parent's groups (no `setgroups()` call), while
 /// zero or more calls `setgroups(number_of_sgroups, sgroups)`, so `0` drops
@@ -351,6 +352,7 @@ int _subprocess_fork_exec(
     int number_of_sgroups, const gid_t * _Nullable sgroups,
     int create_session
 );
+#endif // TARGET_OS_UNIX && !TARGET_OS_MAC
 
 int _was_process_exited(int status);
 int _get_exit_code(int status);
@@ -375,7 +377,9 @@ void _subprocess_lock_environ(void);
 void _subprocess_unlock_environ(void);
 char * _Nullable * _Nullable _subprocess_get_environ(void);
 
+#if TARGET_OS_UNIX && !TARGET_OS_MAC
 int _subprocess_pdkill(int pidfd, int signal);
+#endif
 
 #if TARGET_OS_UNIX && !TARGET_OS_FREEBSD
 int _shims_snprintf(

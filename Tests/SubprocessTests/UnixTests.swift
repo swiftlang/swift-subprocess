@@ -22,11 +22,15 @@ import Glibc
 import Musl
 #endif
 
+#if !SUBPROCESS_SINGLE_MODULE
 import _SubprocessCShims
+#endif
 import Testing
 @testable import Subprocess
 
+#if !SUBPROCESS_SINGLE_MODULE
 import TestResources
+#endif
 
 #if canImport(System)
 import System

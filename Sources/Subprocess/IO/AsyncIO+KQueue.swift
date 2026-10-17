@@ -29,7 +29,9 @@ import Glibc
 import os
 #endif
 
+#if !SUBPROCESS_SINGLE_MODULE
 import _SubprocessCShims
+#endif
 import Synchronization
 
 #if canImport(Darwin)

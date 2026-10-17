@@ -22,7 +22,9 @@ import Musl
 import WinSDK
 #endif
 
+#if !SUBPROCESS_SINGLE_MODULE
 import _SubprocessCShims
+#endif
 
 #if canImport(Synchronization)
 import Synchronization

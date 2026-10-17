@@ -2,3 +2,5 @@ Package.swift
 Package@swift-6.0.swift
 LICENSE
 .swift-version
+**/*.xcconfig
+**/*.xcodeproj/*
