@@ -169,7 +169,7 @@ public struct Configuration: Sendable {
             // stale entry and reject its registrations.
             AsyncIO.shared.cleanup(processIdentifier: processIdentifier)
 
-            let terminationStatus = try reapProcess(with: processIdentifier)
+            let (terminationStatus, resourceUsage) = try reapProcess(with: processIdentifier)
 
             if let monitorError {
                 throw monitorError
@@ -177,6 +177,7 @@ public struct Configuration: Sendable {
 
             return try ExecutionOutcome(
                 terminationStatus: terminationStatus,
+                resourceUsage: resourceUsage,
                 value: resultBox.take()!.get()
             )
         } onCleanup: {
