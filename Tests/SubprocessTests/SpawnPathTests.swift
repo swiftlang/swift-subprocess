@@ -39,6 +39,7 @@ struct SpawnPathTests {
         let none = SpawnCapabilities(bitmask: 0)
         #expect(none.closeAllViaSpawn == .unavailable)
         #expect(!none.hasChdirAction)
+        #expect(!none.hasChdirPathAction)
         #expect(!none.hasSetsidFlag)
 
         let cloexec = SpawnCapabilities(bitmask: 1 << 0)
@@ -52,9 +53,16 @@ struct SpawnPathTests {
         let both = SpawnCapabilities(bitmask: (1 << 0) | (1 << 1))
         #expect(both.closeAllViaSpawn == .cloexecDefault)
 
-        let all = SpawnCapabilities(bitmask: 0b1111)
+        let all = SpawnCapabilities(bitmask: 0b11111)
         #expect(all.hasChdirAction)
+        #expect(all.hasChdirPathAction)
         #expect(all.hasSetsidFlag)
+
+        // The two chdir actions are independent bits.
+        #expect(SpawnCapabilities(bitmask: 1 << 2).hasChdirAction)
+        #expect(!SpawnCapabilities(bitmask: 1 << 2).hasChdirPathAction)
+        #expect(!SpawnCapabilities(bitmask: 1 << 4).hasChdirAction)
+        #expect(SpawnCapabilities(bitmask: 1 << 4).hasChdirPathAction)
     }
 
     /// The probe is resolved once and cached, so repeated reads agree.
@@ -74,25 +82,33 @@ struct SpawnPathTests {
         #if canImport(Darwin)
         #expect(capabilities.closeAllViaSpawn == .cloexecDefault)
         #expect(capabilities.hasChdirAction)
+        #expect(capabilities.hasChdirPathAction)
         #expect(capabilities.hasSetsidFlag)
         #elseif os(OpenBSD)
-        // OpenBSD has no closefrom file action, no chdir action and no SETSID
-        // flag, so it can never use posix_spawn.
+        // OpenBSD 8.0 added both chdir actions, so this expectation assumes a
+        // 8.0 or later host. It still has no closefrom file action, no
+        // CLOEXEC_DEFAULT and no SETSID flag, so it cannot use posix_spawn yet.
         #expect(capabilities.closeAllViaSpawn == .unavailable)
-        #expect(!capabilities.hasChdirAction)
+        #expect(capabilities.hasChdirAction)
+        #expect(capabilities.hasChdirPathAction)
         #expect(!capabilities.hasSetsidFlag)
+        // But with no O_SEARCH it cannot open a directory for fchdir, so the
+        // path-based action is the only one it can use.
+        #expect(!capabilities.usesFchdirAction)
         #elseif os(FreeBSD)
         // addclosefrom_np and the chdir actions all arrived in FreeBSD 13.1,
         // which is below the oldest version this package supports. SETSID has
         // no FreeBSD equivalent.
         #expect(capabilities.closeAllViaSpawn == .closefromAction)
         #expect(capabilities.hasChdirAction)
+        #expect(capabilities.hasChdirPathAction)
         #expect(!capabilities.hasSetsidFlag)
         #elseif os(Linux) || os(Android)
         // No Linux libc offers a closefrom action without also offering the
         // chdir actions: glibc added chdir at 2.29 and closefrom at 2.34.
         if capabilities.closeAllViaSpawn == .closefromAction {
             #expect(capabilities.hasChdirAction)
+            #expect(capabilities.hasChdirPathAction)
         }
         // Only Bionic exposes CLOEXEC_DEFAULT.
         #if !os(Android)
@@ -162,6 +178,58 @@ struct SpawnPathTests {
         #expect(info.si_status == 7)
     }
 
+    /// The path-based `chdir` file action changes the child's directory.
+    ///
+    /// Exercised through the shim entry point rather than a full `run`, because
+    /// on OpenBSD -- the platform this action exists for -- `run` still takes the
+    /// fallback path, so only a direct call reaches the action there.
+    @Test func testPathChdirActionChangesTheChildsDirectory() throws {
+        guard SpawnCapabilities.current.hasChdirPathAction else { return }
+
+        var fileActionsError: CInt = 0
+        let fileActions = try #require(
+            _subprocess_spawn_file_actions_create(&fileActionsError)
+        )
+        #expect(fileActionsError == 0)
+        defer { _subprocess_spawn_file_actions_free(fileActions) }
+
+        var attributesError: CInt = 0
+        let attributes = try #require(_subprocess_spawnattr_create(&attributesError))
+        #expect(attributesError == 0)
+        defer { _subprocess_spawnattr_free(attributes) }
+
+        // `/` rather than a temporary directory: it exists everywhere, and `pwd`
+        // printing it cannot be mistaken for the parent's directory.
+        #expect(_subprocess_spawn_addchdir(fileActions, "/") == 0)
+
+        // Exits 0 only when the child's working directory is `/`.
+        let argv: [UnsafeMutablePointer<CChar>?] = [
+            strdup("/bin/sh"), strdup("-c"), strdup("test \"$(pwd)\" = /"), nil,
+        ]
+        defer { for pointer in argv { free(pointer) } }
+        let environment: [UnsafeMutablePointer<CChar>?] = [nil]
+
+        var pid: pid_t = 0
+        var processDescriptor: CInt = 0
+        let rc = _subprocess_spawn(
+            &pid,
+            &processDescriptor,
+            "/bin/sh",
+            fileActions,
+            attributes,
+            argv,
+            environment
+        )
+        #expect(rc == 0)
+        if processDescriptor >= 0 {
+            #expect(close(processDescriptor) == 0)
+        }
+
+        var info = siginfo_t()
+        while waitid(P_PID, id_t(pid), &info, WEXITED) == -1 && errno == EINTR {}
+        #expect(info.si_status == 0)
+    }
+
     private func configuration(
         workingDirectory: FilePath? = nil,
         userID: uid_t? = nil,
@@ -183,7 +251,7 @@ struct SpawnPathTests {
 
     /// Capabilities of a platform where posix_spawn can express everything:
     /// modern glibc, or Darwin.
-    private static let fullyCapable = SpawnCapabilities(bitmask: 0b1111)
+    private static let fullyCapable = SpawnCapabilities(bitmask: 0b11111)
 
     @Test func testPosixSpawnIsUsedWhenNothingBlocksIt() {
         let configuration = self.configuration()
@@ -237,7 +305,7 @@ struct SpawnPathTests {
     /// closed by enumerating them in the parent, which races with other threads
     /// opening descriptors.
     @Test func testNoCloseAllMechanismRequiresTheFallbackPath() {
-        let capabilities = SpawnCapabilities(bitmask: 0b1100) // chdir + setsid only
+        let capabilities = SpawnCapabilities(bitmask: 0b11100) // chdir actions + setsid only
         #expect(capabilities.closeAllViaSpawn == .unavailable)
         #expect(
             self.configuration().requiresFallbackSpawnPath(
@@ -249,7 +317,7 @@ struct SpawnPathTests {
 
     /// Rule 3: FreeBSD and OpenBSD have no POSIX_SPAWN_SETSID.
     @Test func testCreateSessionWithoutSetsidFlagRequiresTheFallbackPath() {
-        let capabilities = SpawnCapabilities(bitmask: 0b0110) // closefrom + chdir, no setsid
+        let capabilities = SpawnCapabilities(bitmask: 0b10110) // closefrom + chdir actions, no setsid
         #expect(!capabilities.hasSetsidFlag)
         #expect(
             self.configuration(createSession: true).requiresFallbackSpawnPath(
@@ -292,10 +360,12 @@ struct SpawnPathTests {
         )
     }
 
-    /// Rule 5: OpenBSD has no chdir action, and Android gained one only at API 34.
+    /// Rule 5: with no chdir action at all (Android below API 34) a working
+    /// directory needs the fallback path.
     @Test func testWorkingDirectoryWithoutChdirActionRequiresTheFallbackPath() {
-        let capabilities = SpawnCapabilities(bitmask: 0b1010) // closefrom + setsid, no chdir
+        let capabilities = SpawnCapabilities(bitmask: 0b01010) // closefrom + setsid, no chdir
         #expect(!capabilities.hasChdirAction)
+        #expect(!capabilities.hasChdirPathAction)
         #expect(
             self.configuration(workingDirectory: "/tmp").requiresFallbackSpawnPath(
                 supplementaryGroups: nil,
@@ -307,6 +377,35 @@ struct SpawnPathTests {
                 supplementaryGroups: nil,
                 capabilities: capabilities
             )
+        )
+    }
+
+    /// Rule 5: the path-based chdir action needs no descriptor, so it alone
+    /// keeps a working directory on the `posix_spawn` path. This is what OpenBSD
+    /// 8.0 offers: both actions, but no way to open a directory for `fchdir`.
+    @Test func testWorkingDirectoryWithPathChdirActionOnlyUsesPosixSpawn() {
+        let capabilities = SpawnCapabilities(bitmask: 0b11010) // closefrom + setsid + chdir path
+        #expect(!capabilities.hasChdirAction)
+        #expect(capabilities.hasChdirPathAction)
+        #expect(
+            !self.configuration(workingDirectory: "/tmp").requiresFallbackSpawnPath(
+                supplementaryGroups: nil,
+                capabilities: capabilities
+            )
+        )
+    }
+
+    /// Rule 5: the `fchdir` action alone suffices wherever a directory can be
+    /// opened for search, which is every host this suite runs on except OpenBSD.
+    @Test func testWorkingDirectoryWithFchdirActionOnlyUsesPosixSpawn() {
+        let capabilities = SpawnCapabilities(bitmask: 0b01110) // closefrom + chdir + setsid
+        #expect(capabilities.hasChdirAction)
+        #expect(!capabilities.hasChdirPathAction)
+        #expect(
+            self.configuration(workingDirectory: "/tmp").requiresFallbackSpawnPath(
+                supplementaryGroups: nil,
+                capabilities: capabilities
+            ) == !capabilities.usesFchdirAction
         )
     }
 

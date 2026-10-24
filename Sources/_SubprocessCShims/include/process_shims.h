@@ -111,6 +111,7 @@ vm_size_t _subprocess_vm_size(void);
 #define _SUBPROCESS_SPAWN_CAP_CLOSEFROM_ACTION (1u << 1)
 #define _SUBPROCESS_SPAWN_CAP_CHDIR_ACTION     (1u << 2)
 #define _SUBPROCESS_SPAWN_CAP_SETSID_FLAG      (1u << 3)
+#define _SUBPROCESS_SPAWN_CAP_CHDIR_PATH_ACTION (1u << 4)
 
 /// The `posix_spawn` features this process can actually use, as a bitmask of
 /// the `_SUBPROCESS_SPAWN_CAP_*` constants.
@@ -133,6 +134,17 @@ int _subprocess_spawn_addclosefrom(void * _Nonnull file_actions, int from);
 /// treat as a programming error: check `_SUBPROCESS_SPAWN_CAP_CHDIR_ACTION`
 /// first.
 int _subprocess_spawn_addfchdir(void * _Nonnull file_actions, int fd);
+
+/// Appends a path-based `chdir` file action.
+///
+/// Unlike the `fchdir` action this needs no descriptor, so it also serves
+/// platforms that cannot open a directory for search (OpenBSD has
+/// `posix_spawn_file_actions_addchdir` since 8.0 but no `O_SEARCH`).
+///
+/// Returns `ENOSYS` when the platform has no such action, which callers must
+/// treat as a programming error: check
+/// `_SUBPROCESS_SPAWN_CAP_CHDIR_PATH_ACTION` first.
+int _subprocess_spawn_addchdir(void * _Nonnull file_actions, const char * _Nonnull path);
 
 // MARK: - Opaque posix_spawn file actions and attributes
 //

@@ -268,10 +268,12 @@ static void _subprocess_reap_pid(pid_t pid) {
 
 typedef int (* _subprocess_addclosefrom_t)(posix_spawn_file_actions_t *, int);
 typedef int (* _subprocess_addfchdir_t)(posix_spawn_file_actions_t *, int);
+typedef int (* _subprocess_addchdir_t)(posix_spawn_file_actions_t *, const char *);
 
 static uint32_t _subprocess_spawn_caps = 0;
 static _subprocess_addclosefrom_t _subprocess_addclosefrom_impl = NULL;
 static _subprocess_addfchdir_t _subprocess_addfchdir_impl = NULL;
+static _subprocess_addchdir_t _subprocess_addchdir_impl = NULL;
 static pthread_once_t _subprocess_spawn_caps_once = PTHREAD_ONCE_INIT;
 
 // Both call sites are behind the corresponding #ifdef, so on a platform that
@@ -299,10 +301,11 @@ static void _subprocess_spawn_caps_init(void) {
 #if TARGET_OS_MAC
     // Nothing is probed: the macOS 13 deployment target already covers
     // POSIX_SPAWN_CLOEXEC_DEFAULT (10.7), POSIX_SPAWN_SETSID (10.12) and
-    // posix_spawn_file_actions_addfchdir_np (10.15).
+    // posix_spawn_file_actions_addfchdir_np and posix_spawn_file_actions_addchdir_np (10.15).
     caps |= _SUBPROCESS_SPAWN_CAP_CLOEXEC_DEFAULT;
     caps |= _SUBPROCESS_SPAWN_CAP_SETSID_FLAG;
     caps |= _SUBPROCESS_SPAWN_CAP_CHDIR_ACTION;
+    caps |= _SUBPROCESS_SPAWN_CAP_CHDIR_PATH_ACTION;
 
     // The _np spelling is deprecated as of macOS 26 in favour of
     // posix_spawn_file_actions_addfchdir, but that replacement is macOS 26+
@@ -314,6 +317,7 @@ static void _subprocess_spawn_caps_init(void) {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     _subprocess_addfchdir_impl = posix_spawn_file_actions_addfchdir_np;
+    _subprocess_addchdir_impl = posix_spawn_file_actions_addchdir_np;
 #pragma clang diagnostic pop
 #else
     // dlsym rather than a weak symbol reference. glibc versions these symbols
@@ -321,18 +325,39 @@ static void _subprocess_spawn_caps_init(void) {
     // exists at a *newer version* than the one present is not reliably resolved
     // to NULL, whereas dlsym cannot fail at load time. Uniform across Linux,
     // Android and the BSDs so no header-version gate is needed either: FreeBSD
-    // grew these actions in 13.1 and OpenBSD has none of them.
+    // grew the closefrom and chdir actions in 13.1, and OpenBSD grew the chdir
+    // actions in 8.0 but has no closefrom action.
+    //
+    // The chdir actions were standardised by POSIX.1-2024 without the `_np`
+    // suffix, which is the only spelling OpenBSD has. Prefer it where present
+    // and fall back to the `_np` spelling older glibc, Bionic and FreeBSD use.
+    _subprocess_addfchdir_impl = (_subprocess_addfchdir_t)dlsym(
+        RTLD_DEFAULT, "posix_spawn_file_actions_addfchdir"
+    );
+    _subprocess_addchdir_impl = (_subprocess_addchdir_t)dlsym(
+        RTLD_DEFAULT, "posix_spawn_file_actions_addchdir"
+    );
+    if (_subprocess_addchdir_impl == NULL) {
+        _subprocess_addchdir_impl = (_subprocess_addchdir_t)dlsym(
+            RTLD_DEFAULT, "posix_spawn_file_actions_addchdir_np"
+        );
+    }
     _subprocess_addclosefrom_impl = (_subprocess_addclosefrom_t)dlsym(
         RTLD_DEFAULT, "posix_spawn_file_actions_addclosefrom_np"
     );
-    _subprocess_addfchdir_impl = (_subprocess_addfchdir_t)dlsym(
-        RTLD_DEFAULT, "posix_spawn_file_actions_addfchdir_np"
-    );
+    if (_subprocess_addfchdir_impl == NULL) {
+        _subprocess_addfchdir_impl = (_subprocess_addfchdir_t)dlsym(
+            RTLD_DEFAULT, "posix_spawn_file_actions_addfchdir_np"
+        );
+    }
     if (_subprocess_addclosefrom_impl != NULL) {
         caps |= _SUBPROCESS_SPAWN_CAP_CLOSEFROM_ACTION;
     }
     if (_subprocess_addfchdir_impl != NULL) {
         caps |= _SUBPROCESS_SPAWN_CAP_CHDIR_ACTION;
+    }
+    if (_subprocess_addchdir_impl != NULL) {
+        caps |= _SUBPROCESS_SPAWN_CAP_CHDIR_PATH_ACTION;
     }
 #ifdef POSIX_SPAWN_CLOEXEC_DEFAULT
     if (_subprocess_spawnattr_accepts_flag(POSIX_SPAWN_CLOEXEC_DEFAULT)) {
@@ -381,6 +406,17 @@ int _subprocess_spawn_addfchdir(void *file_actions, int fd) {
     }
     return _subprocess_addfchdir_impl(
         (posix_spawn_file_actions_t *)file_actions, fd
+    );
+}
+
+int _subprocess_spawn_addchdir(void *file_actions, const char *path) {
+    // Load-bearing; see `_subprocess_spawn_addclosefrom` above.
+    (void)_subprocess_spawn_capabilities();
+    if (_subprocess_addchdir_impl == NULL) {
+        return ENOSYS;
+    }
+    return _subprocess_addchdir_impl(
+        (posix_spawn_file_actions_t *)file_actions, path
     );
 }
 
