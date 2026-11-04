@@ -305,7 +305,15 @@ public func run<
                 if Input.self != CustomWriteInput.self {
                     // Write non-custom inputs in a parallel task.
                     group.addTask {
-                        try await input.write(with: inputWriter)
+                        do {
+                            try await input.write(with: inputWriter)
+                        } catch {
+                            // Close the write end even if the write failed (for
+                            // example with EPIPE after the child closed its
+                            // standard input) so the descriptor isn't leaked.
+                            try? await inputWriter.finish()
+                            throw error
+                        }
                         try await inputWriter.finish()
                         return .inputWritten
                     }
