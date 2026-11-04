@@ -92,6 +92,11 @@ int _subprocess_dup3_cloexec(int fildes, int fildes2);
 /// above -- has been available on Darwin, Linux, and the BSDs for a long
 /// time, so no SDK-availability fallback is needed here.
 int _subprocess_dup_cloexec(int fildes);
+
+/// Duplicates `fildes` onto the lowest-numbered unused descriptor that is
+/// greater than or equal to `minimum`, marking the new descriptor
+/// close-on-exec.
+int _subprocess_dup_cloexec_at_least(int fildes, int minimum);
 #endif // TARGET_OS_MAC || TARGET_OS_UNIX
 
 #if __has_include(<mach/vm_page_size.h>)
