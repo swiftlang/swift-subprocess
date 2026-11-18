@@ -97,6 +97,15 @@ uint64_t _subprocess_nofile_soft_limit(void) {
     return (uint64_t)rl.rlim_cur;
 }
 
+int _subprocess_set_nofile_soft_limit(uint64_t limit) {
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_NOFILE, &rl) != 0) {
+        return -1;
+    }
+    rl.rlim_cur = (rlim_t)limit;
+    return setrlimit(RLIMIT_NOFILE, &rl);
+}
+
 size_t _subprocess_default_search_path(char * _Nullable buffer, size_t size) {
     // `confstr(_CS_PATH)` is the POSIX query for the standard path, and is
     // preferred because the C library answers for the running system. Bionic

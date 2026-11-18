@@ -363,6 +363,10 @@ int _was_process_suspended(int status);
 /// correct type regardless of how the Swift Glibc/Darwin overlay imports it.
 uint64_t _subprocess_nofile_soft_limit(void);
 
+/// Sets the soft RLIMIT_NOFILE value for the current process. Returns 0 on
+/// success and -1 on error, like `setrlimit(2)`.
+int _subprocess_set_nofile_soft_limit(uint64_t limit);
+
 /// Writes the system's standard `PATH` value into `buffer`.
 ///
 /// Follows the `confstr(3)` protocol: returns the buffer size required to hold

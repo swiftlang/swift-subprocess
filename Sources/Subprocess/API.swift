@@ -272,10 +272,26 @@ public func run<
         Execution<Input, Output, Error>
     ) async throws -> Result
 ) async throws -> ExecutionResult<Result, Output, Error> {
-    let outputPipe = try output.createPipe()
-    let errorPipe = try error.createPipe(from: outputPipe)
+    // A pipe dropped while still open traps in `IODescriptor.deinit`, so
+    // close the ones already created if a later one can't be created.
+    var outputPipe = try output.createPipe()
+    var errorPipe: CreatedPipe
+    do {
+        errorPipe = try error.createPipe(from: outputPipe)
+    } catch let setupError {
+        outputPipe.closeAfterFailedSetup()
+        throw setupError
+    }
+    let inputPipe: CreatedPipe
+    do {
+        inputPipe = try input.createPipe()
+    } catch let setupError {
+        outputPipe.closeAfterFailedSetup()
+        errorPipe.closeAfterFailedSetup()
+        throw setupError
+    }
     let outcome: ExecutionOutcome<_RunOutcome<Result, Output, Error>> = try await configuration.run(
-        input: try input.createPipe(),
+        input: inputPipe,
         as: Input.self,
         output: outputPipe,
         as: Output.self,
