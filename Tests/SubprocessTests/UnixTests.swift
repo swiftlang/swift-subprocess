@@ -836,6 +836,38 @@ extension SubprocessUnixTests {
 
 // MARK: - Misc
 extension SubprocessUnixTests {
+
+    /// When a pipe can't be created, `run` closes the pipes it already made
+    /// and throws, instead of trapping in `IODescriptor.deinit`.
+    #if !os(Android) // Exit tests are not supported on Android
+    @Test func testRunThrowsWhenPipeCreationFails() async throws {
+        await #expect(processExitsWith: .success) {
+            // Runs in an isolated process because it lowers the descriptor
+            // limit and fills the descriptor table.
+            try #require(_subprocess_set_nofile_soft_limit(256) == 0)
+            var descriptors: [CInt] = []
+            while true {
+                let fd = open("/dev/null", O_RDONLY)
+                guard fd >= 0 else { break }
+                descriptors.append(fd)
+            }
+            defer {
+                for fd in descriptors { close(fd) }
+            }
+            // Leave one free descriptor: `.discarded` opens /dev/null with it,
+            // and the error pipe then fails with EMFILE.
+            close(descriptors.removeLast())
+
+            await #expect(throws: SubprocessError.self) {
+                _ = try await Subprocess.run(
+                    .path("/usr/bin/true"),
+                    output: .discarded,
+                    error: .string(limit: 16)
+                )
+            }
+        }
+    }
+    #endif
     @Test(.timeLimit(.minutes(1)))
     func testSuspendResumeProcess() async throws {
         // Set up pipes manually so the test owns both ends. This lets us bound

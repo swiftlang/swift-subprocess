@@ -1188,6 +1188,16 @@ internal struct CreatedPipe: ~Copyable, Sendable {
         return self._writeFileDescriptor.take()
     }
 
+    /// Closes both ends, ignoring errors, after a later step of setup fails.
+    mutating func closeAfterFailedSetup() {
+        if var readFileDescriptor = self._readFileDescriptor.take() {
+            try? readFileDescriptor.safelyClose()
+        }
+        if var writeFileDescriptor = self._writeFileDescriptor.take() {
+            try? writeFileDescriptor.safelyClose()
+        }
+    }
+
     internal init(duplicating createdPipe: borrowing CreatedPipe) throws(SubprocessError) {
         self.init(
             readFileDescriptor: try IODescriptor(duplicating: createdPipe._readFileDescriptor),
