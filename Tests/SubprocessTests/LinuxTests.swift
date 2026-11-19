@@ -60,6 +60,42 @@ struct SubprocessLinuxTests {
 // MARK: FileDescriptor Leak Tests
 #if os(Linux)
 extension SubprocessLinuxTests {
+    /// The fork/exec fallback must not let the child inherit the parent's
+    /// descriptors. Where `close_range()` is unavailable (kernels before 5.9)
+    /// and `/dev/fd` can't be listed (no `/proc`, as in a chroot or a
+    /// `FROM scratch` container), the child used to give up and inherit
+    /// every descriptor. https://github.com/swiftlang/swift-subprocess/issues/382
+    ///
+    /// Normally `close_range()` handles this, so the test only exercises the
+    /// last-resort path in an environment like that.
+    @Test(.requiresBash) func testForkExecFallbackDoesNotInheritRandomFileDescriptors() async throws {
+        var fds: [Int32] = [-1, -1]
+        try #require(pipe(&fds) == 0)
+        defer {
+            _ = close(fds[0])
+        }
+        // A high, inheritable descriptor that the child must not see.
+        let leakedFD: Int32 = 1000
+        try #require(dup2(fds[1], leakedFD) == leakedFD)
+        _ = close(fds[1])
+        defer { _ = close(leakedFD) }
+
+        // `createSession` with `processGroupID` can't be expressed with
+        // posix_spawn, so this spawn takes the fork/exec fallback path.
+        var platformOptions = PlatformOptions()
+        platformOptions.createSession = true
+        platformOptions.processGroupID = 0
+        let result = try await Subprocess.run(
+            .name("bash"),
+            arguments: ["-c", "(echo leaked >&\(leakedFD)) 2>/dev/null && echo inherited || echo closed"],
+            platformOptions: platformOptions,
+            output: .string(limit: 64),
+            error: .discarded
+        )
+        #expect(result.terminationStatus.isSuccess)
+        #expect(result.standardOutput.trimmingNewLineAndQuotes() == "closed")
+    }
+
     /// A `clone3()`/`fork()` that succeeds and then fails at `execve()` used to
     /// leak the process descriptor (the `clone3(CLONE_PIDFD)` fd, or its
     /// `pidfd_open()` fallback) on the non-retried spawn-error branch. This
