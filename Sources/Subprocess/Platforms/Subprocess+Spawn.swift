@@ -70,6 +70,13 @@ internal struct SpawnCapabilities: Sendable {
     internal let closeAllViaSpawn: CloseAllMechanism
     /// Whether an `fchdir` file action is available.
     internal let hasChdirAction: Bool
+    /// Whether a path-based `chdir` file action is available.
+    ///
+    /// Distinct from ``hasChdirAction`` because the two are not interchangeable:
+    /// `fchdir` needs a descriptor the platform may be unable to open
+    /// (OpenBSD, which has both actions since 8.0 but no `O_SEARCH`), while
+    /// `chdir` takes a path and so needs none.
+    internal let hasChdirPathAction: Bool
     /// Whether `POSIX_SPAWN_SETSID` is honoured.
     internal let hasSetsidFlag: Bool
 
@@ -84,7 +91,15 @@ internal struct SpawnCapabilities: Sendable {
             self.closeAllViaSpawn = .unavailable
         }
         self.hasChdirAction = bitmask & UInt32(_SUBPROCESS_SPAWN_CAP_CHDIR_ACTION) != 0
+        self.hasChdirPathAction = bitmask & UInt32(_SUBPROCESS_SPAWN_CAP_CHDIR_PATH_ACTION) != 0
         self.hasSetsidFlag = bitmask & UInt32(_SUBPROCESS_SPAWN_CAP_SETSID_FLAG) != 0
+    }
+
+    /// Whether a working directory is applied with an `fchdir` action on a
+    /// descriptor opened by the parent: the action exists and the platform can
+    /// open a directory for search.
+    internal var usesFchdirAction: Bool {
+        self.hasChdirAction && _subprocess_can_open_directory_for_search() != 0
     }
 
     /// The host's capabilities.
@@ -140,22 +155,31 @@ extension Configuration {
             return true
         }
 
-        // 5. No chdir file action (OpenBSD; Android below API 34), or no way to
-        //    open a descriptor for it.
+        // 5. No chdir file action that can be used.
         //
-        //    Both halves are required because they are established differently:
-        //    `hasChdirAction` is probed at runtime with `dlsym`, while whether a
-        //    directory can be opened for search at all is decided by which of
-        //    `O_SEARCH`/`O_PATH` the headers define. No supported platform has the
-        //    action without one of those macros, so today the second test never
-        //    changes the answer -- but if one ever did, `resolveWorkingDirectory`
-        //    would hand back `.invalidDescriptor`, no `fchdir` action would be
-        //    appended, and the child would run in the parent's directory with no
-        //    error reported anywhere. Silently ignoring a working directory is the
-        //    worst available outcome, so it is worth one redundant test to make it
-        //    unreachable.
+        //    There are two ways to apply a working directory: an `fchdir` action
+        //    on a descriptor opened here (see `usesFchdirAction`), or a
+        //    path-based `chdir` action that needs no descriptor. Either suffices.
+        //    Neither is available on Android below API 34.
+        //
+        //    OpenBSD has both actions since 8.0 but cannot open a directory for
+        //    search, so it can only use the path-based one. That does not take it
+        //    off the fallback path: rule 2 still applies, because OpenBSD has no
+        //    close-all mechanism.
+        //
+        //    Both halves of the `fchdir` test are required because they are
+        //    established differently: `hasChdirAction` is probed at runtime with
+        //    `dlsym`, while whether a directory can be opened for search at all is
+        //    decided by which of `O_SEARCH`/`O_PATH` the headers define. Without
+        //    that test a platform with the action but no way to open a descriptor
+        //    would have `resolveWorkingDirectory` hand back `.invalidDescriptor`,
+        //    no `fchdir` action would be appended, and the child would run in the
+        //    parent's directory with no error reported anywhere. Silently ignoring
+        //    a working directory is the worst available outcome, so it is worth
+        //    the redundant test to make it unreachable.
         if self.workingDirectory != nil
-            && (!capabilities.hasChdirAction || _subprocess_can_open_directory_for_search() == 0)
+            && !capabilities.usesFchdirAction
+            && !capabilities.hasChdirPathAction
         {
             return true
         }
@@ -266,7 +290,9 @@ extension Configuration {
     /// - Parameters:
     ///   - stdio: The descriptors to wire to the child's standard streams.
     ///   - workingDirectoryDescriptor: A descriptor for the requested working
-    ///     directory, or `.invalidDescriptor` when none was requested.
+    ///     directory, or `.invalidDescriptor` when none was requested or the
+    ///     platform cannot open one, in which case a path-based `chdir` action
+    ///     is used for the requested directory instead.
     ///   - capabilities: The `posix_spawn` features to use.
     ///   - usesFallbackPath: Whether the caller will spawn through the fallback
     ///     path. On Darwin the fallback still runs `posix_spawn` with
@@ -324,11 +350,28 @@ extension Configuration {
         //    FreeBSD run the actions as a literal sequence of syscalls in the
         //    child, which is what POSIX specifies and what this ordering assumes
         //    throughout.
+        //
+        //    Without a descriptor -- the platform cannot open one, as on OpenBSD
+        //    -- the path-based `chdir` action is used instead. It involves no
+        //    descriptor, so the ordering hazards above do not apply to it, and it
+        //    is placed first for consistency. The path is resolved in the child,
+        //    so `resolveWorkingDirectory()`'s advisory check is what keeps a bad
+        //    directory from being reported as `executableNotFound`.
         if workingDirectoryDescriptor != .invalidDescriptor {
             let result = _subprocess_spawn_addfchdir(fileActions, workingDirectoryDescriptor)
             guard result == 0 else {
                 throw SubprocessError.failedToChangeWorkingDirectory(
                     self.workingDirectory?.string,
+                    underlyingError: Errno(rawValue: result)
+                )
+            }
+        } else if let workingDirectory = self.workingDirectory?.string {
+            let result = workingDirectory.withPlatformString {
+                _subprocess_spawn_addchdir(fileActions, $0)
+            }
+            guard result == 0 else {
+                throw SubprocessError.failedToChangeWorkingDirectory(
+                    workingDirectory,
                     underlyingError: Errno(rawValue: result)
                 )
             }
@@ -635,7 +678,9 @@ extension Configuration {
     ///   as ``SubprocessError/failedToChangeWorkingDirectory(_:underlyingError:)``,
     ///   or 0 on success. A nonzero `errno` is always paired with
     ///   `.invalidDescriptor`.
-    private func resolveWorkingDirectory() -> (PlatformFileDescriptor, CInt) {
+    private func resolveWorkingDirectory(
+        capabilities: SpawnCapabilities
+    ) -> (PlatformFileDescriptor, CInt) {
         guard let workingDirectory = self.workingDirectory?.string else {
             return (.invalidDescriptor, 0)
         }
@@ -643,7 +688,7 @@ extension Configuration {
         // Both branches capture `errno` inside the closure, before
         // `withPlatformString` tears its buffer down, so nothing between the
         // failed call and the read can clobber it.
-        if _subprocess_can_open_directory_for_search() != 0 {
+        if capabilities.usesFchdirAction {
             // The flags include `O_CLOEXEC`, which is safe: the descriptor is
             // still live while file actions run, which was measured under
             // CLOEXEC_DEFAULT on Darwin.
@@ -681,13 +726,13 @@ extension Configuration {
             }
         }
 
-        // This platform can only open a directory for reading, which `chdir` does
-        // not require, so opening it would reject a directory that works
-        // perfectly well as a working directory. It also has no `fchdir` file
-        // action, so rule 5 of `requiresFallbackSpawnPath` always routes a
-        // working directory to the fallback path, where the child `chdir`s itself
-        // and no descriptor is ever needed. Check the directory instead of
-        // opening it.
+        // Either this platform can only open a directory for reading, which
+        // `chdir` does not require, so opening it would reject a directory that
+        // works perfectly well as a working directory, or it has no `fchdir` file
+        // action. Rule 5 of `requiresFallbackSpawnPath` then routes a working
+        // directory either to the path-based `chdir` file action or to the
+        // fallback path, where the child `chdir`s itself; no descriptor is ever
+        // needed. Check the directory instead of opening it.
         //
         // This check is advisory only, and must not be mistaken for a permission
         // check. The child's `chdir` stays authoritative and its failure is still
@@ -784,7 +829,7 @@ extension Configuration {
             // recovery. The six descriptors are closed here, at the call site,
             // so `resolveWorkingDirectory()` stays free of their ownership.
             let (workingDirectoryDescriptor, workingDirectoryError) =
-                self.resolveWorkingDirectory()
+                self.resolveWorkingDirectory(capabilities: capabilities)
             defer {
                 if workingDirectoryDescriptor != .invalidDescriptor {
                     try? _safelyClose(
