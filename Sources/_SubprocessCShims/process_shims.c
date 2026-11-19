@@ -241,6 +241,10 @@ int _subprocess_dup_cloexec(int fildes) {
     return fcntl(fildes, F_DUPFD_CLOEXEC, 0);
 }
 
+int _subprocess_dup_cloexec_at_least(int fildes, int minimum) {
+    return fcntl(fildes, F_DUPFD_CLOEXEC, minimum);
+}
+
 #endif // TARGET_OS_MAC || TARGET_OS_UNIX
 
 #endif

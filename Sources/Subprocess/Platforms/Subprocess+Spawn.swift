@@ -769,14 +769,55 @@ extension Configuration {
             let errorReadFileDescriptor: IODescriptor? = _errorPipe.readFileDescriptor()
             let errorWriteFileDescriptor: IODescriptor? = _errorPipe.writeFileDescriptor()
 
+            // Hand the child copies numbered 3 or above of any of its ends that
+            // sit on 0, 1 or 2. The ends are bound in a fixed order -- input onto
+            // 0, output onto 1, error onto 2 -- so an end numbered as the target
+            // of an earlier binding would be overwritten before its own turn,
+            // and the child would get the wrong stream. That happens whenever the
+            // calling process has a standard descriptor closed and a child end
+            // is allocated onto it, for example the `/dev/null` of a discarded
+            // output, which is created first. Doing this here covers both spawn
+            // paths. The copies are close-on-exec like the originals.
+            var relocatedDescriptors: [PlatformFileDescriptor] = []
+            defer {
+                for descriptor in relocatedDescriptors {
+                    _ = close(descriptor)
+                }
+            }
+            var relocationError: CInt = 0
+            func childEnd(_ descriptor: borrowing IODescriptor?) -> PlatformFileDescriptor? {
+                guard let descriptor = descriptor?.platformDescriptor() else { return nil }
+                guard descriptor >= 0, descriptor <= 2, relocationError == 0 else {
+                    return descriptor
+                }
+                let relocated = _subprocess_dup_cloexec_at_least(descriptor, 3)
+                guard relocated >= 0 else {
+                    relocationError = errno
+                    return descriptor
+                }
+                relocatedDescriptors.append(relocated)
+                return relocated
+            }
+
             let stdio = StdioDescriptors(
-                inputRead: inputReadFileDescriptor?.platformDescriptor(),
+                inputRead: childEnd(inputReadFileDescriptor),
                 inputWrite: inputWriteFileDescriptor?.platformDescriptor(),
-                outputWrite: outputWriteFileDescriptor?.platformDescriptor(),
+                outputWrite: childEnd(outputWriteFileDescriptor),
                 outputRead: outputReadFileDescriptor?.platformDescriptor(),
-                errorWrite: errorWriteFileDescriptor?.platformDescriptor(),
+                errorWrite: childEnd(errorWriteFileDescriptor),
                 errorRead: errorReadFileDescriptor?.platformDescriptor()
             )
+            if relocationError != 0 {
+                try self.safelyCloseMultiple(
+                    inputRead: inputReadFileDescriptor,
+                    inputWrite: inputWriteFileDescriptor,
+                    outputRead: outputReadFileDescriptor,
+                    outputWrite: outputWriteFileDescriptor,
+                    errorRead: errorReadFileDescriptor,
+                    errorWrite: errorWriteFileDescriptor
+                )
+                throw SubprocessError.spawnFailed(withUnderlyingError: Errno(rawValue: relocationError))
+            }
 
             // Resolving the working directory in the parent is what makes a bad
             // one a precise error instead of an indistinguishable spawn failure,

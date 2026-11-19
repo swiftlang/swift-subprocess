@@ -391,6 +391,97 @@ struct SpawnPathTests {
             }
         }
     }
+
+    /// A child's standard streams survive even when the *child's* end of a
+    /// stream lands on descriptor 0, 1 or 2.
+    ///
+    /// The child's ends are bound in a fixed order: input onto 0, then output
+    /// onto 1, then error onto 2. A child end that is itself numbered as the
+    /// target of an earlier binding is overwritten by that binding before its
+    /// own turn comes, and the child then gets the wrong descriptor for that
+    /// stream. With pipes on all three streams the parent's end always takes
+    /// the lower number, which is why
+    /// `testStandardStreamsSurviveLowParentDescriptors` cannot reach this. A
+    /// discarded stream opens a single `/dev/null` descriptor for the child,
+    /// and the output stream is set up first, so a closed descriptor 0 puts
+    /// the child's output end there.
+    ///
+    /// Runs inside an exit test for the same reasons as the test above.
+    @Test func testStandardStreamsSurviveLowChildDescriptors() async {
+        await #expect(processExitsWith: .success) {
+            _ = try await Subprocess.run(
+                .path("/bin/sh"),
+                arguments: ["-c", "exit 0"],
+                output: .discarded,
+                error: .discarded
+            )
+
+            // Asking for a new session and a process group at once takes the
+            // `fork`/`exec` fallback path, so both spawn paths are covered.
+            var fallbackOptions = PlatformOptions()
+            fallbackOptions.createSession = true
+            fallbackOptions.processGroupID = 0
+
+            for closedMask in 0..<8 {
+                for (discardsError, platformOptions) in [
+                    (false, PlatformOptions()), (true, PlatformOptions()),
+                    (false, fallbackOptions), (true, fallbackOptions),
+                ] {
+                    var saved: [(target: CInt, copy: CInt)] = []
+                    for target in CInt(0)...CInt(2) where closedMask & (1 << Int(target)) != 0 {
+                        // Kept above 2, so that a copy cannot itself take
+                        // one of the numbers this closes.
+                        let copy = _subprocess_dup_cloexec_at_least(target, 3)
+                        guard copy >= 0 else { continue }
+                        guard close(target) == 0 else {
+                            close(copy)
+                            continue
+                        }
+                        saved.append((target, copy))
+                    }
+                    defer {
+                        for (target, copy) in saved {
+                            _ = dup2(copy, target)
+                            _ = close(copy)
+                        }
+                    }
+
+                    // The output is discarded, so the exit status is what
+                    // shows whether the child could write to it: a child
+                    // whose standard output is the read end of its own
+                    // standard input fails the first write.
+                    let arguments: Arguments = [
+                        "-c", #"read line; printf OUT || exit 3; printf "IN=%s" "$line" 1>&2 || exit 4"#,
+                    ]
+                    let context =
+                        "with descriptors \(saved.map(\.target)) closed, error \(discardsError ? "discarded" : "captured"), "
+                        + "\(platformOptions.createSession ? "fallback" : "posix_spawn") path"
+                    if discardsError {
+                        let result = try await Subprocess.run(
+                            .path("/bin/sh"),
+                            arguments: arguments,
+                            platformOptions: platformOptions,
+                            input: .string("ping\n"),
+                            output: .discarded,
+                            error: .discarded
+                        )
+                        #expect(result.terminationStatus == .exited(0), "\(context)")
+                    } else {
+                        let result = try await Subprocess.run(
+                            .path("/bin/sh"),
+                            arguments: arguments,
+                            platformOptions: platformOptions,
+                            input: .string("ping\n"),
+                            output: .discarded,
+                            error: .string(limit: 64)
+                        )
+                        #expect(result.terminationStatus == .exited(0), "\(context)")
+                        #expect(result.standardError == "IN=ping", "\(context)")
+                    }
+                }
+            }
+        }
+    }
     #endif // !os(Android)
 }
 #endif // !os(Windows)
