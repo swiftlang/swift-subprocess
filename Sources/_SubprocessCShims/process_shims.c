@@ -1046,6 +1046,30 @@ static int _subprocess_bind_standard_fd(int fd, int target) {
     return target;
 }
 
+// Resets `signo` to SIG_DFL in a child created by _subprocess_fork_exec.
+//
+// On Linux the child may come from a raw clone3 syscall rather than fork(),
+// so glibc's own post-fork handling never runs in it. Since glibc 2.41,
+// sigaction(SIGABRT, ...) takes glibc's internal abort lock in write mode,
+// and posix_spawn() and fork() hold that lock in read mode. If another thread
+// was inside posix_spawn() (Foundation's Process uses it) at the moment of the
+// clone3, the child inherits the lock held and signal()/sigaction() blocks
+// forever. https://github.com/swiftlang/swift-subprocess/issues/374
+//
+// Calling rt_sigaction directly avoids glibc's wrapper and its lock. An
+// all-zero kernel sigaction is SIG_DFL (0) with no flags, no restorer and an
+// empty mask on every architecture, whatever the struct's field order, so no
+// per-architecture layout is needed. The buffer is larger than any
+// architecture's struct.
+static int _subprocess_reset_signal_in_child(int signo) {
+#if defined(__linux__) && defined(SYS_rt_sigaction)
+    unsigned long kernel_sigaction[8] = { 0 };
+    return (int)syscall(SYS_rt_sigaction, signo, kernel_sigaction, NULL, (NSIG - 1) / 8);
+#else
+    return signal(signo, SIG_DFL) == SIG_ERR ? -1 : 0;
+#endif
+}
+
 int _subprocess_fork_exec(
     pid_t * _Nonnull pid,
     int * _Nonnull pidfd,
@@ -1123,8 +1147,7 @@ int _subprocess_fork_exec(
             if (signo == SIGKILL || signo == SIGSTOP) {
                 continue;
             }
-            void (*err_ptr)(int) = signal(signo, SIG_DFL);
-            if (err_ptr != SIG_ERR) {
+            if (_subprocess_reset_signal_in_child(signo) == 0) {
                 continue;
             }
 

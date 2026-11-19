@@ -60,6 +60,68 @@ struct SubprocessLinuxTests {
 // MARK: FileDescriptor Leak Tests
 #if os(Linux)
 extension SubprocessLinuxTests {
+    /// Spawning on the fallback path while another thread is inside
+    /// `posix_spawn()` used to wedge the child forever on glibc 2.41 and
+    /// later: the `clone3()` child reset its signal handlers with `signal()`,
+    /// and glibc's `sigaction(SIGABRT)` takes an internal lock that
+    /// `posix_spawn()` holds while it runs, so the child could inherit it held
+    /// and block before reaching `execve()`.
+    /// https://github.com/swiftlang/swift-subprocess/issues/374
+    ///
+    /// Runs in an exit test with a watchdog because a wedged child makes
+    /// `run()` wait forever rather than fail. On glibc releases before 2.41
+    /// there is no such lock and this passes either way.
+    @Test(.timeLimit(.minutes(2)))
+    func testRunDoesNotDeadlockWithConcurrentPosixSpawn() async {
+        await #expect(processExitsWith: .success) {
+            // Fail rather than hang if a spawn wedges. A wedged child still
+            // holds this process's inherited descriptors, including the exit
+            // test's back channel, so kill the children before exiting or the
+            // parent would wait for that pipe to close forever.
+            var watchdog = pthread_t()
+            try #require(
+                pthread_create(
+                    &watchdog, nil,
+                    { _ in
+                        sleep(60)
+                        killChildProcesses()
+                        _exit(2)
+                    }, nil) == 0
+            )
+
+            // Another thread that keeps spawning children with posix_spawn(),
+            // as Foundation's Process does.
+            var spawner = pthread_t()
+            try #require(
+                pthread_create(
+                    &spawner, nil,
+                    { _ in
+                        var argv: [UnsafeMutablePointer<CChar>?] = [strdup("/bin/true"), nil]
+                        while true {
+                            var pid = pid_t()
+                            if posix_spawn(&pid, "/bin/true", nil, nil, &argv, environ) == 0 {
+                                _ = waitpid(pid, nil, 0)
+                            }
+                        }
+                    }, nil) == 0
+            )
+
+            // `createSession` with `processGroupID` can't be expressed with
+            // posix_spawn, so these spawns take the clone3 fallback path.
+            var platformOptions = PlatformOptions()
+            platformOptions.createSession = true
+            platformOptions.processGroupID = 0
+            for _ in 0..<300 {
+                _ = try await Subprocess.run(
+                    .path("/bin/true"),
+                    platformOptions: platformOptions,
+                    output: .discarded,
+                    error: .discarded
+                )
+            }
+        }
+    }
+
     /// A `clone3()`/`fork()` that succeeds and then fails at `execve()` used to
     /// leak the process descriptor (the `clone3(CLONE_PIDFD)` fd, or its
     /// `pidfd_open()` fallback) on the non-retried spawn-error branch. This
@@ -169,6 +231,34 @@ private func countOpenProcessDescriptors() -> Int {
         }
     }
     return count
+}
+
+/// Sends `SIGKILL` to every child of the current process, as listed in each
+/// thread's `/proc/self/task/<tid>/children`.
+private func killChildProcesses() {
+    guard let dir = opendir("/proc/self/task") else { return }
+    defer { closedir(dir) }
+    while let entry = readdir(dir) {
+        let tid = withUnsafeBytes(of: entry.pointee.d_name) { raw -> String in
+            String(cString: raw.baseAddress!.assumingMemoryBound(to: CChar.self))
+        }
+        if tid == "." || tid == ".." { continue }
+        let fd = open("/proc/self/task/\(tid)/children", O_RDONLY)
+        guard fd >= 0 else { continue }
+        defer { close(fd) }
+        var contents: [UInt8] = []
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let count = read(fd, &buffer, buffer.count)
+            guard count > 0 else { break }
+            contents += buffer[0..<count]
+        }
+        for field in contents.split(separator: UInt8(ascii: " ")) {
+            if let pid = pid_t(String(decoding: field, as: UTF8.self)) {
+                _ = kill(pid, SIGKILL)
+            }
+        }
+    }
 }
 #endif
 
