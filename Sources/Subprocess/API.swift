@@ -423,10 +423,12 @@ public func run<
     }
 
     let terminationStatus = outcome.terminationStatus
+    let resourceUsage = outcome.resourceUsage
     let capturedResult = outcome.value
     return ExecutionResult(
         processIdentifier: capturedResult.processIdentifier,
         terminationStatus: terminationStatus,
+        resourceUsage: resourceUsage,
         closureResult: capturedResult.closureResult,
         standardOutput: capturedResult.output,
         standardError: capturedResult.error
