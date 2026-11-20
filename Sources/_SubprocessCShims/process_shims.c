@@ -295,6 +295,32 @@ static int _subprocess_spawnattr_accepts_flag(short flag) {
 }
 #endif
 
+#if defined(__linux__)
+static int _close_range(unsigned int first, unsigned int last, unsigned int flags);
+
+/// Whether a "close from" spawn action can actually close descriptors here.
+///
+/// glibc (and Bionic) implement `posix_spawn_file_actions_addclosefrom_np` in
+/// the child with `close_range()`, falling back to listing `/proc/self/fd`.
+/// With neither, such as on a kernel before 5.9 in a chroot or `FROM scratch`
+/// container with no `/proc`, the spawn fails, so every `posix_spawn` would
+/// fail. Reporting the action as unavailable sends those spawns to the
+/// fork/exec path, which can still mark descriptors close-on-exec one by one.
+static int _subprocess_can_close_descriptors_in_child(void) {
+    // Closing a range that holds no open descriptor is a no-op where
+    // close_range() exists, and fails with ENOSYS where it doesn't.
+    if (_close_range(~0U, ~0U, 0) == 0) {
+        return 1;
+    }
+    int fd = open("/proc/self/fd", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (fd >= 0) {
+        close(fd);
+        return 1;
+    }
+    return 0;
+}
+#endif
+
 static void _subprocess_spawn_caps_init(void) {
     uint32_t caps = 0;
 
@@ -350,7 +376,11 @@ static void _subprocess_spawn_caps_init(void) {
             RTLD_DEFAULT, "posix_spawn_file_actions_addfchdir_np"
         );
     }
-    if (_subprocess_addclosefrom_impl != NULL) {
+    if (_subprocess_addclosefrom_impl != NULL
+#if defined(__linux__)
+        && _subprocess_can_close_descriptors_in_child()
+#endif
+    ) {
         caps |= _SUBPROCESS_SPAWN_CAP_CLOSEFROM_ACTION;
     }
     if (_subprocess_addfchdir_impl != NULL) {
