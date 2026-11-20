@@ -20,7 +20,7 @@ import SystemPackage
 #if os(OpenBSD)
 // FIXME: Why is this necessary only on OpenBSD?
 public import _SubprocessCShims
-#else
+#elseif !SUBPROCESS_SINGLE_MODULE
 import _SubprocessCShims
 #endif
 

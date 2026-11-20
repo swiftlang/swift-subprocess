@@ -9,7 +9,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#if !SUBPROCESS_SINGLE_MODULE
 import _SubprocessCShims
+#endif
 
 #if canImport(Darwin)
 import Darwin

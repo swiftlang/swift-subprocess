@@ -37,7 +37,9 @@ private let F_GETPIPE_SZ: CInt = 1032
 import Musl
 #endif
 
+#if !SUBPROCESS_SINGLE_MODULE
 import _SubprocessCShims
+#endif
 
 internal typealias SignalStream = AsyncThrowingStream<Bool, any Error>
 
