@@ -295,6 +295,32 @@ static int _subprocess_spawnattr_accepts_flag(short flag) {
 }
 #endif
 
+#if defined(__linux__)
+static int _close_range(unsigned int first, unsigned int last, unsigned int flags);
+
+/// Whether a "close from" spawn action can actually close descriptors here.
+///
+/// glibc (and Bionic) implement `posix_spawn_file_actions_addclosefrom_np` in
+/// the child with `close_range()`, falling back to listing `/proc/self/fd`.
+/// With neither, such as on a kernel before 5.9 in a chroot or `FROM scratch`
+/// container with no `/proc`, the spawn fails, so every `posix_spawn` would
+/// fail. Reporting the action as unavailable sends those spawns to the
+/// fork/exec path, which can still mark descriptors close-on-exec one by one.
+static int _subprocess_can_close_descriptors_in_child(void) {
+    // Closing a range that holds no open descriptor is a no-op where
+    // close_range() exists, and fails with ENOSYS where it doesn't.
+    if (_close_range(~0U, ~0U, 0) == 0) {
+        return 1;
+    }
+    int fd = open("/proc/self/fd", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (fd >= 0) {
+        close(fd);
+        return 1;
+    }
+    return 0;
+}
+#endif
+
 static void _subprocess_spawn_caps_init(void) {
     uint32_t caps = 0;
 
@@ -350,7 +376,11 @@ static void _subprocess_spawn_caps_init(void) {
             RTLD_DEFAULT, "posix_spawn_file_actions_addfchdir_np"
         );
     }
-    if (_subprocess_addclosefrom_impl != NULL) {
+    if (_subprocess_addclosefrom_impl != NULL
+#if defined(__linux__)
+        && _subprocess_can_close_descriptors_in_child()
+#endif
+    ) {
         caps |= _SUBPROCESS_SPAWN_CAP_CLOSEFROM_ACTION;
     }
     if (_subprocess_addfchdir_impl != NULL) {
@@ -1008,10 +1038,15 @@ static int _positive_int_parse(const char *str) {
 /// Set `FD_CLOEXEC` on all open file descriptors listed under `fd_dir` so
 /// they are automatically closed upon `execve()`.
 /// Safe to use after `vfork()` and before `execve()`
-static void _set_cloexec_to_open_fds(const char *fd_dir) {
-    int dir_fd = open(fd_dir, O_RDONLY);
+///
+/// Returns 0 once every listed descriptor has been marked, or -1 if `fd_dir`
+/// can't be opened or read (for example in a chroot or `FROM scratch`
+/// container with no `/proc`), in which case some descriptors may still be
+/// inheritable.
+static int _set_cloexec_to_open_fds(const char *fd_dir) {
+    int dir_fd = open(fd_dir, O_RDONLY | O_DIRECTORY);
     if (dir_fd < 0) {
-        return;
+        return -1;
     }
 
     // Buffer for directory entries - allocated on stack, no heap allocation
@@ -1024,12 +1059,12 @@ static void _set_cloexec_to_open_fds(const char *fd_dir) {
                 continue;
             } else {
                 close(dir_fd);
-                return;
+                return -1;
             }
         }
         if (bytes_read == 0) {
             close(dir_fd);
-            return;
+            return 0;
         }
         long offset = 0;
         while (offset < bytes_read) {
@@ -1051,9 +1086,26 @@ static void _set_cloexec_to_open_fds(const char *fd_dir) {
 }
 #endif
 
-// This function is only used on non-Linux systems.
-static int _highest_possibly_open_fd(void) {
-    return sysconf(_SC_OPEN_MAX);
+/// Set `FD_CLOEXEC` on every descriptor above stderr and below
+/// `sysconf(_SC_OPEN_MAX)`, except `keep_fd`, by trying each one.
+/// Safe to use after `fork()` and before `execve()`
+///
+/// This is the last resort when the kernel can't close a range of
+/// descriptors for us and the open ones can't be listed.
+static void _set_cloexec_up_to_open_max(int keep_fd) {
+    long open_max = sysconf(_SC_OPEN_MAX);
+    if (open_max > INT_MAX) {
+        open_max = INT_MAX;
+    }
+    for (int fd = STDERR_FILENO + 1; fd < open_max; fd++) {
+        if (fd != keep_fd) {
+            int flags = fcntl(fd, F_GETFD);
+            if (flags >= 0) {
+                // Set FD_CLOEXEC on every open fd so they are closed after exec()
+                fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+            }
+        }
+    }
 }
 
 // Binds `fd` to the standard descriptor `target` in a child that is about to
@@ -1270,21 +1322,17 @@ int _subprocess_fork_exec(
         rc = closefrom(pipefd[1] + 1);
         #endif
         if (rc != 0) {
+            // close_range failed (or doesn't exist), fall back to setting
+            // FD_CLOEXEC ourselves. pipefd[1] is already close-on-exec, and we
+            // must NOT close it before exec because errors are written to it.
             #if defined(__linux__)
-            _set_cloexec_to_open_fds("/dev/fd");
-            #else
-            // close_range failed (or doesn't exist), fall back to setting FD_CLOEXEC
-            int highest_open_fd = _highest_possibly_open_fd();
-            for (int fd = STDERR_FILENO + 1; fd <= highest_open_fd; fd++) {
-                // We must NOT close pipefd[1] for writing errors
-                if (fd != pipefd[1]) {
-                    int flags = fcntl(fd, F_GETFD);
-                    if (flags >= 0) {
-                        // Set FD_CLOEXEC on every open fd so they are closed after exec()
-                        fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
-                    }
-                }
+            // List the open descriptors if we can, and otherwise try every
+            // possible one rather than letting them all leak into the child.
+            if (_set_cloexec_to_open_fds("/dev/fd") != 0) {
+                _set_cloexec_up_to_open_max(pipefd[1]);
             }
+            #else
+            _set_cloexec_up_to_open_max(pipefd[1]);
             #endif
         }
 
