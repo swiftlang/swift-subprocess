@@ -1252,6 +1252,32 @@ extension SubprocessIntegrationTests {
         #expect(result.standardError.trimmingNewLineAndQuotes().isEmpty == true)
         #endif
     }
+
+    #if !os(Windows)
+    @Test func testStringInputWhenChildClosesStandardInputEarly() async throws {
+        // Far more than a pipe buffer holds, so the write is still in progress
+        // when the child exits and fails with EPIPE (SIGPIPE is ignored in tests).
+        let content = String(repeating: "line\n", count: 1_000_000)
+        let setup = TestSetup(
+            executable: .path("/bin/sh"),
+            arguments: ["-c", "read -r line; echo \"$line\""]
+        )
+        do {
+            let result = try await _run(
+                setup,
+                input: .string(content, using: UTF8.self),
+                output: .string(limit: .max),
+                error: .discarded
+            )
+            #expect(result.terminationStatus.isSuccess)
+            #expect(result.standardOutput.trimmingNewLineAndQuotes() == "line")
+        } catch let error as SubprocessError {
+            // Previously the input writer was never closed on this path, which
+            // crashed in the descriptor's deinit instead of reaching here.
+            #expect(error.code == .failedToWriteToSubprocess)
+        }
+    }
+    #endif
 }
 
 // MARK: - Standard Input Writer Lifetime Tests
