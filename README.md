@@ -340,7 +340,7 @@ import WinSDK
 
 var platformOptions = PlatformOptions()
 platformOptions.preSpawnProcessConfigurator = { creationFlags, startupInfo in
-    creationFlags |= DWORD(CREATE_NEW_CONSOLE)
+    creationFlags |= CREATE_NEW_CONSOLE
 }
 let result = try await run(.path(...), platformOptions: platformOptions)
 ```
