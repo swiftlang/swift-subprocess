@@ -45,7 +45,7 @@ elseif(APPLE)
     Platforms/Subprocess+Unix.swift)
   target_compile_options(Subprocess PRIVATE
     "$<$<COMPILE_LANGUAGE:Swift>:-DSUBPROCESS_ASYNCIO_KQUEUE>")
-elseif(FREEBSD OR OPENBSD)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD" OR CMAKE_SYSTEM_NAME STREQUAL "OpenBSD")
   target_sources(Subprocess PRIVATE
     Platforms/Subprocess+BSD.swift
     Platforms/Subprocess+Spawn.swift
