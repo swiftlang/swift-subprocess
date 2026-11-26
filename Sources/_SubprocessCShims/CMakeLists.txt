@@ -11,6 +11,7 @@
 
 add_library(_SubprocessCShims STATIC
   process_shims.c)
+set_target_properties(_SubprocessCShims PROPERTIES POSITION_INDEPENDENT_CODE YES)
 target_include_directories(_SubprocessCShims PUBLIC
   include)
 
